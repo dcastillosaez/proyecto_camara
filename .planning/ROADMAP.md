@@ -12,7 +12,7 @@ Desde la captura RTSP cruda hasta un dashboard funcional con deteccion y conteo 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Scaffolding y entorno** - Estructura de proyecto, entorno virtual, dependencias y configuracion base
+- [x] **Phase 1: Scaffolding y entorno** - Estructura de proyecto, entorno virtual, dependencias y configuracion base (completed 2026-04-16)
 - [ ] **Phase 2: Captura RTSP y stream MJPEG** - Hilo de captura con drain de buffer, reconexion automatica y endpoint MJPEG crudo
 - [ ] **Phase 3: Deteccion de personas con YOLO26n** - Inferencia por frame en hilo separado con bounding boxes y confianza en overlay
 - [ ] **Phase 4: Tracking y conteo por linea virtual** - ByteTrack para IDs persistentes + LineZone para contar cruces con direccion
@@ -31,11 +31,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. El entorno virtual de Python 3.12 se activa y contiene todas las dependencias del stack (FastAPI, OpenCV, ultralytics, supervision, aiosqlite, SQLAlchemy, pydantic-settings, uvicorn)
   2. La estructura de directorios del proyecto existe (backend/, frontend/, tests/) y el comando `python -c "import fastapi, cv2, ultralytics, supervision"` no da error
   3. Un fichero `.env.example` documenta todas las variables de configuracion necesarias con valores por defecto
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
-- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
+- [x] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 2: Captura RTSP y stream MJPEG
 **Goal**: El usuario ve el video en directo de la camara Tapo C220 en su navegador, sin procesamiento de deteccion
@@ -49,7 +49,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [x] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
 - [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 3: Deteccion de personas con YOLO26n
@@ -150,7 +150,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Scaffolding y entorno | 0/? | Not started | - |
+| 1. Scaffolding y entorno | 2/2 | Complete   | 2026-04-16 |
 | 2. Captura RTSP y stream MJPEG | 0/? | Not started | - |
 | 3. Deteccion de personas con YOLO26n | 0/? | Not started | - |
 | 4. Tracking y conteo por linea virtual | 0/? | Not started | - |
