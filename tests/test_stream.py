@@ -84,7 +84,10 @@ def test_reconnect_on_failure(mock_sleep, mock_video_capture):
 @patch("backend.stream.time.sleep")
 def test_backoff_increases(mock_sleep, mock_video_capture):
     """Reconnection delays grow exponentially: 1, 2, 4, 8, 16."""
+    import threading as _threading
+
     cap = mock_video_capture._mock_cap
+    reconnected = _threading.Event()
 
     # Fail 5 reconnection attempts, then succeed
     fail_cap = MagicMock()
@@ -92,18 +95,21 @@ def test_backoff_increases(mock_sleep, mock_video_capture):
 
     success_cap = MagicMock()
     success_cap.isOpened.return_value = True
-    success_cap.read.return_value = (True, _make_frame(1))
+    success_cap.read.side_effect = lambda: (
+        reconnected.set() or (True, _make_frame(1))
+    )
 
-    # First call (initial), then 5 failures, then success
-    caps = [cap] + [fail_cap] * 5 + [success_cap] + [success_cap] * 50
+    # First call (initial _create_capture), then 5 failures, then success
+    caps = [cap] + [fail_cap] * 5 + [success_cap] + [success_cap] * 200
     mock_video_capture.side_effect = caps
 
-    # Initial cap.read fails to trigger reconnect
+    # Initial cap.read fails to trigger _reconnect
     cap.read.return_value = (False, None)
 
     stream = RTSPStream("rtsp://fake")
     stream.start()
-    time.sleep(0.5)
+    # Wait until reconnection succeeds (event set by success_cap.read)
+    reconnected.wait(timeout=5.0)
     stream.stop()
 
     # Extract sleep delays from reconnection
