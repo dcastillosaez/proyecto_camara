@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [x] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
 - [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 2: Captura RTSP y stream MJPEG
