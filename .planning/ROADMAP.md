@@ -31,7 +31,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. El entorno virtual de Python 3.12 se activa y contiene todas las dependencias del stack (FastAPI, OpenCV, ultralytics, supervision, aiosqlite, SQLAlchemy, pydantic-settings, uvicorn)
   2. La estructura de directorios del proyecto existe (backend/, frontend/, tests/) y el comando `python -c "import fastapi, cv2, ultralytics, supervision"` no da error
   3. Un fichero `.env.example` documenta todas las variables de configuracion necesarias con valores por defecto
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 2: Captura RTSP y stream MJPEG
 **Goal**: El usuario ve el video en directo de la camara Tapo C220 en su navegador, sin procesamiento de deteccion
@@ -42,7 +46,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Si se desconecta la camara o la red, el sistema se reconecta automaticamente con backoff exponencial sin crashear
   3. El hilo de captura drena el buffer RTSP activamente: el video nunca acumula retraso progresivo aunque se deje corriendo horas
   4. Desconectar el navegador libera los recursos del generador MJPEG sin dejar procesos zombi
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 3: Deteccion de personas con YOLO26n
 **Goal**: El stream MJPEG muestra bounding boxes con nivel de confianza sobre cada persona detectada, sin degradar la fluidez del video
@@ -53,7 +61,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Cada bounding box muestra el porcentaje de confianza de la deteccion como texto en overlay
   3. La inferencia YOLO26n se ejecuta en un hilo separado del de captura: si la deteccion tarda mas de lo normal, el stream de captura sigue funcionando sin bloqueo
   4. El nivel de confianza minimo (default 0.45) filtra detecciones de baja calidad: solo aparecen boxes cuando la confianza supera el umbral
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 4: Tracking y conteo por linea virtual
 **Goal**: El sistema cuenta personas que cruzan una linea virtual sin contar dos veces a la misma persona
@@ -64,7 +76,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Una linea virtual es visible en el stream y el sistema cuenta los cruces en ambas direcciones (entrada/salida)
   3. Una persona que permanece parada frente a la camara durante 1 minuto genera exactamente 0 o 1 evento de cruce, no cientos
   4. Los eventos de cruce registran timestamp y direccion, listos para persistir
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 5: Persistencia en SQLite
 **Goal**: Los eventos de cruce se almacenan en SQLite y sobreviven reinicios del servidor
@@ -75,7 +91,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Los accesos a la base de datos son asincronos (aiosqlite): el event loop de FastAPI nunca se bloquea esperando una escritura
   3. Tras reiniciar el servidor con `uvicorn`, los eventos historicos anteriores al reinicio siguen disponibles y consultables
   4. La base de datos opera en WAL mode, permitiendo lecturas concurrentes mientras el hilo de deteccion escribe
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 6: API REST y WebSocket
 **Goal**: Los datos de deteccion y conteo son accesibles via endpoints HTTP y eventos en tiempo real
@@ -86,7 +106,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `GET /api/events` devuelve los ultimos 50 eventos con timestamp y direccion en formato JSON
   3. Una conexion WebSocket a `WS /ws` recibe un mensaje JSON cada vez que alguien cruza la linea, con timestamp, total del dia y ultimo conteo horario
   4. `GET /video_feed` sirve el stream MJPEG procesado (con bounding boxes y linea virtual) y cierra limpiamente al desconectar el cliente
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 7: Dashboard web
 **Goal**: El usuario accede a un panel unico donde ve el video en directo, el contador de personas, el histograma de actividad y los eventos recientes
@@ -98,7 +122,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. El histograma de barras (Chart.js) muestra las 24 horas con la actividad de cada hora y se actualiza al recibir nuevos eventos
   4. El dashboard muestra un indicador visual de estado de conexion a la camara (online/reconectando) que cambia en tiempo real
   5. El dashboard usa modo oscuro por defecto y es legible en movil, tablet y PC sin scroll horizontal
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 **UI hint**: yes
 
 ### Phase 8: Configuracion centralizada y arranque
@@ -109,7 +137,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. Todas las variables configurables (URL camara, confianza YOLO, puerto del servidor, ruta de la base de datos) se leen de un fichero `.env` y se validan al arrancar con pydantic-settings: si falta una variable critica, el servidor muestra un error claro y no arranca
   2. El sistema completo arranca con un unico comando `uvicorn backend.main:app --reload` y sirve el dashboard funcional
   3. El fichero `.env.example` documenta cada variable con su valor por defecto y una descripcion breve
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
+- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ## Progress
 
