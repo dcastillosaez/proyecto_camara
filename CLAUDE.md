@@ -243,13 +243,23 @@ Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta
 <!-- GSD:conventions-start source:CONVENTIONS.md -->
 ## Conventions
 
-Conventions not yet established. Will populate as patterns emerge during development.
+- **Python 3.12** obligatorio. Crear venv con `py -3.12 -m venv .venv`. Activar con `.venv/Scripts/activate` (Windows).
+- **Imports directos** con `.venv/Scripts/python.exe` en scripts de verificacion para evitar problemas de activacion en subshells.
+- **Modulos placeholder**: solo docstring de una linea, sin funciones vacias. Cada fichero importable sin error.
+- **requirements.txt** con `>=` (no pins exactos). Sin `databases` (encode) ni `python-dotenv`.
+- **Config**: `backend/config.py` con `pydantic-settings` BaseSettings + `@lru_cache` para singleton.
+- **No pyproject.toml** hasta Phase 8. No Docker, no pre-commit hooks en v1.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
 ## Architecture
 
-Architecture not yet mapped. Follow existing patterns found in the codebase.
+- **Entorno**: Windows 11, Python 3.12 via `py -3.12`, venv en `.venv/` (Scripts/, no bin/)
+- **Estructura**: `backend/` (main, stream, detector, tracker, database, config), `frontend/` (index.html, app.js), `tests/`, `data/`
+- **Flujo de datos**: Camara RTSP → stream.py (hilo) → detector.py (YOLO26n) → tracker.py (ByteTrack+LineZone) → database.py (SQLite async) → WebSocket → frontend
+- **Streaming**: MJPEG sobre HTTP via FastAPI StreamingResponse
+- **DB**: SQLite WAL mode, aiosqlite + SQLAlchemy 2.0 async
+- **Frontend**: HTML+JS vanilla, Chart.js CDN, sin build step
 <!-- GSD:architecture-end -->
 
 <!-- GSD:workflow-start source:GSD defaults -->
