@@ -140,3 +140,90 @@ def test_get_frame_none_before_start():
     """Before any frame arrives, get_frame() returns None."""
     stream = RTSPStream("rtsp://fake")
     assert stream.get_frame() is None
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — FastAPI /video_feed endpoint
+# ---------------------------------------------------------------------------
+
+import asyncio as _asyncio
+
+import pytest
+import httpx
+from httpx import ASGITransport
+from unittest.mock import AsyncMock
+
+
+@pytest.fixture
+def fake_jpeg_frame():
+    """Return a minimal synthetic BGR frame for JPEG encoding."""
+    return np.zeros((100, 100, 3), dtype=np.uint8)
+
+
+@pytest.mark.asyncio
+async def test_video_feed_returns_mjpeg_content_type(fake_jpeg_frame):
+    """GET /video_feed returns multipart/x-mixed-replace content type."""
+    import backend.main as main_module
+
+    async def _finite_generator():
+        """Yield one MJPEG frame then stop."""
+        import cv2
+        _, jpeg = cv2.imencode(".jpg", fake_jpeg_frame)
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n"
+            + jpeg.tobytes()
+            + b"\r\n"
+        )
+
+    with patch.object(main_module, "mjpeg_generator", _finite_generator):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=main_module.app), base_url="http://test"
+        ) as client:
+            response = await client.get("/video_feed")
+
+    assert response.status_code == 200
+    assert "multipart/x-mixed-replace" in response.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_video_feed_contains_jpeg_boundary(fake_jpeg_frame):
+    """Response body starts with MJPEG boundary marker."""
+    import backend.main as main_module
+
+    async def _finite_generator():
+        """Yield one MJPEG frame then stop."""
+        import cv2
+        _, jpeg = cv2.imencode(".jpg", fake_jpeg_frame)
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n"
+            + jpeg.tobytes()
+            + b"\r\n"
+        )
+
+    with patch.object(main_module, "mjpeg_generator", _finite_generator):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=main_module.app), base_url="http://test"
+        ) as client:
+            response = await client.get("/video_feed")
+
+    assert b"--frame" in response.content
+    assert b"Content-Type: image/jpeg" in response.content
+
+
+@pytest.mark.asyncio
+async def test_app_creates_rtsp_stream_on_startup():
+    """Lifespan calls RTSPStream.start() on startup."""
+    with patch("backend.main.RTSPStream") as MockStream:
+        instance = MockStream.return_value
+        instance.get_frame.return_value = None
+
+        import backend.main as main_module
+
+        # Trigger lifespan manually
+        async with main_module.lifespan(main_module.app):
+            pass
+
+        instance.start.assert_called_once()
+        instance.stop.assert_called_once()
