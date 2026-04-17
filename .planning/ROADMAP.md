@@ -46,10 +46,10 @@ Plans:
   2. Si se desconecta la camara o la red, el sistema se reconecta automaticamente con backoff exponencial sin crashear
   3. El hilo de captura drena el buffer RTSP activamente: el video nunca acumula retraso progresivo aunque se deje corriendo horas
   4. Desconectar el navegador libera los recursos del generador MJPEG sin dejar procesos zombi
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
-- [ ] 02-01-PLAN.md — RTSPStream con drain thread, reconexion y tests unitarios
+- [x] 02-01-PLAN.md — RTSPStream con drain thread, reconexion y tests unitarios
 - [ ] 02-02-PLAN.md — FastAPI app con endpoint /video_feed MJPEG y verificacion manual
 
 ### Phase 3: Deteccion de personas con YOLO26n
@@ -151,7 +151,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Scaffolding y entorno | 2/2 | Complete   | 2026-04-16 |
-| 2. Captura RTSP y stream MJPEG | 0/2 | Planned | - |
+| 2. Captura RTSP y stream MJPEG | 1/2 | In Progress|  |
 | 3. Deteccion de personas con YOLO26n | 0/? | Not started | - |
 | 4. Tracking y conteo por linea virtual | 0/? | Not started | - |
 | 5. Persistencia en SQLite | 0/? | Not started | - |

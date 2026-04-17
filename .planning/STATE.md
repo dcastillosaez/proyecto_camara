@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-04-16T21:35:50.365Z"
-last_activity: 2026-04-16
+status: executing
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-04-17T06:28:15.405Z"
+last_activity: 2026-04-17
 progress:
   total_phases: 8
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 4
+  completed_plans: 3
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-16)
 
 **Core value:** Ver en tiempo real cuantas personas han pasado frente a la camara y a que horas hay mas actividad, con el video en vivo integrado en el mismo panel.
-**Current focus:** Phase 01 — scaffolding-y-entorno
+**Current focus:** Phase 02 — captura-rtsp-y-stream-mjpeg
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-04-16
+Phase: 02 (captura-rtsp-y-stream-mjpeg) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-04-17
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01 P01 | 1min | 2 tasks | 16 files |
 | Phase 01 P02 | 4min | 1 tasks | 2 files |
+| Phase 02 P01 | 4 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,8 @@ Recent decisions affecting current work:
 - pydantic-settings para configuracion centralizada
 - [Phase 01]: Operador >= en requirements.txt para flexibilidad de versiones
 - [Phase 01]: Invocar .venv/Scripts/python.exe directamente, sin activar venv en subshells
+- [Phase 02]: Local cap reference en capture_loop para evitar race condition con stop()
+- [Phase 02]: Event-based synchronization en test_backoff_increases en vez de time.sleep
 
 ### Pending Todos
 
@@ -80,6 +83,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-16T21:34:14.648Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-04-17T06:28:15.401Z
+Stopped at: Completed 02-01-PLAN.md
 Resume file: None
