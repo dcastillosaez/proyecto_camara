@@ -1,3 +1,9 @@
+# Node
+node_modules/
+
+# Claude worktrees
+.claude/worktrees/
+
 # Python
 __pycache__/
 *.py[cod]
