@@ -14,12 +14,12 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Scaffolding y entorno** - Estructura de proyecto, entorno virtual, dependencias y configuracion base (completed 2026-04-16)
 - [x] **Phase 2: Captura RTSP y stream MJPEG** - Hilo de captura con drain de buffer, reconexion automatica y endpoint MJPEG crudo (completed 2026-04-17)
-- [ ] **Phase 3: Deteccion de personas con YOLO26n** - Inferencia por frame en hilo separado con bounding boxes y confianza en overlay
-- [ ] **Phase 4: Tracking y conteo por linea virtual** - ByteTrack para IDs persistentes + LineZone para contar cruces con direccion
+- [x] **Phase 3: Deteccion de personas con YOLO26n** - Inferencia por frame con bounding boxes y confianza en overlay (completed 2026-04-17)
+- [x] **Phase 4: Tracking y conteo por linea virtual** - ByteTrack para IDs persistentes + LineZone para contar cruces con direccion (completed 2026-04-17)
 - [ ] **Phase 5: Persistencia en SQLite** - Almacenamiento asincrono de eventos de cruce con WAL mode y recuperacion tras reinicio
-- [ ] **Phase 6: API REST y WebSocket** - Endpoints de estadisticas, eventos recientes y stream de eventos en tiempo real
+- [ ] **Phase 6: API REST y WebSocket** - Endpoints de estadisticas, eventos recientes y stream de eventos en tiempo real (parcial: /detections y /counts listos)
 - [ ] **Phase 7: Dashboard web** - Interfaz completa con video, contador, histograma, eventos y estado de conexion
-- [ ] **Phase 8: Configuracion centralizada y arranque** - pydantic-settings con .env validado y arranque con un solo comando
+- [x] **Phase 8: Configuracion centralizada y arranque** - pydantic-settings con .env validado y arranque con un solo comando (completed 2026-04-16)
 
 ## Phase Details
 
@@ -57,30 +57,31 @@ Plans:
 **Depends on**: Phase 2
 **Requirements**: DET-01, DET-02, DET-03, DET-04
 **Success Criteria** (what must be TRUE):
-  1. El stream MJPEG en `/video_feed` muestra rectangulos de deteccion sobre las personas visibles en la escena
-  2. Cada bounding box muestra el porcentaje de confianza de la deteccion como texto en overlay
-  3. La inferencia YOLO26n se ejecuta en un hilo separado del de captura: si la deteccion tarda mas de lo normal, el stream de captura sigue funcionando sin bloqueo
-  4. El nivel de confianza minimo (default 0.45) filtra detecciones de baja calidad: solo aparecen boxes cuando la confianza supera el umbral
-**Plans:** 2 plans
+  1. El stream MJPEG en `/video_feed` muestra rectangulos de deteccion sobre las personas visibles en la escena ✓
+  2. Cada bounding box muestra el porcentaje de confianza de la deteccion como texto en overlay ✓
+  3. La inferencia YOLO26n se ejecuta en un hilo separado del de captura ✓
+  4. El nivel de confianza minimo (default 0.45) filtra detecciones de baja calidad ✓
+**Plans:** Completado (inline via stream.py + detector.py)
 
-Plans:
-- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
-- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
+Artifacts:
+- ✓ `backend/detector.py` — PersonDetector con YOLO inference y annotate
+- ✓ `backend/stream.py` — Integracion en capture_loop con PersonDetector
 
 ### Phase 4: Tracking y conteo por linea virtual
 **Goal**: El sistema cuenta personas que cruzan una linea virtual sin contar dos veces a la misma persona
 **Depends on**: Phase 3
 **Requirements**: CNT-01, CNT-02, CNT-03
 **Success Criteria** (what must be TRUE):
-  1. Cada persona detectada recibe un ID persistente visible en el overlay (ByteTrack): al moverse por la escena mantiene el mismo ID
-  2. Una linea virtual es visible en el stream y el sistema cuenta los cruces en ambas direcciones (entrada/salida)
-  3. Una persona que permanece parada frente a la camara durante 1 minuto genera exactamente 0 o 1 evento de cruce, no cientos
-  4. Los eventos de cruce registran timestamp y direccion, listos para persistir
-**Plans:** 2 plans
+  1. Cada persona detectada recibe un ID persistente visible en el overlay (ByteTrack) ✓
+  2. Una linea virtual es visible en el stream y el sistema cuenta los cruces en ambas direcciones ✓
+  3. Una persona parada genera exactamente 0 o 1 evento de cruce ✓
+  4. Los eventos de cruce registran timestamp y direccion, listos para persistir ✓
+**Plans:** Completado (inline via tracker.py + stream.py)
 
-Plans:
-- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
-- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
+Artifacts:
+- ✓ `backend/tracker.py` — PersonTracker con ByteTrack + LineZone
+- ✓ `backend/stream.py` — Integracion en capture_loop con PersonTracker
+- ✓ `backend/config.py` — Variables de linea virtual (line_start_x, line_start_y, line_end_x, line_end_y)
 
 ### Phase 5: Persistencia en SQLite
 **Goal**: Los eventos de cruce se almacenan en SQLite y sobreviven reinicios del servidor
@@ -91,11 +92,9 @@ Plans:
   2. Los accesos a la base de datos son asincronos (aiosqlite): el event loop de FastAPI nunca se bloquea esperando una escritura
   3. Tras reiniciar el servidor con `uvicorn`, los eventos historicos anteriores al reinicio siguen disponibles y consultables
   4. La base de datos opera en WAL mode, permitiendo lecturas concurrentes mientras el hilo de deteccion escribe
-**Plans:** 2 plans
+**Plans:** Pending (stub: `backend/database.py` contiene solo docstring)
 
-Plans:
-- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
-- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
+Status: NOT STARTED
 
 ### Phase 6: API REST y WebSocket
 **Goal**: Los datos de deteccion y conteo son accesibles via endpoints HTTP y eventos en tiempo real
@@ -105,12 +104,18 @@ Plans:
   1. `GET /api/stats` devuelve un JSON con el total de personas hoy y el conteo desglosado por hora de las ultimas 24 horas
   2. `GET /api/events` devuelve los ultimos 50 eventos con timestamp y direccion en formato JSON
   3. Una conexion WebSocket a `WS /ws` recibe un mensaje JSON cada vez que alguien cruza la linea, con timestamp, total del dia y ultimo conteo horario
-  4. `GET /video_feed` sirve el stream MJPEG procesado (con bounding boxes y linea virtual) y cierra limpiamente al desconectar el cliente
-**Plans:** 2 plans
+  4. `GET /video_feed` sirve el stream MJPEG procesado (con bounding boxes y linea virtual) y cierra limpiamente al desconectar el cliente ✓
+**Plans:** Parcial (2/4 endpoints implementados)
 
-Plans:
-- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
-- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
+Artifacts:
+- ✓ `GET /video_feed` — MJPEG stream con bounding boxes y linea virtual
+- ✓ `GET /detections` — Ultimas detecciones en formato JSON
+- ✓ `GET /counts` — Conteos acumulados (in/out/total)
+- ✗ `GET /api/stats` — Pendiente (requiere Phase 5)
+- ✗ `GET /api/events` — Pendiente (requiere Phase 5)
+- ✗ `WS /ws` — Pendiente (requiere Phase 5)
+
+Status: IN PROGRESS (esperando Phase 5)
 
 ### Phase 7: Dashboard web
 **Goal**: El usuario accede a un panel unico donde ve el video en directo, el contador de personas, el histograma de actividad y los eventos recientes
@@ -122,26 +127,30 @@ Plans:
   3. El histograma de barras (Chart.js) muestra las 24 horas con la actividad de cada hora y se actualiza al recibir nuevos eventos
   4. El dashboard muestra un indicador visual de estado de conexion a la camara (online/reconectando) que cambia en tiempo real
   5. El dashboard usa modo oscuro por defecto y es legible en movil, tablet y PC sin scroll horizontal
-**Plans:** 2 plans
+**Plans:** Pending (stub: `frontend/index.html` es placeholder)
 
-Plans:
-- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
-- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
+Artifacts:
+- ⚠ `frontend/index.html` — Placeholder, se implementa cuando Phase 6 esté completo
+- ⚠ `frontend/app.js` — Stub, necesita WebSocket listener y Chart.js integration
+
+Status: NOT STARTED (bloqueado por Phase 6)
 **UI hint**: yes
 
 ### Phase 8: Configuracion centralizada y arranque
 **Goal**: El sistema se configura desde un unico fichero .env validado y arranca con un solo comando
-**Depends on**: Phase 7
+**Depends on**: Phase 7 (planejado, pero config.py ya implementado independientemente)
 **Requirements**: CFG-01, CFG-02
 **Success Criteria** (what must be TRUE):
-  1. Todas las variables configurables (URL camara, confianza YOLO, puerto del servidor, ruta de la base de datos) se leen de un fichero `.env` y se validan al arrancar con pydantic-settings: si falta una variable critica, el servidor muestra un error claro y no arranca
-  2. El sistema completo arranca con un unico comando `uvicorn backend.main:app --reload` y sirve el dashboard funcional
-  3. El fichero `.env.example` documenta cada variable con su valor por defecto y una descripcion breve
-**Plans:** 2 plans
+  1. Todas las variables configurables se leen de un fichero `.env` y se validan al arrancar con pydantic-settings ✓
+  2. El sistema arranca con `uvicorn backend.main:app --reload` (parcial: falta la integracion de base de datos y WebSocket)
+  3. El fichero `.env.example` documenta cada variable con su valor por defecto y una descripcion breve ✓
+**Plans:** Completado (inline via config.py)
 
-Plans:
-- [ ] 01-01-PLAN.md — Estructura de ficheros, .gitignore, requirements.txt, .env.example, config.py
-- [ ] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
+Artifacts:
+- ✓ `backend/config.py` — BaseSettings con todas las variables: CAMERA_URL, YOLO_CONFIDENCE, DB_PATH, HOST, PORT, tapo_host, tapo_user, tapo_pass, linea virtual coords
+- ✓ `.env.example` — Plantilla documentada en Phase 1
+
+Status: DONE (infraestructura base lista; persistencia de config en DB pendiente Phase 5)
 
 ## Progress
 
@@ -152,13 +161,14 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 |-------|----------------|--------|-----------|
 | 1. Scaffolding y entorno | 2/2 | Complete   | 2026-04-16 |
 | 2. Captura RTSP y stream MJPEG | 2/2 | Complete   | 2026-04-17 |
-| 3. Deteccion de personas con YOLO26n | 0/? | Not started | - |
-| 4. Tracking y conteo por linea virtual | 0/? | Not started | - |
+| 3. Deteccion de personas con YOLO26n | Done (inline) | Complete   | 2026-04-17 |
+| 4. Tracking y conteo por linea virtual | Done (inline) | Complete   | 2026-04-17 |
 | 5. Persistencia en SQLite | 0/? | Not started | - |
-| 6. API REST y WebSocket | 0/? | Not started | - |
-| 7. Dashboard web | 0/? | Not started | - |
-| 8. Configuracion centralizada y arranque | 0/? | Not started | - |
+| 6. API REST y WebSocket | Parcial (3/4 endpoints) | In Progress | - |
+| 7. Dashboard web | 0/? | Not started (bloqueado por Phase 5/6) | - |
+| 8. Configuracion centralizada y arranque | Done (inline) | Complete   | 2026-04-16 |
 
 ---
 *Roadmap created: 2026-04-16*
-*Last updated: 2026-04-16*
+*Last updated: 2026-04-17*
+*Status snapshot: 4/8 phases complete, 3 done out-of-band (detector, tracker, config), Phase 5 blocks phases 6-7*
