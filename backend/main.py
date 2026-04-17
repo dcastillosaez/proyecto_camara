@@ -4,17 +4,21 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from pathlib import Path
 
 import cv2
 import supervision as sv
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.config import get_settings
 from backend.detector import PersonDetector
 from backend.ptz import router as ptz_router
 from backend.stream import RTSPStream
 from backend.tracker import PersonTracker
+
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(ptz_router)
+app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+
+@app.get("/")
+async def root():
+    return FileResponse(FRONTEND_DIR / "index.html")
 
 
 async def mjpeg_generator():

@@ -1,12 +1,610 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tapo Dashboard</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tapo C220 · Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #020617;
+      color: #f8fafc;
+      min-height: 100svh;
+      display: flex;
+      flex-direction: column;
+      margin: 0;
+    }
+
+    .mono { font-family: 'JetBrains Mono', monospace; }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+
+    @keyframes pulse-ring {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.35; transform: scale(0.75); }
+    }
+    .pulse { animation: pulse-ring 2s ease-in-out infinite; }
+
+    .ptz-btn {
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 10px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #94a3b8;
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease, border-color 120ms ease, transform 80ms ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .ptz-btn:hover  { background: #2d3f52; color: #e2e8f0; border-color: #475569; }
+    .ptz-btn:active { background: #2563eb; color: #fff; border-color: #3b82f6; transform: scale(0.92); }
+    .ptz-btn:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+    .ptz-btn.busy   { opacity: 0.5; pointer-events: none; }
+
+    @keyframes stat-pop {
+      0%   { transform: scale(1.18); }
+      100% { transform: scale(1); }
+    }
+    .stat-pop { animation: stat-pop 250ms ease-out; }
+
+    .card { transition: border-color 200ms ease; }
+
+    .preset-btn {
+      font-size: 11px; padding: 5px 12px; border-radius: 8px;
+      background: #1e293b; border: 1px solid #334155; color: #94a3b8;
+      cursor: pointer; transition: all 120ms ease; font-family: inherit;
+    }
+    .preset-btn:hover  { background: #2d3f52; color: #e2e8f0; border-color: #475569; }
+    .preset-btn:active { background: #2563eb; color: #fff; border-color: #3b82f6; }
+
+    .event-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 10px; border-radius: 8px;
+      background: #1e293b; border: 1px solid #1e3a5f;
+      font-size: 12px; animation: slide-in 200ms ease;
+    }
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateY(-5px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .toast {
+      transform: translateY(8px);
+      opacity: 0;
+      transition: transform 280ms ease-out, opacity 280ms ease-out;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+  </style>
 </head>
 <body>
-    <h1>Tapo Dashboard</h1>
-    <p>Placeholder — se implementa en Phase 7.</p>
+
+  <!-- ══════════════════════ HEADER ══════════════════════ -->
+  <header class="bg-slate-900/95 backdrop-blur-sm border-b border-slate-800 px-5 py-3 flex items-center justify-between sticky top-0 z-20">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-blue-900/50">
+        <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-sm font-semibold text-slate-50 leading-tight">Tapo C220</h1>
+        <p class="text-xs text-slate-500 leading-tight mono">192.168.1.132 · LAN local</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <div class="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700">
+        <svg class="w-3 h-3 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        YOLOv8n
+      </div>
+
+      <div id="cam-status" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-medium" role="status" aria-live="polite">
+        <span class="w-1.5 h-1.5 rounded-full bg-green-400 pulse" id="status-dot" aria-hidden="true"></span>
+        <span id="status-text">EN VIVO</span>
+      </div>
+
+      <time id="clock" class="text-slate-500 text-xs mono hidden md:block" aria-label="Hora actual">--:--:--</time>
+    </div>
+  </header>
+
+  <!-- ══════════════════════ MAIN ══════════════════════ -->
+  <main class="flex-1 p-4 grid grid-cols-1 lg:grid-cols-5 gap-4 max-w-[1600px] mx-auto w-full" role="main">
+
+    <!-- ─── LEFT: Video + PTZ (3 columnas) ─── -->
+    <section class="lg:col-span-3 flex flex-col gap-4" aria-label="Feed de vídeo y control de cámara">
+
+      <!-- VIDEO CARD -->
+      <div class="card relative rounded-2xl overflow-hidden bg-black border border-slate-800 shadow-2xl shadow-black/60">
+        <img
+          id="video-feed"
+          src="/video_feed"
+          alt="Stream en tiempo real de la cámara Tapo C220"
+          style="width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#000"
+          onerror="document.getElementById('video-offline').style.display='flex'; this.style.display='none';"
+        >
+
+        <!-- Offline fallback -->
+        <div id="video-offline" style="display:none" class="w-full bg-slate-950 flex-col items-center justify-center gap-3 py-20">
+          <svg class="w-14 h-14 text-slate-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+          <p class="text-slate-500 text-sm">Cámara sin señal</p>
+          <button
+            onclick="document.getElementById('video-feed').src='/video_feed?t='+Date.now(); document.getElementById('video-offline').style.display='none'; document.getElementById('video-feed').style.display='block';"
+            class="text-xs px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 cursor-pointer transition-colors mt-1"
+          >Reintentar conexión</button>
+        </div>
+
+        <!-- REC badge (top-left) -->
+        <div class="absolute top-3 left-3 pointer-events-none">
+          <span class="inline-flex items-center gap-1.5 bg-red-600/90 backdrop-blur-sm text-white text-xs font-bold px-2.5 py-1 rounded-lg shadow">
+            <span class="w-1.5 h-1.5 rounded-full bg-white pulse" aria-hidden="true"></span>REC
+          </span>
+        </div>
+
+        <!-- Detection badge (top-right) -->
+        <div class="absolute top-3 right-3 pointer-events-none">
+          <span class="inline-flex items-center gap-1.5 bg-black/60 backdrop-blur-sm text-green-400 text-xs font-medium px-2.5 py-1 rounded-lg border border-green-500/30">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span id="det-num" aria-live="polite" aria-label="Personas detectadas ahora">0</span>
+          </span>
+        </div>
+
+        <!-- Bottom info bar -->
+        <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent px-4 py-3 pt-8 pointer-events-none">
+          <div class="flex items-center justify-between">
+            <span class="text-white/45 text-xs mono">rtsp://192.168.1.132:554/stream1</span>
+            <div class="flex items-center gap-2 text-white/45 text-xs">
+              <span>720p</span><span aria-hidden="true">·</span><span>30fps</span><span aria-hidden="true">·</span><span>MJPEG</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PTZ CONTROLS CARD -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-5">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M12 2v3m0 14v3m10-10h-3M5 12H2m15.07-8.07-2.12 2.12M9.05 14.95l-2.12 2.12m14.14 0-2.12-2.12M9.05 9.05 6.93 6.93"/>
+            </svg>
+            <h2 class="text-sm font-semibold text-slate-200">Control PTZ</h2>
+            <span class="hidden sm:inline text-xs text-slate-700">· ← → ↑ ↓ · Espacio = parar</span>
+          </div>
+          <button
+            id="ptz-stop-btn"
+            aria-label="Parar movimiento de cámara"
+            class="text-xs px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 active:bg-red-500/30 text-red-400 rounded-xl border border-red-500/30 cursor-pointer transition-colors font-semibold"
+          >■ PARAR</button>
+        </div>
+
+        <div class="flex flex-col sm:flex-row items-center sm:items-start gap-6">
+
+          <!-- D-PAD -->
+          <div class="flex-shrink-0 flex flex-col items-center gap-3">
+            <div class="grid grid-cols-3 gap-1.5" style="width:138px" role="group" aria-label="Dirección de movimiento">
+              <div></div>
+              <button class="ptz-btn" data-dir="up"    aria-label="Mover cámara arriba">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
+              </button>
+              <div></div>
+
+              <button class="ptz-btn" data-dir="left"  aria-label="Mover cámara izquierda">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <div class="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center" aria-hidden="true">
+                <div class="w-2 h-2 rounded-full bg-slate-600 ring-2 ring-slate-700"></div>
+              </div>
+              <button class="ptz-btn" data-dir="right" aria-label="Mover cámara derecha">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+
+              <div></div>
+              <button class="ptz-btn" data-dir="down"  aria-label="Mover cámara abajo">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div></div>
+            </div>
+
+            <!-- Steps slider -->
+            <div class="flex items-center gap-2 w-full px-1">
+              <span class="text-xs text-slate-600 w-8">Paso</span>
+              <input
+                type="range" id="ptz-steps" min="1" max="15" value="3"
+                class="flex-1 h-1.5 rounded-full accent-blue-500 cursor-pointer"
+                aria-label="Pasos por movimiento"
+              >
+              <span id="ptz-steps-val" class="text-xs text-slate-400 mono w-4 text-right">3</span>
+            </div>
+          </div>
+
+          <!-- PRESETS + READOUT -->
+          <div class="flex-1 w-full min-w-0">
+            <div class="flex items-center justify-between mb-2">
+              <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Presets guardados</p>
+              <button id="load-presets-btn" class="text-xs text-blue-400 hover:text-blue-300 cursor-pointer transition-colors rounded">
+                Recargar
+              </button>
+            </div>
+            <div id="presets-container" class="flex flex-wrap gap-2 min-h-[40px] items-start content-start mb-4" aria-label="Presets de posición">
+              <span class="text-xs text-slate-700 italic">Cargando presets…</span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 border-t border-slate-800 pt-4">
+              <div class="bg-slate-800/60 rounded-xl p-3 text-center border border-slate-800">
+                <p class="text-xs text-slate-600 mb-1">Pan</p>
+                <p id="ptz-pan" class="text-lg font-semibold text-slate-300 mono leading-none">—</p>
+                <p class="text-xs text-slate-700 mt-0.5">horizontal</p>
+              </div>
+              <div class="bg-slate-800/60 rounded-xl p-3 text-center border border-slate-800">
+                <p class="text-xs text-slate-600 mb-1">Tilt</p>
+                <p id="ptz-tilt" class="text-lg font-semibold text-slate-300 mono leading-none">—</p>
+                <p class="text-xs text-slate-700 mt-0.5">vertical</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── RIGHT: Stats + Chart + WS + Events (2 columnas) ─── -->
+    <section class="lg:col-span-2 flex flex-col gap-4" aria-label="Estadísticas y eventos">
+
+      <!-- STAT CARDS -->
+      <div class="grid grid-cols-3 gap-3">
+        <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 text-center">
+          <div class="flex justify-center mb-1.5">
+            <svg class="w-3.5 h-3.5 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <p class="text-xs text-slate-500 font-medium mb-1.5">Hoy</p>
+          <p id="stat-total" class="text-3xl font-bold text-green-400 tabular-nums leading-none" aria-live="polite" aria-label="Total personas hoy">—</p>
+          <p class="text-xs text-slate-700 mt-1.5">personas</p>
+        </div>
+        <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 text-center">
+          <div class="flex justify-center mb-1.5">
+            <svg class="w-3.5 h-3.5 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
+          </div>
+          <p class="text-xs text-slate-500 font-medium mb-1.5">Entradas</p>
+          <p id="stat-in" class="text-3xl font-bold text-blue-400 tabular-nums leading-none" aria-live="polite" aria-label="Cruces de entrada">—</p>
+          <p class="text-xs text-slate-700 mt-1.5">cruces IN</p>
+        </div>
+        <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 text-center">
+          <div class="flex justify-center mb-1.5">
+            <svg class="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <p class="text-xs text-slate-500 font-medium mb-1.5">Salidas</p>
+          <p id="stat-out" class="text-3xl font-bold text-amber-400 tabular-nums leading-none" aria-live="polite" aria-label="Cruces de salida">—</p>
+          <p class="text-xs text-slate-700 mt-1.5">cruces OUT</p>
+        </div>
+      </div>
+
+      <!-- ACTIVITY CHART -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <h2 class="text-sm font-semibold text-slate-200">Actividad por hora</h2>
+          </div>
+          <span class="text-xs text-slate-600 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">Últimas 24h</span>
+        </div>
+        <div class="relative" style="height:148px">
+          <canvas id="activity-chart" aria-label="Histograma de actividad por hora (sin datos aún)" role="img"></canvas>
+          <div id="chart-placeholder" class="absolute inset-0 flex flex-col items-center justify-center rounded-xl pointer-events-none">
+            <svg class="w-7 h-7 text-slate-800 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </svg>
+            <p class="text-slate-500 text-xs font-medium">Disponible con SQLite</p>
+            <p class="text-slate-700 text-xs mt-0.5">Phase 5 pendiente</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- WEBSOCKET PLACEHOLDER -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-3.5 flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center flex-shrink-0" aria-hidden="true">
+          <svg class="w-4 h-4 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/>
+          </svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-xs font-semibold text-slate-400">WebSocket <span class="mono font-normal text-slate-600">/ws</span></p>
+          <p class="text-xs text-slate-700 truncate">Eventos en tiempo real · Phase 6</p>
+        </div>
+        <span class="flex-shrink-0 text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-600 border border-slate-700 font-medium" aria-label="Estado: pendiente">Pendiente</span>
+      </div>
+
+      <!-- EVENTS LIST -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col" style="min-height:0">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            <h2 class="text-sm font-semibold text-slate-200">Eventos recientes</h2>
+          </div>
+          <span id="events-badge" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-600 border border-slate-700 tabular-nums" aria-label="Número de eventos registrados">0</span>
+        </div>
+        <div
+          id="events-list"
+          class="overflow-y-auto flex flex-col gap-1.5"
+          style="max-height:200px"
+          aria-label="Lista de eventos"
+          aria-live="polite"
+        >
+          <div id="events-empty" class="flex flex-col items-center justify-center py-8 text-center">
+            <svg class="w-8 h-8 text-slate-800 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+            <p class="text-slate-600 text-xs">Sin eventos registrados</p>
+            <p class="text-slate-800 text-xs mt-0.5">Disponible con SQLite · Phase 5</p>
+          </div>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- Toasts -->
+  <div id="toast-container" class="fixed bottom-5 right-5 flex flex-col gap-2 z-50 pointer-events-none" aria-live="assertive" aria-atomic="true"></div>
+
+  <!-- ══════════════════════ SCRIPTS ══════════════════════ -->
+  <script>
+    // ── Clock ─────────────────────────────────────────────
+    const clockEl = document.getElementById('clock');
+    function tickClock() {
+      clockEl.textContent = new Date().toLocaleTimeString('es-ES', { hour12: false });
+    }
+    setInterval(tickClock, 1000);
+    tickClock();
+
+    // ── Toast ─────────────────────────────────────────────
+    const TOAST_STYLES = {
+      info:    'bg-slate-800 border-slate-700 text-slate-200',
+      success: 'bg-green-950 border-green-800/60 text-green-300',
+      error:   'bg-red-950   border-red-800/60   text-red-300',
+      warn:    'bg-amber-950 border-amber-800/60 text-amber-300',
+    };
+    function showToast(msg, type = 'info', ms = 3500) {
+      const wrap = document.getElementById('toast-container');
+      const el   = document.createElement('div');
+      el.className = `toast ${TOAST_STYLES[type] ?? TOAST_STYLES.info} border rounded-xl px-4 py-2.5 text-xs shadow-xl pointer-events-auto max-w-xs`;
+      el.setAttribute('role', 'alert');
+      el.textContent = msg;
+      wrap.appendChild(el);
+      requestAnimationFrame(() => el.classList.add('show'));
+      setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, ms);
+    }
+
+    // ── Camera online/offline ─────────────────────────────
+    let _isOnline = true;
+    function setCamStatus(online) {
+      if (online === _isOnline) return;
+      _isOnline = online;
+      const wrap = document.getElementById('cam-status');
+      const dot  = document.getElementById('status-dot');
+      const txt  = document.getElementById('status-text');
+      if (online) {
+        wrap.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-medium';
+        dot.className  = 'w-1.5 h-1.5 rounded-full bg-green-400 pulse';
+        txt.textContent = 'EN VIVO';
+      } else {
+        wrap.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium';
+        dot.className  = 'w-1.5 h-1.5 rounded-full bg-red-400';
+        txt.textContent = 'SIN SEÑAL';
+        showToast('Cámara sin señal — reintentando…', 'warn');
+      }
+    }
+
+    // ── Stat counter update (with pop animation) ──────────
+    function updateStat(id, val) {
+      const el = document.getElementById(id);
+      if (el.textContent === String(val)) return;
+      el.textContent = val;
+      el.classList.remove('stat-pop');
+      void el.offsetWidth;
+      el.classList.add('stat-pop');
+      setTimeout(() => el.classList.remove('stat-pop'), 300);
+    }
+
+    // ── Counts polling (/counts — Phase 4 ready) ──────────
+    async function fetchCounts() {
+      try {
+        const res = await fetch('/counts');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        updateStat('stat-total', d.total ?? 0);
+        updateStat('stat-in',    d.in    ?? 0);
+        updateStat('stat-out',   d.out   ?? 0);
+        document.getElementById('events-badge').textContent = d.total ?? 0;
+        setCamStatus(true);
+      } catch {
+        setCamStatus(false);
+      }
+    }
+    setInterval(fetchCounts, 2000);
+    fetchCounts();
+
+    // ── Detections polling (/detections — Phase 3 ready) ──
+    async function fetchDetections() {
+      try {
+        const res = await fetch('/detections');
+        if (!res.ok) return;
+        const d = await res.json();
+        document.getElementById('det-num').textContent = (d.detections ?? []).length;
+      } catch {}
+    }
+    setInterval(fetchDetections, 2000);
+    fetchDetections();
+
+    // ── PTZ: steps slider ────────────────────────────────
+    const stepsInput = document.getElementById('ptz-steps');
+    const stepsLabel = document.getElementById('ptz-steps-val');
+    stepsInput.addEventListener('input', () => { stepsLabel.textContent = stepsInput.value; });
+
+    // ── PTZ: move ────────────────────────────────────────
+    async function ptzMove(dir) {
+      const steps = parseInt(stepsInput.value, 10);
+      const btn   = document.querySelector(`.ptz-btn[data-dir="${dir}"]`);
+      if (btn) btn.classList.add('busy');
+      try {
+        const res = await fetch('/ptz/move', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ direction: dir, steps }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          showToast(`PTZ: ${err.detail ?? res.statusText}`, 'error');
+        }
+      } catch (e) {
+        showToast(`PTZ sin respuesta: ${e.message}`, 'error');
+      } finally {
+        if (btn) btn.classList.remove('busy');
+      }
+    }
+
+    // ── PTZ: stop ────────────────────────────────────────
+    async function ptzStop() {
+      try {
+        const res = await fetch('/ptz/stop', { method: 'POST' });
+        if (res.ok) showToast('Movimiento detenido', 'info');
+        else showToast('Error al detener la cámara', 'error');
+      } catch {
+        showToast('Sin respuesta del servidor PTZ', 'error');
+      }
+    }
+
+    document.querySelectorAll('.ptz-btn[data-dir]').forEach(btn =>
+      btn.addEventListener('click', () => ptzMove(btn.dataset.dir))
+    );
+    document.getElementById('ptz-stop-btn').addEventListener('click', ptzStop);
+
+    // Keyboard shortcuts for PTZ
+    document.addEventListener('keydown', e => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      const dirMap = { ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right' };
+      if (dirMap[e.key]) { e.preventDefault(); ptzMove(dirMap[e.key]); }
+      if (e.key === ' ')  { e.preventDefault(); ptzStop(); }
+    });
+
+    // ── PTZ: presets ─────────────────────────────────────
+    async function loadPresets() {
+      const container = document.getElementById('presets-container');
+      container.innerHTML = '<span class="text-xs text-slate-700 italic">Cargando…</span>';
+      try {
+        const res = await fetch('/ptz/presets');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data    = await res.json();
+        const entries = Object.entries(data ?? {});
+        if (!entries.length) {
+          container.innerHTML = '<span class="text-xs text-slate-700 italic">Sin presets guardados en la cámara</span>';
+          return;
+        }
+        container.innerHTML = '';
+        entries.forEach(([id, name]) => {
+          const btn = document.createElement('button');
+          btn.className = 'preset-btn';
+          btn.textContent = name || `Preset ${id}`;
+          btn.setAttribute('aria-label', `Ir al preset: ${name || id}`);
+          btn.addEventListener('click', async () => {
+            btn.disabled = true; btn.style.opacity = '0.5';
+            try {
+              const r = await fetch(`/ptz/preset/${id}`, { method: 'POST' });
+              if (r.ok) showToast(`Preset "${name || id}" activado`, 'success');
+              else showToast('Error al activar preset', 'error');
+            } catch { showToast('Sin respuesta del servidor', 'error'); }
+            finally { btn.disabled = false; btn.style.opacity = ''; }
+          });
+          container.appendChild(btn);
+        });
+      } catch {
+        container.innerHTML = '<span class="text-xs text-slate-600 italic">No se pudo conectar con la cámara</span>';
+      }
+    }
+    document.getElementById('load-presets-btn').addEventListener('click', loadPresets);
+    loadPresets();
+
+    // ── Chart (empty placeholder, ready for Phase 5) ──────
+    const hours   = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}h`);
+    const curH    = new Date().getHours();
+    const actChart = new Chart(
+      document.getElementById('activity-chart').getContext('2d'),
+      {
+        type: 'bar',
+        data: {
+          labels: hours,
+          datasets: [{
+            label: 'Personas',
+            data:  new Array(24).fill(0),
+            backgroundColor: hours.map((_, i) => i === curH ? 'rgba(74,222,128,0.4)' : 'rgba(51,65,85,0.3)'),
+            borderColor:     hours.map((_, i) => i === curH ? 'rgba(74,222,128,0.7)' : 'rgba(71,85,105,0.5)'),
+            borderWidth: 1, borderRadius: 3,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          animation: { duration: 300 },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#1e293b', borderColor: '#334155', borderWidth: 1,
+              titleColor: '#94a3b8', bodyColor: '#f8fafc',
+              titleFont: { size: 10 }, bodyFont: { size: 11 },
+              callbacks: { label: c => ` ${c.parsed.y} personas` },
+            },
+          },
+          scales: {
+            x: { grid: { color: 'rgba(51,65,85,0.3)', drawTicks: false }, border: { display: false },
+                 ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 8, maxRotation: 0 } },
+            y: { min: 0, grid: { color: 'rgba(51,65,85,0.3)', drawTicks: false }, border: { display: false },
+                 ticks: { color: '#475569', font: { size: 9 }, precision: 0, maxTicksLimit: 4 } },
+          },
+        },
+      }
+    );
+
+    // Public API — Phase 5 / Phase 6 will call these
+    window.dashboardAPI = {
+      updateChart(hourlyData) {
+        actChart.data.datasets[0].data = hourlyData;
+        actChart.update('active');
+        document.getElementById('chart-placeholder').style.display = 'none';
+      },
+      addEvent(ts, dir, total) {
+        const list  = document.getElementById('events-list');
+        const empty = document.getElementById('events-empty');
+        if (empty) empty.remove();
+        const item = document.createElement('div');
+        item.className = 'event-item';
+        const color = dir === 'in' ? 'text-blue-400' : 'text-amber-400';
+        const arrow = dir === 'in'
+          ? '<polyline points="18 15 12 9 6 15"/>'
+          : '<polyline points="6 9 12 15 18 9"/>';
+        item.innerHTML = `
+          <svg class="w-3.5 h-3.5 flex-shrink-0 ${color}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">${arrow}</svg>
+          <span class="${color} font-semibold uppercase text-xs w-6">${dir}</span>
+          <span class="text-slate-400 flex-1 mono text-xs">${ts}</span>
+          <span class="text-slate-600 text-xs tabular-nums">#${total}</span>
+        `;
+        list.prepend(item);
+        while (list.children.length > 50) list.lastChild.remove();
+        document.getElementById('events-badge').textContent = total;
+      },
+      setOnline: setCamStatus,
+    };
+  </script>
 </body>
 </html>

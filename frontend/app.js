@@ -1,2 +1,2 @@
-// Tapo Dashboard — WebSocket client and Chart.js bindings
-// Implementation in Phase 7
+// Lógica del dashboard incluida en index.html
+// Este fichero sirve como entry point vacío para Phase 6 (WebSocket)
