@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    tapo_host: str = "192.168.1.132"
+    tapo_user: str = "admin"
+    tapo_pass: str = ""
+
     model_config = {"env_file": ".env"}
 
 

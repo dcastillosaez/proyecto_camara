@@ -1,11 +1,17 @@
 """RTSP stream capture with drain thread and auto-reconnection."""
 
+from __future__ import annotations
+
 import logging
 import threading
 import time
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
+
+if TYPE_CHECKING:
+    from backend.detector import Detection, PersonDetector
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +26,16 @@ class RTSPStream:
 
     Reconnection uses exponential backoff (1 s to 30 s) when the camera
     becomes unreachable.
+
+    When a *detector* is supplied, each captured frame is annotated with
+    bounding boxes in the capture thread before being stored.
     """
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, detector: PersonDetector | None = None) -> None:
         self._url = url
+        self._detector = detector
         self._frame: np.ndarray | None = None
+        self._detections: list[Detection] = []
         self._lock = threading.Lock()
         self._running = False
         self._cap: cv2.VideoCapture | None = None
@@ -47,9 +58,14 @@ class RTSPStream:
             self._cap = None
 
     def get_frame(self) -> np.ndarray | None:
-        """Return a *copy* of the latest frame, or ``None`` if unavailable."""
+        """Return a *copy* of the latest (possibly annotated) frame, or ``None``."""
         with self._lock:
             return self._frame.copy() if self._frame is not None else None
+
+    def get_detections(self) -> list[Detection]:
+        """Return the bounding boxes from the last detection pass."""
+        with self._lock:
+            return list(self._detections)
 
     # ------------------------------------------------------------------
     # Internal
@@ -67,8 +83,14 @@ class RTSPStream:
             if not ret:
                 self._reconnect()
                 continue
+            if self._detector is not None:
+                detections = self._detector.detect(frame)
+                frame = self._detector.annotate(frame, detections)
+            else:
+                detections = []
             with self._lock:
                 self._frame = frame
+                self._detections = detections
 
     def _create_capture(self) -> cv2.VideoCapture:
         """Create a fresh ``VideoCapture`` tuned for low-latency RTSP."""
