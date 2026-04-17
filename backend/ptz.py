@@ -11,8 +11,6 @@ from backend.config import get_settings
 
 router = APIRouter(prefix="/ptz", tags=["ptz"])
 
-# Map request direction to (x_coord, y_coord) unit vectors for moveMotor.
-# x positive = right, y positive = up (Tapo convention).
 _DIRECTION: dict[str, tuple[int, int]] = {
     "up": (0, 10),
     "down": (0, -10),
@@ -21,15 +19,30 @@ _DIRECTION: dict[str, tuple[int, int]] = {
 }
 
 
-def _get_tapo() -> Tapo:
-    s = get_settings()
-    return Tapo(s.tapo_host, s.tapo_user, s.tapo_pass)
+def _tapo_op(method_name: str, *args):
+    """
+    Instantiate Tapo and call *method_name* inside a worker thread that owns
+    a brand-new event loop.
+
+    pytapo calls asyncio.get_event_loop().run_until_complete() internally.
+    If the thread inherits FastAPI's running loop that call raises
+    "Cannot run the event loop while another loop is running".
+    Setting a fresh loop before touching pytapo avoids the clash entirely.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        s = get_settings()
+        tapo = Tapo(s.tapo_host, s.tapo_user, s.tapo_pass)
+        return getattr(tapo, method_name)(*args)
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
 
 
-async def _run(fn, *args):
-    """Run a blocking pytapo call in the default thread-pool executor."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, fn, *args)
+async def _ptz(method_name: str, *args):
+    """Offload a pytapo call to a worker thread with an isolated event loop."""
+    return await asyncio.to_thread(_tapo_op, method_name, *args)
 
 
 class MoveRequest(BaseModel):
@@ -42,8 +55,7 @@ async def move(req: MoveRequest):
     """Move the camera in *direction* for *steps* increments."""
     x, y = _DIRECTION[req.direction]
     try:
-        tapo = _get_tapo()
-        await _run(tapo.moveMotor, x * req.steps, y * req.steps)
+        await _ptz("moveMotor", x * req.steps, y * req.steps)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"status": "ok", "direction": req.direction, "steps": req.steps}
@@ -53,8 +65,7 @@ async def move(req: MoveRequest):
 async def stop():
     """Send a zero-delta move to halt any in-progress motor movement."""
     try:
-        tapo = _get_tapo()
-        await _run(tapo.moveMotor, 0, 0)
+        await _ptz("moveMotor", 0, 0)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"status": "ok"}
@@ -64,8 +75,7 @@ async def stop():
 async def get_presets():
     """Return all saved PTZ presets."""
     try:
-        tapo = _get_tapo()
-        presets = await _run(tapo.getPresets)
+        presets = await _ptz("getPresets")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return presets
@@ -75,8 +85,7 @@ async def get_presets():
 async def go_to_preset(preset_id: int):
     """Move to a saved preset by ID."""
     try:
-        tapo = _get_tapo()
-        await _run(tapo.setPreset, str(preset_id))
+        await _ptz("setPreset", str(preset_id))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"status": "ok", "preset_id": preset_id}

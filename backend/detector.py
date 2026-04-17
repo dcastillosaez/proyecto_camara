@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
+import supervision as sv
 from ultralytics import YOLO
 
 
@@ -33,6 +34,15 @@ class PersonDetector:
                 conf = float(box.conf[0])
                 detections.append(Detection(x1, y1, x2, y2, conf))
         return detections
+
+    def detect_sv(self, frame: np.ndarray) -> sv.Detections:
+        """Run inference and return a supervision ``Detections`` object.
+
+        Used by the tracker pipeline — avoids a second inference pass by
+        converting the ultralytics result directly via ``from_ultralytics``.
+        """
+        results = self._model(frame, classes=[0], conf=self._confidence, verbose=False)
+        return sv.Detections.from_ultralytics(results[0])
 
     def annotate(self, frame: np.ndarray, detections: list[Detection]) -> np.ndarray:
         """Draw green bounding boxes and confidence labels onto a copy of *frame*."""

@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     tapo_user: str = "admin"
     tapo_pass: str = ""
 
+    # Virtual counting line — pixel coordinates for a 1280×720 stream.
+    # Adjust if the camera resolution differs.
+    line_start_x: int = 0
+    line_start_y: int = 360
+    line_end_x: int = 1280
+    line_end_y: int = 360
+
     model_config = {"env_file": ".env"}
 
 

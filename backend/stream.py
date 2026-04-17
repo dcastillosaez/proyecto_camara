@@ -12,6 +12,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from backend.detector import Detection, PersonDetector
+    from backend.tracker import PersonTracker
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +28,20 @@ class RTSPStream:
     Reconnection uses exponential backoff (1 s to 30 s) when the camera
     becomes unreachable.
 
-    When a *detector* is supplied, each captured frame is annotated with
-    bounding boxes in the capture thread before being stored.
+    Pipeline (when both *detector* and *tracker* are supplied):
+        raw frame → detect_sv → ByteTrack + LineZone → annotate
+    When only *detector* is supplied, falls back to the Phase-3 pipeline.
     """
 
-    def __init__(self, url: str, detector: PersonDetector | None = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        detector: PersonDetector | None = None,
+        tracker: PersonTracker | None = None,
+    ) -> None:
         self._url = url
         self._detector = detector
+        self._tracker = tracker
         self._frame: np.ndarray | None = None
         self._detections: list[Detection] = []
         self._lock = threading.Lock()
@@ -67,6 +75,12 @@ class RTSPStream:
         with self._lock:
             return list(self._detections)
 
+    def get_counts(self) -> dict[str, int]:
+        """Return cumulative line-crossing counts from the tracker, or zeros."""
+        if self._tracker is None:
+            return {"in": 0, "out": 0, "total": 0}
+        return self._tracker.get_counts()
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -83,11 +97,20 @@ class RTSPStream:
             if not ret:
                 self._reconnect()
                 continue
-            if self._detector is not None:
+
+            if self._detector is not None and self._tracker is not None:
+                # Full pipeline: supervision detections → ByteTrack → LineZone
+                sv_dets = self._detector.detect_sv(frame)
+                tracked = self._tracker.update(sv_dets)
+                frame = self._tracker.annotate(frame, tracked)
+                detections = []  # raw Detection list not used in tracker mode
+            elif self._detector is not None:
+                # Phase-3 fallback: plain YOLO boxes, no tracking
                 detections = self._detector.detect(frame)
                 frame = self._detector.annotate(frame, detections)
             else:
                 detections = []
+
             with self._lock:
                 self._frame = frame
                 self._detections = detections
