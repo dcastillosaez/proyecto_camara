@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-04-17T06:28:15.405Z"
+status: verifying
+stopped_at: "Checkpoint 02-02 Task 2: human-verify /video_feed en navegador"
+last_updated: "2026-04-17T06:51:50.905Z"
 last_activity: 2026-04-17
 progress:
   total_phases: 8
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-16)
 
 Phase: 02 (captura-rtsp-y-stream-mjpeg) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-17
 
 Progress: [░░░░░░░░░░] 0%
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P01 | 1min | 2 tasks | 16 files |
 | Phase 01 P02 | 4min | 1 tasks | 2 files |
 | Phase 02 P01 | 4 | 2 tasks | 3 files |
+| Phase 02 P02 | 20 | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,8 @@ Recent decisions affecting current work:
 - [Phase 01]: Invocar .venv/Scripts/python.exe directamente, sin activar venv en subshells
 - [Phase 02]: Local cap reference en capture_loop para evitar race condition con stop()
 - [Phase 02]: Event-based synchronization en test_backoff_increases en vez de time.sleep
+- [Phase 02]: Tests de streaming con finite generator mock (patch mjpeg_generator) para evitar colgarse en generador infinito
+- [Phase 02]: rtsp_stream como global en main.py (no app.state): compatible con generador async, mas simple
 
 ### Pending Todos
 
@@ -83,6 +86,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-17T06:28:15.401Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-04-17T06:51:50.901Z
+Stopped at: Checkpoint 02-02 Task 2: human-verify /video_feed en navegador
 Resume file: None

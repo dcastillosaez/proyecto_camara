@@ -9,7 +9,7 @@
 
 - [x] **CAP-01**: El sistema captura el stream RTSP de `rtsp://192.168.1.132:554/stream1` en un hilo dedicado sin acumular buffer
 - [x] **CAP-02**: El sistema se reconecta automaticamente al stream RTSP si la camara cae o la red se interrumpe (backoff exponencial)
-- [ ] **CAP-03**: El sistema retransmite el video en vivo al navegador via MJPEG con latencia < 2 s en LAN
+- [x] **CAP-03**: El sistema retransmite el video en vivo al navegador via MJPEG con latencia < 2 s en LAN
 
 ### Deteccion de personas
 
@@ -81,7 +81,7 @@
 |-------------|-------|--------|
 | CAP-01 | Phase 2 | Complete |
 | CAP-02 | Phase 2 | Complete |
-| CAP-03 | Phase 2 | Pending |
+| CAP-03 | Phase 2 | Complete |
 | DET-01 | Phase 3 | Pending |
 | DET-02 | Phase 3 | Pending |
 | DET-03 | Phase 3 | Pending |

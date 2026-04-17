@@ -13,7 +13,7 @@ Desde la captura RTSP cruda hasta un dashboard funcional con deteccion y conteo 
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Scaffolding y entorno** - Estructura de proyecto, entorno virtual, dependencias y configuracion base (completed 2026-04-16)
-- [ ] **Phase 2: Captura RTSP y stream MJPEG** - Hilo de captura con drain de buffer, reconexion automatica y endpoint MJPEG crudo
+- [x] **Phase 2: Captura RTSP y stream MJPEG** - Hilo de captura con drain de buffer, reconexion automatica y endpoint MJPEG crudo (completed 2026-04-17)
 - [ ] **Phase 3: Deteccion de personas con YOLO26n** - Inferencia por frame en hilo separado con bounding boxes y confianza en overlay
 - [ ] **Phase 4: Tracking y conteo por linea virtual** - ByteTrack para IDs persistentes + LineZone para contar cruces con direccion
 - [ ] **Phase 5: Persistencia en SQLite** - Almacenamiento asincrono de eventos de cruce con WAL mode y recuperacion tras reinicio
@@ -46,11 +46,11 @@ Plans:
   2. Si se desconecta la camara o la red, el sistema se reconecta automaticamente con backoff exponencial sin crashear
   3. El hilo de captura drena el buffer RTSP activamente: el video nunca acumula retraso progresivo aunque se deje corriendo horas
   4. Desconectar el navegador libera los recursos del generador MJPEG sin dejar procesos zombi
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 02-01-PLAN.md — RTSPStream con drain thread, reconexion y tests unitarios
-- [ ] 02-02-PLAN.md — FastAPI app con endpoint /video_feed MJPEG y verificacion manual
+- [x] 02-02-PLAN.md — FastAPI app con endpoint /video_feed MJPEG y verificacion manual
 
 ### Phase 3: Deteccion de personas con YOLO26n
 **Goal**: El stream MJPEG muestra bounding boxes con nivel de confianza sobre cada persona detectada, sin degradar la fluidez del video
@@ -151,7 +151,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Scaffolding y entorno | 2/2 | Complete   | 2026-04-16 |
-| 2. Captura RTSP y stream MJPEG | 1/2 | In Progress|  |
+| 2. Captura RTSP y stream MJPEG | 2/2 | Complete   | 2026-04-17 |
 | 3. Deteccion de personas con YOLO26n | 0/? | Not started | - |
 | 4. Tracking y conteo por linea virtual | 0/? | Not started | - |
 | 5. Persistencia en SQLite | 0/? | Not started | - |
