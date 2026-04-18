@@ -22,12 +22,17 @@ Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta
 
 ## Comandos de desarrollo
 
+Ejecutar **siempre desde** `F:\Documentos\IA\Proyecto_Camara` (raíz del proyecto), con el venv activado o usando la ruta explícita al intérprete.
+
 ```bash
 # Instalar dependencias
-pip install -r requirements.txt
+.venv/Scripts/python.exe -m pip install -r requirements.txt
 
-# Arrancar el servidor (recarga automática)
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+# Arrancar el servidor (Windows — usar python.exe -m uvicorn, NO el script uvicorn directo)
+.venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+
+# Con recarga automática (desarrollo)
+.venv/Scripts/python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 # Correr tests
 pytest tests/ -v

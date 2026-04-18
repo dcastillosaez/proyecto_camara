@@ -1,6 +1,8 @@
 """ByteTrack person tracking and LineZone crossing counter."""
 
+import datetime
 import threading
+from typing import Any
 
 import numpy as np
 import supervision as sv
@@ -16,54 +18,71 @@ class PersonTracker:
     """
 
     def __init__(self, start: sv.Point, end: sv.Point) -> None:
-        self._byte_tracker = sv.ByteTrack()
-        self._line_zone = sv.LineZone(start=start, end=end)
-
-        self._box_annotator = sv.BoxAnnotator(thickness=2)
-        self._label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
-        self._line_annotator = sv.LineZoneAnnotator(
-            thickness=2,
-            text_scale=0.5,
-            custom_in_text="IN",
-            custom_out_text="OUT",
+        self._byte_tracker = sv.ByteTrack(lost_track_buffer=60)
+        self._line_zone = sv.LineZone(
+            start=start,
+            end=end,
+            triggering_anchors=[sv.Position.CENTER],
         )
+
+        self._box_annotator = sv.BoxAnnotator(thickness=1)
+        self._label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
 
         self._in_count = 0
         self._out_count = 0
+        self._crossed_ids: set[int] = set()
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def update(self, detections: sv.Detections) -> sv.Detections:
+    def update(self, detections: sv.Detections) -> tuple[sv.Detections, list[dict[str, Any]]]:
         """
         Update ByteTrack with *detections*, trigger the line zone, and
-        accumulate crossing counts.  Returns detections enriched with
-        ``tracker_id``.
+        accumulate crossing counts.
+
+        Returns ``(tracked_detections, crossings)`` where *crossings* is a
+        list of ``{"direction": "in"|"out", "timestamp": datetime}`` dicts
+        for each new crossing in this frame — ready to persist to the DB.
         """
         tracked = self._byte_tracker.update_with_detections(detections)
         crossed_in, crossed_out = self._line_zone.trigger(tracked)
+        ids = tracked.tracker_id if tracked.tracker_id is not None else []
+        crossings: list[dict[str, Any]] = []
+        now = datetime.datetime.now()
         with self._lock:
-            self._in_count += int(crossed_in.sum())
-            self._out_count += int(crossed_out.sum())
-        return tracked
+            for i, tid in enumerate(ids):
+                if crossed_in[i] and tid not in self._crossed_ids:
+                    self._in_count += 1
+                    self._crossed_ids.add(int(tid))
+                    crossings.append({"direction": "in", "timestamp": now})
+                elif crossed_out[i] and tid not in self._crossed_ids:
+                    self._out_count += 1
+                    self._crossed_ids.add(int(tid))
+                    crossings.append({"direction": "out", "timestamp": now})
+        return tracked, crossings
 
-    def annotate(self, frame: np.ndarray, tracked: sv.Detections) -> np.ndarray:
+    def annotate(
+        self,
+        frame: np.ndarray,
+        tracked: sv.Detections,
+        labels: list[str] | None = None,
+    ) -> np.ndarray:
         """
-        Draw bounding boxes, tracker-ID / confidence labels, and the
-        counting line (with live IN/OUT counters) onto a copy of *frame*.
+        Draw bounding boxes, labels, and the counting line onto a copy of *frame*.
+        Pass *labels* to override the default '#id conf' format.
         """
-        labels = [
-            f"#{tid} {conf:.2f}"
-            for tid, conf in zip(
-                tracked.tracker_id if tracked.tracker_id is not None else [],
-                tracked.confidence if tracked.confidence is not None else [],
-            )
-        ]
+        if labels is None:
+            labels = [
+                f"#{tid} {conf:.2f}"
+                for tid, conf in zip(
+                    tracked.tracker_id if tracked.tracker_id is not None else [],
+                    tracked.confidence if tracked.confidence is not None else [],
+                )
+            ]
         out = self._box_annotator.annotate(frame.copy(), tracked)
         out = self._label_annotator.annotate(out, tracked, labels=labels)
-        out = self._line_annotator.annotate(out, self._line_zone)
         return out
 
     def get_counts(self) -> dict[str, int]:
@@ -72,5 +91,14 @@ class PersonTracker:
             return {
                 "in": self._in_count,
                 "out": self._out_count,
-                "total": self._in_count + self._out_count,
+                "total": len(self._crossed_ids),
             }
+
+    def reconfigure_line(self, start: sv.Point, end: sv.Point) -> None:
+        """Replace the LineZone with new pixel coordinates. Thread-safe."""
+        with self._lock:
+            self._line_zone = sv.LineZone(
+                start=start,
+                end=end,
+                triggering_anchors=[sv.Position.CENTER],
+            )

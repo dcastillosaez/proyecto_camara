@@ -16,9 +16,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Captura RTSP y stream MJPEG** - Hilo de captura con drain de buffer, reconexion automatica y endpoint MJPEG crudo (completed 2026-04-17)
 - [x] **Phase 3: Deteccion de personas con YOLO26n** - Inferencia por frame con bounding boxes y confianza en overlay (completed 2026-04-17)
 - [x] **Phase 4: Tracking y conteo por linea virtual** - ByteTrack para IDs persistentes + LineZone para contar cruces con direccion (completed 2026-04-17)
-- [ ] **Phase 5: Persistencia en SQLite** - Almacenamiento asincrono de eventos de cruce con WAL mode y recuperacion tras reinicio
-- [ ] **Phase 6: API REST y WebSocket** - Endpoints de estadisticas, eventos recientes y stream de eventos en tiempo real (parcial: /detections y /counts listos)
-- [ ] **Phase 7: Dashboard web** - Interfaz completa con video, contador, histograma, eventos y estado de conexion
+- [x] **Phase 5: Persistencia en SQLite** - Almacenamiento asincrono de eventos de cruce con WAL mode y recuperacion tras reinicio (completed 2026-04-18)
+- [x] **Phase 6: API REST y WebSocket** - Endpoints de estadisticas, eventos recientes y stream de eventos en tiempo real (completed 2026-04-18)
+- [x] **Phase 7: Dashboard web** - Interfaz completa con video, contador, histograma, eventos y estado de conexion (completed 2026-04-18)
 - [x] **Phase 8: Configuracion centralizada y arranque** - pydantic-settings con .env validado y arranque con un solo comando (completed 2026-04-16)
 
 ## Phase Details
@@ -92,9 +92,15 @@ Artifacts:
   2. Los accesos a la base de datos son asincronos (aiosqlite): el event loop de FastAPI nunca se bloquea esperando una escritura
   3. Tras reiniciar el servidor con `uvicorn`, los eventos historicos anteriores al reinicio siguen disponibles y consultables
   4. La base de datos opera en WAL mode, permitiendo lecturas concurrentes mientras el hilo de deteccion escribe
-**Plans:** Pending (stub: `backend/database.py` contiene solo docstring)
+**Plans:** Completado (inline)
 
-Status: NOT STARTED
+Artifacts:
+- ✓ `backend/database.py` — CrossingEvent model, init_db (WAL), insert_event, get_recent_events, get_stats_today
+- ✓ `backend/tracker.py` — update() devuelve (tracked, crossings) con timestamp y dirección
+- ✓ `backend/stream.py` — enqueue crossings via loop.call_soon_threadsafe
+- ✓ `backend/main.py` — init_db en lifespan, drain task, /api/stats, /api/events
+
+Status: COMPLETE (completed 2026-04-18)
 
 ### Phase 6: API REST y WebSocket
 **Goal**: Los datos de deteccion y conteo son accesibles via endpoints HTTP y eventos en tiempo real
@@ -163,9 +169,9 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 2. Captura RTSP y stream MJPEG | 2/2 | Complete   | 2026-04-17 |
 | 3. Deteccion de personas con YOLO26n | Done (inline) | Complete   | 2026-04-17 |
 | 4. Tracking y conteo por linea virtual | Done (inline) | Complete   | 2026-04-17 |
-| 5. Persistencia en SQLite | 0/? | Not started | - |
-| 6. API REST y WebSocket | Parcial (3/4 endpoints) | In Progress | - |
-| 7. Dashboard web | 0/? | Not started (bloqueado por Phase 5/6) | - |
+| 5. Persistencia en SQLite | Done (inline) | Complete | 2026-04-18 |
+| 6. API REST y WebSocket | Done (inline) | Complete | 2026-04-18 |
+| 7. Dashboard web | Done (inline) | Complete | 2026-04-18 |
 | 8. Configuracion centralizada y arranque | Done (inline) | Complete   | 2026-04-16 |
 
 ---

@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
 
 if TYPE_CHECKING:
     from backend.detector import Detection, PersonDetector
+    from backend.recognizer import PersonRecognizer
     from backend.tracker import PersonTracker
 
 logger = logging.getLogger(__name__)
@@ -38,15 +40,26 @@ class RTSPStream:
         url: str,
         detector: PersonDetector | None = None,
         tracker: PersonTracker | None = None,
+        recognizer: PersonRecognizer | None = None,
+        event_loop: asyncio.AbstractEventLoop | None = None,
+        event_queue: asyncio.Queue[dict[str, Any]] | None = None,
     ) -> None:
         self._url = url
         self._detector = detector
         self._tracker = tracker
+        self._recognizer = recognizer
+        self._event_loop = event_loop
+        self._event_queue = event_queue
         self._frame: np.ndarray | None = None
         self._detections: list[Detection] = []
+        self._live_count: int = 0
+        self._process_size: tuple[int, int] | None = None  # (w, h) or None = native
         self._lock = threading.Lock()
         self._running = False
         self._cap: cv2.VideoCapture | None = None
+        self._frame_num = 0
+        # tracker_id → (person_id, name) for the current session
+        self._person_cache: dict[int, tuple[int, str | None]] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -75,6 +88,28 @@ class RTSPStream:
         with self._lock:
             return list(self._detections)
 
+    def get_live_count(self) -> int:
+        """Return the number of persons visible in the current frame."""
+        with self._lock:
+            return self._live_count
+
+    def get_native_resolution(self) -> tuple[int, int]:
+        """Return native camera resolution (w, h) from the capture, or (0, 0)."""
+        cap = self._cap
+        if cap is None or not cap.isOpened():
+            return (0, 0)
+        return (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+
+    def set_process_size(self, w: int, h: int) -> None:
+        """Change the processing resolution (resize applied before YOLO). Thread-safe."""
+        with self._lock:
+            self._process_size = (w, h) if (w > 0 and h > 0) else None
+
+    def get_process_size(self) -> tuple[int, int]:
+        """Return current processing size as (w, h), or (0, 0) if native."""
+        with self._lock:
+            return self._process_size if self._process_size is not None else (0, 0)
+
     def get_counts(self) -> dict[str, int]:
         """Return cumulative line-crossing counts from the tracker, or zeros."""
         if self._tracker is None:
@@ -88,6 +123,7 @@ class RTSPStream:
     def _capture_loop(self) -> None:
         """Read frames in a tight loop, keeping only the newest."""
         self._cap = self._create_capture()
+        _diag_counter = 0
         while self._running:
             cap = self._cap
             if cap is None or not cap.isOpened():
@@ -98,22 +134,60 @@ class RTSPStream:
                 self._reconnect()
                 continue
 
+            with self._lock:
+                proc_size = self._process_size
+            if proc_size is not None:
+                frame = cv2.resize(frame, proc_size)
+
             if self._detector is not None and self._tracker is not None:
-                # Full pipeline: supervision detections → ByteTrack → LineZone
+                # Full pipeline: YOLO → ByteTrack → LineZone → (face recognition)
+                self._frame_num += 1
                 sv_dets = self._detector.detect_sv(frame)
-                tracked = self._tracker.update(sv_dets)
-                frame = self._tracker.annotate(frame, tracked)
-                detections = []  # raw Detection list not used in tracker mode
+                tracked, crossings = self._tracker.update(sv_dets)
+                if crossings and self._event_loop and self._event_queue:
+                    for c in crossings:
+                        self._event_loop.call_soon_threadsafe(self._event_queue.put_nowait, c)
+
+                # Face recognition — try to identify each tracked person
+                labels: list[str] = []
+                if tracked.tracker_id is not None:
+                    for i, tid in enumerate(tracked.tracker_id):
+                        tid = int(tid)
+                        conf = float(tracked.confidence[i]) if tracked.confidence is not None else 0.0
+
+                        # Run recognizer if available and person not yet cached
+                        if self._recognizer is not None and tid not in self._person_cache:
+                            x1, y1, x2, y2 = map(int, tracked.xyxy[i])
+                            pid, name, _ = self._recognizer.identify_or_register(
+                                frame, (x1, y1, x2, y2), tid, self._frame_num
+                            )
+                            if pid is not None:
+                                self._person_cache[tid] = (pid, name)
+
+                        if tid in self._person_cache:
+                            pid, name = self._person_cache[tid]
+                            label = name if name else f"P{pid}"
+                            labels.append(f"{label} {conf:.2f}")
+                        else:
+                            labels.append(f"#{tid} {conf:.2f}")
+
+                frame = self._tracker.annotate(frame, tracked, labels=labels or None)
+                detections = []
+                live = len(tracked.xyxy) if tracked.xyxy is not None else 0
+
             elif self._detector is not None:
                 # Phase-3 fallback: plain YOLO boxes, no tracking
                 detections = self._detector.detect(frame)
                 frame = self._detector.annotate(frame, detections)
+                live = len(detections)
             else:
                 detections = []
+                live = 0
 
             with self._lock:
                 self._frame = frame
                 self._detections = detections
+                self._live_count = live
 
     def _create_capture(self) -> cv2.VideoCapture:
         """Create a fresh ``VideoCapture`` tuned for low-latency RTSP."""
