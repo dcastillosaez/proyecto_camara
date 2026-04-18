@@ -20,6 +20,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: API REST y WebSocket** - Endpoints de estadisticas, eventos recientes y stream de eventos en tiempo real (completed 2026-04-18)
 - [x] **Phase 7: Dashboard web** - Interfaz completa con video, contador, histograma, eventos y estado de conexion (completed 2026-04-18)
 - [x] **Phase 8: Configuracion centralizada y arranque** - pydantic-settings con .env validado y arranque con un solo comando (completed 2026-04-16)
+- [ ] **Phase 9: Reconocimiento facial y enrolamiento** - Identificar personas con face-recognition, guardar embeddings, comparar rostros detectados
+- [ ] **Phase 10: Grabacion de video y upload a Google Drive** - Grabar clips .mp4 cuando se detecte persona, subir automaticamente a Google Drive via API
 
 ## Phase Details
 
@@ -158,6 +160,33 @@ Artifacts:
 
 Status: DONE (infraestructura base lista; persistencia de config en DB pendiente Phase 5)
 
+### Phase 9: Reconocimiento facial y enrolamiento
+**Goal**: El sistema identifica y diferencia personas por su rostro, no solo cuenta individuos anonimos
+**Depends on**: Phase 7 (dashboard existente)
+**Requirements**: FR-01, FR-02, FR-03
+**Success Criteria** (what must be TRUE):
+  1. Existe un endpoint POST /api/enroll_face para registrar un nuevo rostro con nombre, acepta imagen o frame actual
+  2. Cada deteccion de rostro se compara contra la base de datos de rostros enrolados usando cosine distance
+  3. El dashboard muestra el nombre de la persona identificada (si confianza > threshold 0.6) o "Unknown" si no coincide
+  4. Los eventos de cruce registran el nombre o ID de la persona, no solo timestamp
+**Plans:** Pending
+**Dependencies**: face-recognition library, nueva tabla `known_faces` (id, name, embedding_vector)
+**Estimado**: ~200-300 líneas de código
+
+### Phase 10: Grabacion de video y upload a Google Drive
+**Goal**: Grabar clips .mp4 cuando se detecte actividad y subirlos automaticamente a Google Drive
+**Depends on**: Phase 7 (detecciones disponibles)
+**Requirements**: REC-01, REC-02, REC-03, REC-04
+**Success Criteria** (what must be TRUE):
+  1. Cuando se detecta una persona, comienza una grabacion de video en .mp4 H.264 en `data/clips/`
+  2. La grabacion termina 5 segundos despues de que la ultima persona sale del frame
+  3. El archivo grabado se sube automaticamente a una carpeta de Google Drive via API OAuth
+  4. Tras upload exitoso, el archivo local se elimina; en caso de fallo, se reintenta con backoff exponencial hasta 3 veces
+**Plans:** Pending
+**Dependencies**: google-api-python-client, google-auth-oauthlib, google-auth-httplib2, nueva tabla `recordings` (id, filename, gdrive_id, upload_status, timestamp)
+**Estimado**: ~400-500 líneas de código, requiere configuracion OAuth en Google Cloud Console
+**Notas**: Upload a Google Drive es gratuito (15 GB gratis; almacenamiento extra = 2 USD/100GB/mes)
+
 ## Progress
 
 **Execution Order:**
@@ -173,8 +202,10 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 6. API REST y WebSocket | Done (inline) | Complete | 2026-04-18 |
 | 7. Dashboard web | Done (inline) | Complete | 2026-04-18 |
 | 8. Configuracion centralizada y arranque | Done (inline) | Complete   | 2026-04-16 |
+| 9. Reconocimiento facial y enrolamiento | 0/1 | Pending | - |
+| 10. Grabacion de video y upload a Google Drive | 0/1 | Pending | - |
 
 ---
 *Roadmap created: 2026-04-16*
-*Last updated: 2026-04-17*
-*Status snapshot: 4/8 phases complete, 3 done out-of-band (detector, tracker, config), Phase 5 blocks phases 6-7*
+*Last updated: 2026-04-18*
+*Status snapshot: 8/10 phases complete, phases 1-8 done; phases 9-10 pending (facial recognition + recording/gdrive)*
