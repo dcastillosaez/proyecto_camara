@@ -9,8 +9,9 @@ from dataclasses import asdict
 from pathlib import Path
 
 import cv2
+import numpy as np
 import supervision as sv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -48,7 +49,7 @@ async def _drain_events(queue: asyncio.Queue) -> None:
     while True:
         event = await queue.get()
         try:
-            await insert_event(event["direction"], event["timestamp"])
+            await insert_event(event["direction"], event["timestamp"], event.get("person_name"))
             stats = await get_stats_today()
             current_hour = datetime.datetime.now().strftime("%H")
             await _broadcast({
@@ -204,3 +205,33 @@ async def persons():
         "persons": rtsp_stream._recognizer.list_persons(),
         "recognition_enabled": rtsp_stream._recognizer.available,
     }
+
+
+@app.post("/api/enroll_face")
+async def enroll_face(
+    name: str = Form(...),
+    image: UploadFile | None = File(default=None),
+    use_current_frame: bool = Form(default=False),
+):
+    """Register a named person from an uploaded image or the current camera frame."""
+    if rtsp_stream is None or rtsp_stream._recognizer is None:
+        raise HTTPException(status_code=503, detail="Recognizer not available")
+    if not rtsp_stream._recognizer.available:
+        raise HTTPException(status_code=503, detail="face_recognition library not installed")
+
+    if use_current_frame or image is None:
+        frame = rtsp_stream.get_frame()
+        if frame is None:
+            raise HTTPException(status_code=503, detail="No frame available from camera")
+        img_bgr = frame
+    else:
+        data = await image.read()
+        arr = np.frombuffer(data, np.uint8)
+        img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            raise HTTPException(status_code=400, detail="Could not decode image")
+
+    pid = await asyncio.to_thread(rtsp_stream._recognizer.enroll_named_face, img_bgr, name.strip())
+    if pid is None:
+        raise HTTPException(status_code=422, detail="No face detected in the provided image")
+    return {"person_id": pid, "name": name.strip()}

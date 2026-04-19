@@ -7,6 +7,7 @@ aiosqlite>=0.20
 sqlalchemy[asyncio]>=2.0
 pydantic-settings>=2.0
 websockets>=12.0
+python-multipart>=0.0.9
 aiofiles>=23.0
 pytapo>=0.0.63
 face-recognition>=1.3

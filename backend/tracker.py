@@ -56,11 +56,11 @@ class PersonTracker:
                 if crossed_in[i] and tid not in self._crossed_ids:
                     self._in_count += 1
                     self._crossed_ids.add(int(tid))
-                    crossings.append({"direction": "in", "timestamp": now})
+                    crossings.append({"direction": "in", "timestamp": now, "tracker_id": int(tid)})
                 elif crossed_out[i] and tid not in self._crossed_ids:
                     self._out_count += 1
                     self._crossed_ids.add(int(tid))
-                    crossings.append({"direction": "out", "timestamp": now})
+                    crossings.append({"direction": "out", "timestamp": now, "tracker_id": int(tid)})
         return tracked, crossings
 
     def annotate(

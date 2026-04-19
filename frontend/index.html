@@ -435,8 +435,68 @@
         </div>
       </div>
 
+      <!-- KNOWN PERSONS -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <h2 class="text-sm font-semibold text-slate-200">Personas conocidas</h2>
+          </div>
+          <button id="btn-enroll" class="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer" aria-label="Enrolar nueva persona">+ Enrolar</button>
+        </div>
+        <div id="persons-list" class="flex flex-col gap-1.5 overflow-y-auto" style="max-height:160px">
+          <div id="persons-empty" class="flex flex-col items-center justify-center py-6 text-center">
+            <svg class="w-7 h-7 text-slate-800 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+            <p class="text-slate-600 text-xs">Sin personas enroladas</p>
+          </div>
+        </div>
+      </div>
+
     </section>
   </main>
+
+  <!-- Enroll modal -->
+  <div id="enroll-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" role="dialog" aria-modal="true" aria-label="Enrolar persona">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold text-slate-200">Enrolar persona</h3>
+        <button id="enroll-close" class="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer" aria-label="Cerrar">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <form id="enroll-form" class="flex flex-col gap-3">
+        <div>
+          <label class="text-xs text-slate-400 mb-1 block" for="enroll-name">Nombre</label>
+          <input id="enroll-name" type="text" placeholder="Nombre de la persona" required
+            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors">
+        </div>
+        <div>
+          <label class="text-xs text-slate-400 mb-1 block">Fuente de imagen</label>
+          <div class="flex gap-2">
+            <label class="flex-1 flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 cursor-pointer hover:border-blue-500 transition-colors has-[:checked]:border-blue-500">
+              <input type="radio" name="enroll-source" value="frame" checked class="accent-blue-500">
+              <span class="text-xs text-slate-300">Frame actual</span>
+            </label>
+            <label class="flex-1 flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 cursor-pointer hover:border-blue-500 transition-colors has-[:checked]:border-blue-500">
+              <input type="radio" name="enroll-source" value="upload" class="accent-blue-500">
+              <span class="text-xs text-slate-300">Subir foto</span>
+            </label>
+          </div>
+        </div>
+        <div id="enroll-upload-wrap" class="hidden">
+          <input id="enroll-file" type="file" accept="image/*"
+            class="w-full text-xs text-slate-400 file:mr-2 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-slate-700 file:text-slate-300 hover:file:bg-slate-600 cursor-pointer">
+        </div>
+        <button type="submit" id="enroll-submit"
+          class="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-semibold transition-colors cursor-pointer">
+          Registrar
+        </button>
+        <p id="enroll-error" class="text-xs text-red-400 hidden text-center"></p>
+      </form>
+    </div>
+  </div>
 
   <!-- Toasts -->
   <div id="toast-container" class="fixed bottom-5 right-5 flex flex-col gap-2 z-50 pointer-events-none" aria-live="assertive" aria-atomic="true"></div>
@@ -664,7 +724,7 @@
         actChart.update('active');
         document.getElementById('chart-placeholder').style.display = 'none';
       },
-      addEvent(ts, dir, total) {
+      addEvent(ts, dir, total, personName) {
         const list  = document.getElementById('events-list');
         const empty = document.getElementById('events-empty');
         if (empty) empty.remove();
@@ -674,10 +734,14 @@
         const arrow = dir === 'in'
           ? '<polyline points="18 15 12 9 6 15"/>'
           : '<polyline points="6 9 12 15 18 9"/>';
+        const nameTag = personName
+          ? `<span class="text-slate-400 text-xs truncate max-w-[80px]">${personName}</span>`
+          : '';
         item.innerHTML = `
           <svg class="w-3.5 h-3.5 flex-shrink-0 ${color}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">${arrow}</svg>
           <span class="${color} font-semibold uppercase text-xs w-6">${dir}</span>
           <span class="text-slate-400 flex-1 mono text-xs">${ts}</span>
+          ${nameTag}
           <span class="text-slate-600 text-xs tabular-nums">#${total}</span>
         `;
         list.prepend(item);
@@ -729,14 +793,15 @@
           updateStat('stat-total', msg.total_today ?? 0);
         } else if (msg.type === 'detection') {
           const ts = new Date(msg.timestamp).toLocaleTimeString('es-ES', { hour12: false });
-          dashboardAPI.addEvent(ts, msg.direction, msg.total_today);
+          dashboardAPI.addEvent(ts, msg.direction, msg.total_today, msg.person_name ?? null);
           updateStat('stat-total', msg.total_today);
           // Update current hour bar
           const h = new Date(msg.timestamp).getHours();
           actChart.data.datasets[0].data[h] = (actChart.data.datasets[0].data[h] || 0) + 1;
           actChart.update('active');
           document.getElementById('chart-placeholder').style.display = 'none';
-          showToast(`Cruce ${msg.direction.toUpperCase()} detectado`, 'success', 2000);
+          const who = msg.person_name ? ` — ${msg.person_name}` : '';
+          showToast(`Cruce ${msg.direction.toUpperCase()} detectado${who}`, 'success', 2000);
         }
       };
 
@@ -767,7 +832,7 @@
           let badge = 0;
           events.forEach(ev => {
             const ts = new Date(ev.timestamp).toLocaleTimeString('es-ES', { hour12: false });
-            dashboardAPI.addEvent(ts, ev.direction, ++badge);
+            dashboardAPI.addEvent(ts, ev.direction, ++badge, ev.person_name ?? null);
           });
         }
       } catch {}
@@ -894,6 +959,116 @@
 
     loadInitialData();
     connectWS();
+
+    // ── Known persons panel ────────────────────────────────
+    async function loadPersons() {
+      try {
+        const res = await fetch('/persons');
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = document.getElementById('persons-list');
+        const empty = document.getElementById('persons-empty');
+        const named = data.persons.filter(p => p.name && !p.name.startsWith('Person '));
+        if (named.length === 0) {
+          empty.style.display = '';
+          return;
+        }
+        empty.style.display = 'none';
+        // Remove old rows (keep empty placeholder)
+        list.querySelectorAll('.person-row').forEach(el => el.remove());
+        named.forEach(p => {
+          const row = document.createElement('div');
+          row.className = 'person-row flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-slate-800 border border-slate-700';
+          const ts = p.last_seen ? new Date(p.last_seen).toLocaleDateString('es', { day:'2-digit', month:'short' }) : '—';
+          row.innerHTML = `
+            <div class="flex items-center gap-2">
+              <div class="w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center flex-shrink-0">
+                <svg class="w-3 h-3 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+              </div>
+              <span class="text-xs font-medium text-slate-200">${p.name}</span>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-slate-600">
+              <span>${p.visit_count}×</span>
+              <span>${ts}</span>
+            </div>`;
+          list.appendChild(row);
+        });
+      } catch {}
+    }
+
+    // Enroll modal
+    const enrollModal = document.getElementById('enroll-modal');
+    const enrollForm  = document.getElementById('enroll-form');
+    const enrollError = document.getElementById('enroll-error');
+    const uploadWrap  = document.getElementById('enroll-upload-wrap');
+
+    document.getElementById('btn-enroll').addEventListener('click', () => {
+      enrollError.classList.add('hidden');
+      enrollForm.reset();
+      uploadWrap.classList.add('hidden');
+      enrollModal.classList.remove('hidden');
+    });
+
+    document.getElementById('enroll-close').addEventListener('click', () => {
+      enrollModal.classList.add('hidden');
+    });
+
+    enrollModal.addEventListener('click', e => {
+      if (e.target === enrollModal) enrollModal.classList.add('hidden');
+    });
+
+    enrollForm.querySelectorAll('input[name="enroll-source"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        uploadWrap.classList.toggle('hidden', radio.value !== 'upload');
+      });
+    });
+
+    enrollForm.addEventListener('submit', async e => {
+      e.preventDefault();
+      enrollError.classList.add('hidden');
+      const btn = document.getElementById('enroll-submit');
+      btn.disabled = true;
+      btn.textContent = 'Registrando…';
+
+      const name   = document.getElementById('enroll-name').value.trim();
+      const source = enrollForm.querySelector('input[name="enroll-source"]:checked').value;
+      const fd     = new FormData();
+      fd.append('name', name);
+
+      if (source === 'frame') {
+        fd.append('use_current_frame', 'true');
+      } else {
+        const file = document.getElementById('enroll-file').files[0];
+        if (!file) {
+          enrollError.textContent = 'Selecciona una imagen.';
+          enrollError.classList.remove('hidden');
+          btn.disabled = false; btn.textContent = 'Registrar';
+          return;
+        }
+        fd.append('image', file);
+      }
+
+      try {
+        const res = await fetch('/api/enroll_face', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (res.ok) {
+          enrollModal.classList.add('hidden');
+          showToast(`"${data.name}" registrado (ID ${data.person_id})`, 'success');
+          loadPersons();
+        } else {
+          enrollError.textContent = data.detail ?? 'Error desconocido';
+          enrollError.classList.remove('hidden');
+        }
+      } catch (ex) {
+        enrollError.textContent = `Sin respuesta: ${ex.message}`;
+        enrollError.classList.remove('hidden');
+      } finally {
+        btn.disabled = false; btn.textContent = 'Registrar';
+      }
+    });
+
+    loadPersons();
+    setInterval(loadPersons, 30000);
   </script>
 </body>
 </html>

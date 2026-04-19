@@ -27,6 +27,7 @@ class CrossingEvent(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     timestamp = Column(DateTime, nullable=False)
     direction = Column(String(3), nullable=False)  # "in" | "out"
+    person_name = Column(String(100), nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -66,15 +67,24 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.execute(text("PRAGMA journal_mode=WAL"))
         await conn.run_sync(Base.metadata.create_all)
+        # Migrate: add person_name column if it doesn't exist yet
+        try:
+            await conn.execute(text("ALTER TABLE events ADD COLUMN person_name VARCHAR(100)"))
+        except Exception:
+            pass  # Column already exists
 
 
-async def insert_event(direction: str, timestamp: datetime.datetime | None = None) -> None:
+async def insert_event(
+    direction: str,
+    timestamp: datetime.datetime | None = None,
+    person_name: str | None = None,
+) -> None:
     """Persist one crossing event (non-blocking)."""
     ts = timestamp or datetime.datetime.now()
     sf = _get_session_factory()
     async with sf() as session:
         async with session.begin():
-            session.add(CrossingEvent(timestamp=ts, direction=direction))
+            session.add(CrossingEvent(timestamp=ts, direction=direction, person_name=person_name))
 
 
 async def get_recent_events(limit: int = 50) -> list[dict[str, Any]]:
@@ -85,7 +95,7 @@ async def get_recent_events(limit: int = 50) -> list[dict[str, Any]]:
             select(CrossingEvent).order_by(CrossingEvent.timestamp.desc()).limit(limit)
         )
         return [
-            {"id": r.id, "timestamp": r.timestamp.isoformat(), "direction": r.direction}
+            {"id": r.id, "timestamp": r.timestamp.isoformat(), "direction": r.direction, "person_name": r.person_name}
             for r in result.scalars().all()
         ]
 

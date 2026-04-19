@@ -146,7 +146,14 @@ class RTSPStream:
                 tracked, crossings = self._tracker.update(sv_dets)
                 if crossings and self._event_loop and self._event_queue:
                     for c in crossings:
-                        self._event_loop.call_soon_threadsafe(self._event_queue.put_nowait, c)
+                        tid_c = c.get("tracker_id")
+                        person_name = None
+                        if tid_c is not None and tid_c in self._person_cache:
+                            pid_c, name_c = self._person_cache[tid_c]
+                            person_name = name_c if name_c else f"P{pid_c}"
+                        self._event_loop.call_soon_threadsafe(
+                            self._event_queue.put_nowait, {**c, "person_name": person_name}
+                        )
 
                 # Face recognition — try to identify each tracked person
                 labels: list[str] = []

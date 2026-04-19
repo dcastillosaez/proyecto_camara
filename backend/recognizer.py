@@ -124,6 +124,43 @@ class PersonRecognizer:
             self._cache[tracker_id] = (pid, None)
             return pid, None, True
 
+    def enroll_named_face(self, image_bgr: np.ndarray, name: str) -> int | None:
+        """Register (or rename) a person from *image_bgr* with *name*.
+
+        Returns the person_id, or None if no face is detected in the image.
+        """
+        if not self._available:
+            return None
+        rgb = np.ascontiguousarray(image_bgr[:, :, ::-1])
+        locs = fr.face_locations(rgb, model="hog")
+        if not locs:
+            return None
+        encodings = fr.face_encodings(rgb, known_face_locations=locs)
+        if not encodings:
+            return None
+        enc = encodings[0]
+
+        with self._lock:
+            if self._encodings:
+                dists = fr.face_distance(self._encodings, enc)
+                best = int(np.argmin(dists))
+                if dists[best] <= self.TOLERANCE:
+                    pid = self._person_ids[best]
+                    self._person_names[best] = name
+                    self._conn.execute("UPDATE persons SET name=? WHERE id=?", (name, pid))
+                    self._conn.commit()
+                    # Refresh cache entries for this person
+                    for tid, (cached_pid, _) in list(self._cache.items()):
+                        if cached_pid == pid:
+                            self._cache[tid] = (pid, name)
+                    return pid
+            pid = self._register(enc)
+            # Register gave us None name; update it now
+            self._conn.execute("UPDATE persons SET name=? WHERE id=?", (name, pid))
+            self._conn.commit()
+            self._person_names[-1] = name
+            return pid
+
     def list_persons(self) -> list[dict]:
         """Return all known persons ordered by most-recently seen."""
         if not self._available:
