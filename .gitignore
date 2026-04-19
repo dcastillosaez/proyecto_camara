@@ -34,3 +34,5 @@ data/*.db
 # OS
 .DS_Store
 Thumbs.db
+credentials.json
+data/token.json
