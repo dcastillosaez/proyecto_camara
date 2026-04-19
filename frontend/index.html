@@ -153,8 +153,8 @@
           >Reintentar conexión</button>
         </div>
 
-        <!-- REC badge (top-left) -->
-        <div class="absolute top-3 left-3 pointer-events-none">
+        <!-- REC badge (top-left) — visible only while recording -->
+        <div id="rec-badge" class="absolute top-3 left-3 pointer-events-none hidden">
           <span class="inline-flex items-center gap-1.5 bg-red-600/90 backdrop-blur-sm text-white text-xs font-bold px-2.5 py-1 rounded-lg shadow">
             <span class="w-1.5 h-1.5 rounded-full bg-white pulse" aria-hidden="true"></span>REC
           </span>
@@ -491,6 +491,10 @@
           <input id="enroll-name" type="text" placeholder="Nombre de la persona" required
             class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors">
         </div>
+        <div id="enroll-known-wrap" class="hidden">
+          <p class="text-xs text-slate-500 mb-1.5">Personas conocidas — haz clic para seleccionar:</p>
+          <div id="enroll-known-list" class="flex flex-wrap gap-1.5"></div>
+        </div>
         <div>
           <label class="text-xs text-slate-400 mb-1 block">Fuente de imagen</label>
           <div class="flex gap-2">
@@ -823,9 +827,14 @@
           showToast(`Cruce ${msg.direction.toUpperCase()} detectado${who}`, 'success', 2000);
         } else if (msg.type === 'recording_started') {
           addRecording({ id: msg.id, filename: msg.filename, upload_status: 'pending', created_at: new Date().toISOString() });
+          document.getElementById('rec-badge').classList.remove('hidden');
           showToast(`Grabando: ${msg.filename}`, 'info', 3000);
         } else if (msg.type === 'recording_uploaded') {
           updateRecordingStatus(msg.filename, 'uploaded', msg.gdrive_id);
+          document.getElementById('rec-badge').classList.add('hidden');
+        } else if (msg.type === 'recording_failed') {
+          updateRecordingStatus(msg.filename, 'failed');
+          document.getElementById('rec-badge').classList.add('hidden');
         }
       };
 
@@ -1098,10 +1107,36 @@
     const enrollError = document.getElementById('enroll-error');
     const uploadWrap  = document.getElementById('enroll-upload-wrap');
 
-    document.getElementById('btn-enroll').addEventListener('click', () => {
+    document.getElementById('btn-enroll').addEventListener('click', async () => {
       enrollError.classList.add('hidden');
       enrollForm.reset();
       uploadWrap.classList.add('hidden');
+      // Load known persons as quick-select chips
+      const knownWrap = document.getElementById('enroll-known-wrap');
+      const knownList = document.getElementById('enroll-known-list');
+      knownList.innerHTML = '';
+      try {
+        const res = await fetch('/persons');
+        const data = await res.json();
+        const named = (data.persons || []).filter(p => p.name && !p.name.startsWith('Person '));
+        if (named.length > 0) {
+          named.forEach(p => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.textContent = `${p.name} (${p.sample_count ?? 1})`;
+            chip.className = 'text-xs px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-blue-600 text-slate-300 hover:text-white transition-colors cursor-pointer';
+            chip.addEventListener('click', () => {
+              document.getElementById('enroll-name').value = p.name;
+              knownList.querySelectorAll('button').forEach(b => b.classList.remove('bg-blue-600', 'text-white'));
+              chip.classList.add('bg-blue-600', 'text-white');
+            });
+            knownList.appendChild(chip);
+          });
+          knownWrap.classList.remove('hidden');
+        } else {
+          knownWrap.classList.add('hidden');
+        }
+      } catch (_) { knownWrap.classList.add('hidden'); }
       enrollModal.classList.remove('hidden');
     });
 

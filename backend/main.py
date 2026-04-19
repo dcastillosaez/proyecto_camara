@@ -159,6 +159,7 @@ async def lifespan(app: FastAPI):
             for r in recs:
                 if r["filename"] == filename and r["upload_status"] == "pending":
                     await update_recording(r["id"], "failed")
+                    await _broadcast({"type": "recording_failed", "filename": filename})
                     break
 
         _asyncio.run_coroutine_threadsafe(_update(), loop)
