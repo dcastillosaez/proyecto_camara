@@ -176,6 +176,24 @@ async def delete_events_range(from_dt: datetime.datetime, to_dt: datetime.dateti
     return count
 
 
+async def delete_recordings_range(from_dt: datetime.datetime, to_dt: datetime.datetime) -> int:
+    """Delete recordings created in [from_dt, to_dt]. Returns number of deleted rows."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(Recording).where(
+                    Recording.created_at >= from_dt,
+                    Recording.created_at <= to_dt,
+                )
+            )
+            rows = result.scalars().all()
+            count = len(rows)
+            for row in rows:
+                await session.delete(row)
+    return count
+
+
 async def get_stats_today() -> dict[str, Any]:
     """Total crossings today + hourly breakdown for the last 24 h."""
     sf = _get_session_factory()

@@ -19,6 +19,7 @@ from backend.camera import router as camera_router, set_refs as camera_set_refs
 from backend.config import get_settings
 from backend.database import (
     delete_events_range,
+    delete_recordings_range,
     get_recent_events,
     get_recent_recordings,
     get_stats_today,
@@ -333,3 +334,12 @@ async def enroll_face(
 async def api_recordings(limit: int = 20):
     """Most recent clip recordings with upload status."""
     return {"recordings": await get_recent_recordings(limit)}
+
+
+@app.delete("/api/recordings")
+async def api_delete_recordings(from_dt: datetime.datetime, to_dt: datetime.datetime):
+    """Delete recordings created in [from_dt, to_dt]. Returns deleted count."""
+    if to_dt < from_dt:
+        raise HTTPException(status_code=400, detail="to_dt must be >= from_dt")
+    deleted = await delete_recordings_range(from_dt, to_dt)
+    return {"deleted": deleted}
