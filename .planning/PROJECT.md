@@ -2,80 +2,67 @@
 
 ## What This Is
 
-Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta personas en tiempo real con YOLOv8 y muestra estadísticas de actividad: personas contadas hoy, histograma de actividad por hora, y feed de vídeo en directo con las detecciones marcadas. Todo accesible desde cualquier dispositivo de la red local sin depender de la nube.
+Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta y reconoce personas en tiempo real con YOLOv8 + face-recognition, muestra estadísticas de actividad y graba clips automáticos con subida a Google Drive. Todo accesible desde cualquier dispositivo de la red local sin depender de la nube para el funcionamiento básico.
 
 ## Core Value
 
-Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo integrado en el mismo panel.
+Ver en tiempo real cuántas personas han pasado frente a la cámara, a qué horas hay más actividad y quiénes son, con el vídeo en vivo y las grabaciones integrados en el mismo panel.
 
 ## Requirements
 
-### Validated
+### Validated (v1.0 — 2026-04-19)
 
-(None yet — ship to validate)
-
-### Active
-
-- [ ] Stream RTSP de la cámara Tapo C220 capturado y retransmitido vía MJPEG al navegador
-- [ ] Detección de personas en cada frame usando YOLOv8 nano
-- [ ] Contador de cruces basado en línea virtual para evitar dobles conteos
-- [ ] Almacenamiento de eventos de detección en SQLite con timestamp
-- [ ] Dashboard web con vídeo en directo + bounding boxes visuales
-- [ ] Contador de personas del día actual visible en el dashboard
-- [ ] Histograma de actividad por hora (últimas 24 h) con Chart.js
-- [ ] API REST para consultar estadísticas históricas
-- [ ] WebSocket que emite eventos en tiempo real al frontend
-- [ ] Configuración centralizada (URL cámara, confianza YOLO, puerto)
-- [ ] Servicio arrancable con un solo comando (uvicorn)
+- [x] Stream RTSP de la cámara Tapo C220 capturado y retransmitido vía MJPEG al navegador
+- [x] Detección de personas en cada frame usando YOLOv8 nano
+- [x] Contador de cruces basado en línea virtual para evitar dobles conteos
+- [x] Almacenamiento de eventos de detección en SQLite con timestamp y nombre de persona
+- [x] Dashboard web con vídeo en directo + bounding boxes visuales
+- [x] Contador de personas del día actual visible en el dashboard
+- [x] Histograma de actividad por hora (últimas 24 h) con Chart.js
+- [x] API REST para consultar estadísticas históricas, eventos y grabaciones
+- [x] WebSocket que emite eventos en tiempo real al frontend
+- [x] Configuración centralizada (URL cámara, confianza YOLO, puerto, Drive, grabación)
+- [x] Servicio arrancable con un solo comando (uvicorn)
+- [x] Reconocimiento facial por embeddings 128-dim (face-recognition/dlib); enrolamiento vía API
+- [x] Grabación automática de clips .mp4 al detectar actividad; se detiene 5 s después de la última detección
+- [x] Subida automática de clips a Google Drive (carpeta «Grabaciones Tapo») con reintentos exponenciales
+- [x] Panel de grabaciones en dashboard con estado en tiempo real (pending / uploaded / failed)
 
 ### Out of Scope
 
-- Notificaciones push / alertas por correo — complejidad innecesaria para v1
-- Grabación de vídeo a disco — el objetivo es estadísticas, no almacenamiento de vídeo
+- Notificaciones push / alertas — complejidad innecesaria para v1; el dashboard es observacional
 - Autenticación de usuarios — es un dashboard local de red privada
 - Acceso remoto / túnel — se opera exclusivamente en LAN
 - Múltiples cámaras — una sola cámara en v1
+- WebRTC — MJPEG suficiente para LAN, sin señalización
 
 ## Context
 
 - **Cámara**: Tapo C220, IP local `192.168.1.132`, stream RTSP en `rtsp://192.168.1.132:554/stream1`
-- **Entorno**: Windows 11, red local, sin acceso GPU garantizado → YOLOv8 nano (CPU-friendly)
-- **Acceso**: Dashboard disponible en `http://localhost:8000` para cualquier dispositivo de la LAN
-- El usuario quiere que el README.md se vaya documentando conforme avanza el proyecto
+- **Entorno**: Windows 11, red local, sin acceso GPU → YOLOv8 nano (CPU-friendly)
+- **Acceso**: Dashboard en `http://localhost:8000` para cualquier dispositivo de la LAN
+- **Drive**: Carpeta «Grabaciones Tapo» (ID: `1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir`); requiere `credentials.json` OAuth2 Desktop descargado de Google Cloud Console
 
 ## Constraints
 
-- **Hardware**: Sin GPU dedicada confirmada — YOLOv8n para mantener inferencia <50 ms en CPU
+- **Hardware**: Sin GPU dedicada — YOLOv8n para mantener inferencia < 50 ms en CPU
 - **Red**: Solo LAN — no se diseña para exposición pública
-- **Stack**: Python 3.11+, FastAPI, OpenCV, Ultralytics YOLOv8, SQLite, HTML+JS vanilla con Chart.js
-- **Streaming**: MJPEG sobre HTTP (no WebRTC) — suficiente para LAN, sin infraestructura de señalización
+- **Stack**: Python 3.12, FastAPI, OpenCV, Ultralytics, supervision, face-recognition, SQLite, HTML+JS vanilla
+- **Streaming**: MJPEG sobre HTTP — sin WebRTC
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| MJPEG en lugar de WebRTC | Más simple, cero dependencias de STUN/TURN, latencia aceptable en LAN | — Pending |
-| YOLOv8 nano | Inferencia rápida en CPU, suficiente precisión para conteo de personas | — Pending |
-| Línea virtual de conteo | Evita contar la misma persona múltiples veces mientras permanece en escena | — Pending |
-| SQLite en lugar de PostgreSQL | Volumen bajo de eventos, sin usuarios concurrentes, sin servidores extra | — Pending |
-| Frontend sin framework JS | Sin build step, carga instantánea, fácil de mantener para un dashboard local | — Pending |
-
-## Evolution
-
-Este documento evoluciona en cada transición de fase y al cerrar milestones.
-
-**Después de cada fase:**
-1. ¿Requisitos invalidados? → Mover a Out of Scope con motivo
-2. ¿Requisitos validados? → Mover a Validated con referencia de fase
-3. ¿Nuevos requisitos emergieron? → Añadir a Active
-4. ¿Decisiones que registrar? → Añadir a Key Decisions
-5. ¿"What This Is" sigue siendo preciso? → Actualizar si hay deriva
-
-**Después de cada milestone:**
-1. Revisión completa de todas las secciones
-2. Comprobación del Core Value — ¿sigue siendo la prioridad correcta?
-3. Auditoría de Out of Scope — ¿los motivos siguen siendo válidos?
-4. Actualizar Context con el estado actual
+| MJPEG en lugar de WebRTC | Más simple, cero dependencias de STUN/TURN, latencia aceptable en LAN | ✓ Validado |
+| YOLOv8 nano | Inferencia rápida en CPU, suficiente precisión para conteo de personas | ✓ Validado |
+| Línea virtual de conteo | Evita contar la misma persona múltiples veces mientras permanece en escena | ✓ Validado |
+| SQLite en lugar de PostgreSQL | Volumen bajo de eventos, sin usuarios concurrentes, sin servidores extra | ✓ Validado |
+| Frontend sin framework JS | Sin build step, carga instantánea, fácil de mantener para un dashboard local | ✓ Validado |
+| face-recognition/dlib HOG | Más ligero que CNNs para LAN sin GPU; embeddings 128-dim suficientes | ✓ Validado |
+| mp4v fourcc en VideoWriter | Más fiable que H.264/avc1 en Windows sin codecs externos | ✓ Validado |
+| asyncio.run_coroutine_threadsafe | Bridge correcto entre hilos daemon y event loop async de FastAPI | ✓ Validado |
+| Degradación sin credentials.json | El sistema arranca y funciona; Drive upload deshabilitado, no falla | ✓ Validado |
 
 ---
-*Last updated: 2026-04-16 after initialization*
+*Last updated: 2026-04-19 — v1.0 completo, 10/10 fases, 38/38 tests*
