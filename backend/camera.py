@@ -43,26 +43,28 @@ async def _cam(method: str, *args):
 
 @router.get("/status")
 async def camera_status():
-    """Return current state of all toggleable settings."""
+    """Return current state of all toggleable settings (parallel Tapo calls)."""
     try:
-        privacy   = await _cam("getPrivacyMode")
-        led       = await _cam("getLED")
-        motion    = await _cam("getMotionDetection")
-        autotrack = await _cam("getAutoTrackTarget")
+        privacy, led, motion, autotrack = await asyncio.gather(
+            _cam("getPrivacyMode"),
+            _cam("getLED"),
+            _cam("getMotionDetection"),
+            _cam("getAutoTrackTarget"),
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
-    def _bool(d, *keys):
-        for k in keys:
-            if isinstance(d, dict):
-                d = d.get(k)
-        return bool(d) if d not in (None, "off", "0", 0) else False
+    def _bool(d, key="enabled"):
+        if isinstance(d, dict):
+            v = d.get(key)
+            return v not in (None, False, "off", "0", 0, "false")
+        return False
 
     return {
-        "privacy":   _bool(privacy,   "enabled"),
-        "led":       _bool(led,       "enabled"),
-        "motion":    _bool(motion,    "enabled"),
-        "autotrack": _bool(autotrack, "enabled"),
+        "privacy":   _bool(privacy),
+        "led":       _bool(led),
+        "motion":    _bool(motion),
+        "autotrack": _bool(autotrack),
     }
 
 

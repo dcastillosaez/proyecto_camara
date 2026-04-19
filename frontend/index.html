@@ -1026,6 +1026,8 @@
     }
 
     async function loadCamStatus() {
+      const toggles = ['toggle-privacy','toggle-led','toggle-motion','toggle-autotrack'];
+      toggles.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
       try {
         const res = await fetch('/camera/status');
         if (!res.ok) return;
@@ -1035,6 +1037,9 @@
         applyToggleState(document.getElementById('toggle-motion'),    s.motion);
         applyToggleState(document.getElementById('toggle-autotrack'), s.autotrack);
       } catch {}
+      finally {
+        toggles.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
+      }
     }
 
     document.querySelectorAll('.cam-toggle').forEach(btn => {
