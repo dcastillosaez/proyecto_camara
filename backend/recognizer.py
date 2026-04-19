@@ -27,6 +27,10 @@ class PersonRecognizer:
     Detects faces inside person bounding-box crops, extracts 128-dim dlib
     embeddings, and matches them against a persistent SQLite store.
 
+    Multiple embeddings per person are supported: each call to enroll_named_face
+    for an already-known person adds a new sample, improving match accuracy
+    across different lighting conditions, angles and clothing.
+
     Calling convention (from the RTSP capture thread):
       pid, name, is_new = recognizer.identify_or_register(frame, bbox, tid, frame_num)
 
@@ -36,6 +40,7 @@ class PersonRecognizer:
 
     TOLERANCE = 0.55        # euclidean distance threshold (lower = stricter)
     RECOG_INTERVAL = 30     # frames between attempts for unidentified tracker IDs
+    MAX_EMBEDDINGS_PER_PERSON = 20  # cap to keep matching fast
 
     def __init__(self, db_path: str = "data/persons.db") -> None:
         self._available = _AVAILABLE
@@ -53,6 +58,8 @@ class PersonRecognizer:
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._init_db()
 
+        # Flat parallel lists — one entry per (person, embedding) pair.
+        # A person with N embeddings appears N times in these lists.
         self._person_ids: list[int] = []
         self._person_names: list[str | None] = []
         self._encodings: list[np.ndarray] = []
@@ -84,11 +91,9 @@ class PersonRecognizer:
         if not self._available:
             return None, None, False
 
-        # Already identified this tracker ID — no need to re-run inference
         if tracker_id in self._cache:
             return None, None, False
 
-        # Throttle attempts for unidentified IDs
         last = self._last_attempt.get(tracker_id, -(self.RECOG_INTERVAL + 1))
         if frame_number - last < self.RECOG_INTERVAL:
             return None, None, False
@@ -99,7 +104,7 @@ class PersonRecognizer:
         if crop.size == 0:
             return None, None, False
 
-        rgb = np.ascontiguousarray(crop[:, :, ::-1])  # BGR→RGB
+        rgb = np.ascontiguousarray(crop[:, :, ::-1])
         locs = fr.face_locations(rgb, model="hog")
         if not locs:
             return None, None, False
@@ -125,9 +130,13 @@ class PersonRecognizer:
             return pid, None, True
 
     def enroll_named_face(self, image_bgr: np.ndarray, name: str) -> int | None:
-        """Register (or rename) a person from *image_bgr* with *name*.
+        """Register or update a person from *image_bgr* with *name*.
 
-        Returns the person_id, or None if no face is detected in the image.
+        If the face matches an existing person, adds the embedding as an
+        additional sample (improving future recognition) and updates the name.
+        If no match, registers as a new person.
+
+        Returns the person_id, or None if no face detected.
         """
         if not self._available:
             return None
@@ -146,16 +155,33 @@ class PersonRecognizer:
                 best = int(np.argmin(dists))
                 if dists[best] <= self.TOLERANCE:
                     pid = self._person_ids[best]
-                    self._person_names[best] = name
+                    # Update name on all in-memory entries for this person
+                    for i, p in enumerate(self._person_ids):
+                        if p == pid:
+                            self._person_names[i] = name
                     self._conn.execute("UPDATE persons SET name=? WHERE id=?", (name, pid))
+                    # Add new embedding sample if under the cap
+                    count = self._person_ids.count(pid)
+                    if count < self.MAX_EMBEDDINGS_PER_PERSON:
+                        blob = pickle.dumps(enc)
+                        self._conn.execute(
+                            "INSERT INTO face_encodings (person_id, encoding) VALUES (?, ?)",
+                            (pid, blob),
+                        )
+                        self._person_ids.append(pid)
+                        self._person_names.append(name)
+                        self._encodings.append(enc)
+                        logger.info(
+                            "PersonRecognizer: added embedding sample %d/%d for person id=%d name=%s",
+                            count + 1, self.MAX_EMBEDDINGS_PER_PERSON, pid, name,
+                        )
                     self._conn.commit()
-                    # Refresh cache entries for this person
                     for tid, (cached_pid, _) in list(self._cache.items()):
                         if cached_pid == pid:
                             self._cache[tid] = (pid, name)
                     return pid
+
             pid = self._register(enc)
-            # Register gave us None name; update it now
             self._conn.execute("UPDATE persons SET name=? WHERE id=?", (name, pid))
             self._conn.commit()
             self._person_names[-1] = name
@@ -167,8 +193,11 @@ class PersonRecognizer:
             return []
         with self._lock:
             cur = self._conn.execute(
-                "SELECT id, name, first_seen, last_seen, visit_count "
-                "FROM persons ORDER BY last_seen DESC"
+                "SELECT p.id, p.name, p.first_seen, p.last_seen, p.visit_count, "
+                "COUNT(fe.id) as sample_count "
+                "FROM persons p "
+                "LEFT JOIN face_encodings fe ON fe.person_id = p.id "
+                "GROUP BY p.id ORDER BY p.last_seen DESC"
             )
             return [
                 {
@@ -177,6 +206,7 @@ class PersonRecognizer:
                     "first_seen": r[2],
                     "last_seen": r[3],
                     "visit_count": r[4],
+                    "sample_count": 1 + r[5],  # primary embedding + additional
                 }
                 for r in cur.fetchall()
             ]
@@ -196,16 +226,39 @@ class PersonRecognizer:
                 last_seen   TEXT DEFAULT (datetime('now')),
                 visit_count INTEGER DEFAULT 1
             );
+            CREATE TABLE IF NOT EXISTS face_encodings (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id  INTEGER NOT NULL REFERENCES persons(id),
+                encoding   BLOB NOT NULL,
+                added_at   TEXT DEFAULT (datetime('now'))
+            );
         """)
         self._conn.commit()
 
     def _load(self) -> None:
+        # Primary embeddings (one per person, stored in persons table)
         cur = self._conn.execute("SELECT id, name, encoding FROM persons")
         for pid, name, blob in cur.fetchall():
             self._person_ids.append(pid)
             self._person_names.append(name)
             self._encodings.append(pickle.loads(blob))
-        logger.info("PersonRecognizer: loaded %d known persons", len(self._person_ids))
+
+        # Additional embeddings added via enroll_named_face
+        cur = self._conn.execute(
+            "SELECT fe.person_id, p.name, fe.encoding "
+            "FROM face_encodings fe JOIN persons p ON fe.person_id = p.id "
+            "ORDER BY fe.person_id, fe.id"
+        )
+        for pid, name, blob in cur.fetchall():
+            self._person_ids.append(pid)
+            self._person_names.append(name)
+            self._encodings.append(pickle.loads(blob))
+
+        persons_count = len(set(self._person_ids))
+        logger.info(
+            "PersonRecognizer: loaded %d embeddings for %d persons",
+            len(self._encodings), persons_count,
+        )
 
     def _register(self, encoding: np.ndarray) -> int:
         blob = pickle.dumps(encoding)
