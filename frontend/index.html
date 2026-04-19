@@ -861,7 +861,7 @@
       addEvent(ts, dir, total, personName) {
         const list  = document.getElementById('events-list');
         const empty = document.getElementById('events-empty');
-        if (empty) empty.remove();
+        if (empty) empty.style.display = 'none';
         const item = document.createElement('div');
         item.className = 'event-item';
         const color = dir === 'in' ? 'text-blue-400' : 'text-amber-400';
@@ -973,11 +973,21 @@
         if (eventsRes.ok) {
           const data   = await eventsRes.json();
           const events = (data.events ?? []).reverse();
-          let badge = 0;
-          events.forEach(ev => {
-            const ts = new Date(ev.timestamp).toLocaleTimeString('es-ES', { hour12: false });
-            dashboardAPI.addEvent(ts, ev.direction, ++badge, ev.person_name ?? null);
-          });
+          // Clear existing list before repopulating
+          const list  = document.getElementById('events-list');
+          const empty = document.getElementById('events-empty');
+          list.querySelectorAll('.event-item').forEach(el => el.remove());
+          updateStat('events-badge', 0);
+          if (events.length === 0) {
+            empty.style.display = '';
+          } else {
+            empty.style.display = 'none';
+            let badge = 0;
+            events.forEach(ev => {
+              const ts = new Date(ev.timestamp).toLocaleTimeString('es-ES', { hour12: false });
+              dashboardAPI.addEvent(ts, ev.direction, ++badge, ev.person_name ?? null);
+            });
+          }
         }
       } catch {}
     }
