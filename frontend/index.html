@@ -248,8 +248,17 @@
                 Recargar
               </button>
             </div>
-            <div id="presets-container" class="flex flex-wrap gap-2 min-h-[40px] items-start content-start mb-4" aria-label="Presets de posición">
+            <div id="presets-container" class="flex flex-wrap gap-2 min-h-[40px] items-start content-start mb-3" aria-label="Presets de posición">
               <span class="text-xs text-slate-700 italic">Cargando presets…</span>
+            </div>
+            <!-- Save current position as preset -->
+            <div class="flex gap-2 items-center">
+              <input id="preset-name-input" type="text" placeholder="Nombre del preset…" maxlength="32"
+                class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors">
+              <button id="save-preset-btn"
+                class="text-xs px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-blue-600 text-slate-300 hover:text-white border border-slate-600 hover:border-blue-500 transition-colors cursor-pointer whitespace-nowrap">
+                Guardar posición
+              </button>
             </div>
 
             <div class="grid grid-cols-2 gap-2 border-t border-slate-800 pt-4">
@@ -419,7 +428,34 @@
             </svg>
             <h2 class="text-sm font-semibold text-slate-200">Eventos recientes</h2>
           </div>
-          <span id="events-badge" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-600 border border-slate-700 tabular-nums" aria-label="Número de eventos registrados">0</span>
+          <div class="flex items-center gap-2">
+            <span id="events-badge" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-600 border border-slate-700 tabular-nums" aria-label="Número de eventos registrados">0</span>
+            <button id="btn-delete-events" title="Borrar eventos por rango de fechas"
+              class="text-slate-600 hover:text-red-400 transition-colors cursor-pointer" aria-label="Borrar eventos">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            </button>
+          </div>
+        </div>
+        <!-- Delete events date-range panel (hidden by default) -->
+        <div id="delete-events-panel" class="hidden mb-3 p-3 bg-slate-800/60 border border-slate-700 rounded-xl flex flex-col gap-2">
+          <p class="text-xs text-slate-400 font-medium">Borrar eventos en el intervalo:</p>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-xs text-slate-500 mb-1 block">Desde</label>
+              <input id="delete-from" type="datetime-local"
+                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-red-500 transition-colors">
+            </div>
+            <div>
+              <label class="text-xs text-slate-500 mb-1 block">Hasta</label>
+              <input id="delete-to" type="datetime-local"
+                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-red-500 transition-colors">
+            </div>
+          </div>
+          <div class="flex gap-2 justify-end">
+            <button id="delete-events-cancel" class="text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors cursor-pointer">Cancelar</button>
+            <button id="delete-events-confirm" class="text-xs px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-600 text-white font-semibold transition-colors cursor-pointer">Borrar</button>
+          </div>
+          <p id="delete-events-msg" class="text-xs text-center hidden"></p>
         </div>
         <div
           id="events-list"
@@ -700,6 +736,81 @@
     }
     document.getElementById('load-presets-btn').addEventListener('click', loadPresets);
     loadPresets();
+
+    // ── PTZ: save preset ──────────────────────────────────
+    document.getElementById('save-preset-btn').addEventListener('click', async () => {
+      const input = document.getElementById('preset-name-input');
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      const btn = document.getElementById('save-preset-btn');
+      btn.disabled = true; btn.style.opacity = '0.5';
+      try {
+        const res = await fetch('/ptz/save_preset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        if (res.ok) {
+          showToast(`Preset "${name}" guardado`, 'success');
+          input.value = '';
+          loadPresets();
+        } else {
+          const d = await res.json().catch(() => ({}));
+          showToast(d.detail ?? 'Error al guardar preset', 'error');
+        }
+      } catch { showToast('Sin respuesta del servidor', 'error'); }
+      finally { btn.disabled = false; btn.style.opacity = ''; }
+    });
+
+    // ── Events: delete by date range ─────────────────────
+    const deletePanel  = document.getElementById('delete-events-panel');
+    const deleteMsg    = document.getElementById('delete-events-msg');
+
+    document.getElementById('btn-delete-events').addEventListener('click', () => {
+      deleteMsg.classList.add('hidden');
+      // Pre-fill "to" with now, "from" with 7 days ago
+      const now = new Date();
+      const week = new Date(now - 7 * 864e5);
+      const fmt = d => d.toISOString().slice(0, 16);
+      document.getElementById('delete-from').value = fmt(week);
+      document.getElementById('delete-to').value   = fmt(now);
+      deletePanel.classList.toggle('hidden');
+    });
+
+    document.getElementById('delete-events-cancel').addEventListener('click', () => {
+      deletePanel.classList.add('hidden');
+    });
+
+    document.getElementById('delete-events-confirm').addEventListener('click', async () => {
+      const from = document.getElementById('delete-from').value;
+      const to   = document.getElementById('delete-to').value;
+      if (!from || !to) { return; }
+      if (new Date(to) < new Date(from)) {
+        deleteMsg.textContent = 'La fecha «Hasta» debe ser posterior a «Desde».';
+        deleteMsg.className = 'text-xs text-center text-red-400';
+        deleteMsg.classList.remove('hidden');
+        return;
+      }
+      const btn = document.getElementById('delete-events-confirm');
+      btn.disabled = true; btn.style.opacity = '0.5';
+      try {
+        const params = new URLSearchParams({ from_dt: new Date(from).toISOString(), to_dt: new Date(to).toISOString() });
+        const res = await fetch(`/api/events?${params}`, { method: 'DELETE' });
+        if (res.ok) {
+          const d = await res.json();
+          deleteMsg.textContent = `${d.deleted} evento(s) eliminado(s).`;
+          deleteMsg.className = 'text-xs text-center text-green-400';
+          deleteMsg.classList.remove('hidden');
+          setTimeout(() => { deletePanel.classList.add('hidden'); loadInitialData(); }, 1500);
+        } else {
+          const d = await res.json().catch(() => ({}));
+          deleteMsg.textContent = d.detail ?? 'Error al borrar.';
+          deleteMsg.className = 'text-xs text-center text-red-400';
+          deleteMsg.classList.remove('hidden');
+        }
+      } catch { deleteMsg.textContent = 'Sin respuesta.'; deleteMsg.className = 'text-xs text-center text-red-400'; deleteMsg.classList.remove('hidden'); }
+      finally { btn.disabled = false; btn.style.opacity = ''; }
+    });
 
     // ── Chart (empty placeholder, ready for Phase 5) ──────
     const hours   = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}h`);

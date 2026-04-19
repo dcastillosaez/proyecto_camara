@@ -89,3 +89,20 @@ async def go_to_preset(preset_id: int):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"status": "ok", "preset_id": preset_id}
+
+
+class SavePresetRequest(BaseModel):
+    name: str
+
+
+@router.post("/save_preset")
+async def save_preset(req: SavePresetRequest):
+    """Save the current motor position as a new preset with the given name."""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    try:
+        await _ptz("savePreset", name)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"status": "ok", "name": name}

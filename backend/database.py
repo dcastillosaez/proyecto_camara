@@ -158,6 +158,24 @@ async def get_recent_recordings(limit: int = 20) -> list[dict[str, Any]]:
         ]
 
 
+async def delete_events_range(from_dt: datetime.datetime, to_dt: datetime.datetime) -> int:
+    """Delete crossing events in [from_dt, to_dt]. Returns number of deleted rows."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(CrossingEvent).where(
+                    CrossingEvent.timestamp >= from_dt,
+                    CrossingEvent.timestamp <= to_dt,
+                )
+            )
+            rows = result.scalars().all()
+            count = len(rows)
+            for row in rows:
+                await session.delete(row)
+    return count
+
+
 async def get_stats_today() -> dict[str, Any]:
     """Total crossings today + hourly breakdown for the last 24 h."""
     sf = _get_session_factory()

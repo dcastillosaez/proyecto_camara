@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.camera import router as camera_router, set_refs as camera_set_refs
 from backend.config import get_settings
 from backend.database import (
+    delete_events_range,
     get_recent_events,
     get_recent_recordings,
     get_stats_today,
@@ -259,6 +260,15 @@ async def api_stats():
 async def api_events(limit: int = 50):
     """Most recent crossing events."""
     return {"events": await get_recent_events(limit)}
+
+
+@app.delete("/api/events")
+async def api_delete_events(from_dt: datetime.datetime, to_dt: datetime.datetime):
+    """Delete crossing events in [from_dt, to_dt]. Returns deleted count."""
+    if to_dt < from_dt:
+        raise HTTPException(status_code=400, detail="to_dt must be >= from_dt")
+    deleted = await delete_events_range(from_dt, to_dt)
+    return {"deleted": deleted}
 
 
 @app.websocket("/ws")
