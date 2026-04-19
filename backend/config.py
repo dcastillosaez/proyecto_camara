@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     process_width: int = 1280
     process_height: int = 720
 
+    # Phase 10 — clip recording + Google Drive upload
+    clips_dir: str = "data/clips"
+    gdrive_folder_id: str = "1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir"
+    gdrive_credentials_path: str = "credentials.json"
+    gdrive_token_path: str = "data/token.json"
+    recording_fps: float = 15.0
+    recording_tail_secs: float = 5.0
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

@@ -17,10 +17,20 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.camera import router as camera_router, set_refs as camera_set_refs
 from backend.config import get_settings
-from backend.database import get_recent_events, get_stats_today, init_db, insert_event
+from backend.database import (
+    get_recent_events,
+    get_recent_recordings,
+    get_stats_today,
+    init_db,
+    insert_event,
+    insert_recording,
+    update_recording,
+)
 from backend.detector import PersonDetector
+from backend.gdrive import DriveUploader
 from backend.ptz import router as ptz_router
 from backend.recognizer import PersonRecognizer
+from backend.recorder import ClipRecorder
 from backend.stream import RTSPStream
 from backend.tracker import PersonTracker
 
@@ -101,7 +111,78 @@ async def lifespan(app: FastAPI):
 
     rtsp_stream.start()
     logger.info("RTSP stream started: %s", settings.camera_url)
+
+    # Phase 10 — clip recorder + Drive uploader
+    def _on_clip_ready(path: str) -> None:
+        """Called from recorder thread when a clip is finalised."""
+        import asyncio as _asyncio
+        filename = Path(path).name
+        coro = insert_recording(filename)
+        future = _asyncio.run_coroutine_threadsafe(coro, loop)
+        try:
+            rec_id = future.result(timeout=5)
+        except Exception as exc:
+            logger.error("insert_recording failed: %s", exc)
+            rec_id = None
+        uploader.enqueue(path)
+        # Broadcast new recording event to dashboard
+        if rec_id is not None:
+            _asyncio.run_coroutine_threadsafe(
+                _broadcast({"type": "recording_started", "filename": filename, "id": rec_id}),
+                loop,
+            )
+
+    def _on_uploaded(path: str, gdrive_id: str) -> None:
+        import asyncio as _asyncio
+        filename = Path(path).name
+
+        async def _update():
+            recs = await get_recent_recordings(100)
+            for r in recs:
+                if r["filename"] == filename and r["upload_status"] == "pending":
+                    await update_recording(r["id"], "uploaded", gdrive_id)
+                    await _broadcast({
+                        "type": "recording_uploaded",
+                        "filename": filename,
+                        "gdrive_id": gdrive_id,
+                    })
+                    break
+
+        _asyncio.run_coroutine_threadsafe(_update(), loop)
+
+    def _on_failed(path: str) -> None:
+        import asyncio as _asyncio
+        filename = Path(path).name
+
+        async def _update():
+            recs = await get_recent_recordings(100)
+            for r in recs:
+                if r["filename"] == filename and r["upload_status"] == "pending":
+                    await update_recording(r["id"], "failed")
+                    break
+
+        _asyncio.run_coroutine_threadsafe(_update(), loop)
+
+    uploader = DriveUploader(
+        folder_id=settings.gdrive_folder_id,
+        credentials_path=settings.gdrive_credentials_path,
+        token_path=settings.gdrive_token_path,
+        on_uploaded=_on_uploaded,
+        on_failed=_on_failed,
+    )
+    recorder = ClipRecorder(
+        stream=rtsp_stream,
+        clips_dir=settings.clips_dir,
+        fps=settings.recording_fps,
+        tail_secs=settings.recording_tail_secs,
+        on_clip_ready=_on_clip_ready,
+    )
+    uploader.start()
+    recorder.start()
+
     yield
+    recorder.stop()
+    uploader.stop()
     rtsp_stream.stop()
     drain_task.cancel()
     logger.info("RTSP stream stopped")
@@ -235,3 +316,9 @@ async def enroll_face(
     if pid is None:
         raise HTTPException(status_code=422, detail="No face detected in the provided image")
     return {"person_id": pid, "name": name.strip()}
+
+
+@app.get("/api/recordings")
+async def api_recordings(limit: int = 20):
+    """Most recent clip recordings with upload status."""
+    return {"recordings": await get_recent_recordings(limit)}

@@ -6,7 +6,7 @@ import datetime
 import os
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Integer, String, func, select, text
+from sqlalchemy import Column, DateTime, Float, Integer, String, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -28,6 +28,17 @@ class CrossingEvent(Base):
     timestamp = Column(DateTime, nullable=False)
     direction = Column(String(3), nullable=False)  # "in" | "out"
     person_name = Column(String(100), nullable=True)
+
+
+class Recording(Base):
+    __tablename__ = "recordings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    filename = Column(String(255), nullable=False)
+    gdrive_id = Column(String(100), nullable=True)
+    upload_status = Column(String(20), nullable=False, default="pending")  # pending|uploaded|failed
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.now)
+    duration_secs = Column(Float, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +107,53 @@ async def get_recent_events(limit: int = 50) -> list[dict[str, Any]]:
         )
         return [
             {"id": r.id, "timestamp": r.timestamp.isoformat(), "direction": r.direction, "person_name": r.person_name}
+            for r in result.scalars().all()
+        ]
+
+
+async def insert_recording(filename: str, created_at: datetime.datetime | None = None) -> int:
+    """Persist a new recording row with status='pending'. Returns the row id."""
+    ts = created_at or datetime.datetime.now()
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            rec = Recording(filename=filename, created_at=ts, upload_status="pending")
+            session.add(rec)
+            await session.flush()
+            return int(rec.id)
+
+
+async def update_recording(
+    rec_id: int,
+    upload_status: str,
+    gdrive_id: str | None = None,
+) -> None:
+    """Update upload_status (and optionally gdrive_id) for a recording row."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            rec = await session.get(Recording, rec_id)
+            if rec:
+                rec.upload_status = upload_status
+                if gdrive_id is not None:
+                    rec.gdrive_id = gdrive_id
+
+
+async def get_recent_recordings(limit: int = 20) -> list[dict[str, Any]]:
+    """Return the *limit* most recent recordings, newest first."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        result = await session.execute(
+            select(Recording).order_by(Recording.created_at.desc()).limit(limit)
+        )
+        return [
+            {
+                "id": r.id,
+                "filename": r.filename,
+                "gdrive_id": r.gdrive_id,
+                "upload_status": r.upload_status,
+                "created_at": r.created_at.isoformat(),
+            }
             for r in result.scalars().all()
         ]
 
