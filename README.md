@@ -65,18 +65,32 @@ Los clips se subirán a la carpeta **«Grabaciones Tapo»** (ID: `1OJTWvYoHCDU28
 
 ## Uso
 
+### Producción (recomendado)
+
 ```bash
-# Arrancar servidor
-.venv\Scripts\python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
-
-# Con recarga automática (desarrollo)
-.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
-
-# Verificar conexión RTSP
-python -c "import cv2; cap=cv2.VideoCapture('rtsp://192.168.1.132:554/stream1'); print('OK' if cap.isOpened() else 'FAIL'); cap.release()"
+# Arrancar con watchdog (reinicio automático si cae) + HTTPS
+.venv\Scripts\python.exe watchdog.py
 ```
 
-Dashboard disponible en `http://localhost:8000` desde cualquier dispositivo de la red local.
+Dashboard disponible en `https://<IP-local>:8000` desde cualquier dispositivo de la red.  
+Obtén tu IP local con `ipconfig` → busca «Dirección IPv4».  
+El navegador mostrará aviso de certificado autofirmado — click en «Avanzado» → «Continuar».
+
+### Desarrollo
+
+```bash
+# Sin watchdog, sin SSL (HTTP plano, recarga automática)
+.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Dashboard en `http://localhost:8000`.
+
+### Diagnóstico
+
+```bash
+# Verificar conexión RTSP
+.venv\Scripts\python.exe -c "import cv2; cap=cv2.VideoCapture('rtsp://192.168.1.132:554/stream2'); print('OK' if cap.isOpened() else 'FAIL'); cap.release()"
+```
 
 ## Endpoints
 
