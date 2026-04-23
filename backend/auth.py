@@ -1,13 +1,11 @@
 """HTTP Basic Auth + WebSocket token management."""
+import base64
 import secrets
-from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import HTTPException, Request, status
 
 from backend.config import get_settings
 
-_security = HTTPBasic(auto_error=False)
 _ws_tokens: set[str] = set()
 
 
@@ -15,21 +13,34 @@ def _auth_enabled() -> bool:
     return bool(get_settings().dashboard_user)
 
 
-def verify(
-    credentials: Annotated[HTTPBasicCredentials | None, Depends(_security)],
-) -> None:
-    """FastAPI dependency — enforces Basic Auth when DASHBOARD_USER is set."""
+async def verify(request: Request) -> None:
+    """FastAPI dependency — enforces Basic Auth on HTTP routes when DASHBOARD_USER is set.
+    WebSocket scope is skipped here; WS auth uses single-use tokens instead."""
     if not _auth_enabled():
         return
-    if credentials is None:
+    if request.scope.get("type") == "websocket":
+        return
+
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Basic "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             headers={"WWW-Authenticate": "Basic realm='Tapo Dashboard'"},
             detail="Authentication required",
         )
+    try:
+        decoded = base64.b64decode(auth[6:]).decode("utf-8")
+        username, password = decoded.split(":", 1)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            headers={"WWW-Authenticate": "Basic realm='Tapo Dashboard'"},
+            detail="Invalid Authorization header",
+        )
+
     s = get_settings()
-    user_ok = secrets.compare_digest(credentials.username.encode(), s.dashboard_user.encode())
-    pass_ok = secrets.compare_digest(credentials.password.encode(), s.dashboard_pass.encode())
+    user_ok = secrets.compare_digest(username.encode(), s.dashboard_user.encode())
+    pass_ok = secrets.compare_digest(password.encode(), s.dashboard_pass.encode())
     if not (user_ok and pass_ok):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
