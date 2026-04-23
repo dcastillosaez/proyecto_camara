@@ -43,29 +43,38 @@ async def _cam(method: str, *args):
 
 @router.get("/status")
 async def camera_status():
-    """Return current state of all toggleable settings (parallel Tapo calls)."""
-    try:
-        privacy, led, motion, autotrack = await asyncio.gather(
-            _cam("getPrivacyMode"),
-            _cam("getLED"),
-            _cam("getMotionDetection"),
-            _cam("getAutoTrackTarget"),
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+    """Return current state of all toggleable settings (parallel Tapo calls).
 
-    def _bool(d, key="enabled"):
+    Returns partial data on individual failures rather than a blanket 502 —
+    each field defaults to False and 'errors' lists which calls failed.
+    """
+    results = await asyncio.gather(
+        _cam("getPrivacyMode"),
+        _cam("getLED"),
+        _cam("getMotionDetection"),
+        _cam("getAutoTrackTarget"),
+        return_exceptions=True,
+    )
+
+    def _bool(d) -> bool:
+        if isinstance(d, Exception):
+            return False
         if isinstance(d, dict):
-            v = d.get(key)
+            v = d.get("enabled")
             return v not in (None, False, "off", "0", 0, "false")
         return False
 
-    return {
-        "privacy":   _bool(privacy),
-        "led":       _bool(led),
-        "motion":    _bool(motion),
-        "autotrack": _bool(autotrack),
+    labels = ("privacy", "led", "motion", "autotrack")
+    errors = {
+        label: str(r)
+        for label, r in zip(labels, results)
+        if isinstance(r, Exception)
     }
+
+    payload = {label: _bool(r) for label, r in zip(labels, results)}
+    if errors:
+        payload["errors"] = errors
+    return payload
 
 
 # ---------------------------------------------------------------------------

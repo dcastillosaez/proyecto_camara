@@ -1044,6 +1044,10 @@
         applyToggleState(document.getElementById('toggle-led'),       s.led);
         applyToggleState(document.getElementById('toggle-motion'),    s.motion);
         applyToggleState(document.getElementById('toggle-autotrack'), s.autotrack);
+        if (s.errors && Object.keys(s.errors).length) {
+          const failed = Object.keys(s.errors).join(', ');
+          showToast(`Cámara: no se pudo leer ${failed}`, 'warning');
+        }
       } catch {}
       finally {
         toggles.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
