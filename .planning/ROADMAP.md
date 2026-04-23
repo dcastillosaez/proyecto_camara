@@ -22,6 +22,12 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 8: Configuracion centralizada y arranque** - pydantic-settings con .env validado y arranque con un solo comando (completed 2026-04-16)
 - [x] **Phase 9: Reconocimiento facial y enrolamiento** - Identificar personas con face-recognition, guardar embeddings, comparar rostros detectados (completed 2026-04-19)
 - [x] **Phase 10: Grabacion de video y upload a Google Drive** - Grabar clips .mp4 cuando se detecte persona, subir automaticamente a Google Drive via API (completed 2026-04-19)
+- [ ] **Phase 11: Rendimiento y estabilidad** - Migrar a YOLO26n, usar stream2 (720p), watchdog para reinicio automático de uvicorn
+- [ ] **Phase 12: Alertas y notificaciones** - Push/email al detectar desconocido + Web Push API en el navegador
+- [ ] **Phase 13: Detección avanzada e historial** - Zonas de interés configurables, detección de intrusión por horario, galería de capturas por individuo
+- [ ] **Phase 14: Seguridad** - Autenticación básica en el dashboard, HTTPS con certificado autofirmado
+- [ ] **Phase 15: UI y exportación** - Filtros en tabla de eventos, vista de clips reproducible desde dashboard, exportar CSV de eventos
+- [ ] **Phase 16: Operaciones** - Docker Compose, rotación automática de eventos antiguos (>30 días), métricas de salud (CPU/RAM/FPS) en dashboard
 
 ## Phase Details
 
@@ -225,8 +231,14 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 8. Configuracion centralizada y arranque | Done (inline) | Complete   | 2026-04-16 |
 | 9. Reconocimiento facial y enrolamiento | Done (inline) | Complete | 2026-04-19 |
 | 10. Grabacion de video y upload a Google Drive | Done (inline) | Complete | 2026-04-19 |
+| 11. Rendimiento y estabilidad | — | Pending | — |
+| 12. Alertas y notificaciones | — | Pending | — |
+| 13. Deteccion avanzada e historial | — | Pending | — |
+| 14. Seguridad | — | Pending | — |
+| 15. UI y exportacion | — | Pending | — |
+| 16. Operaciones | — | Pending | — |
 
 ---
 *Roadmap created: 2026-04-16*
-*Last updated: 2026-04-19*
-*Status snapshot: 10/10 phases complete — proyecto v1.0 terminado. Pendiente manual: credentials.json para Drive upload.*
+*Last updated: 2026-04-23*
+*Status snapshot: 10/16 phases complete — v1.0 terminado. Fases 11-16 pendientes (v1.1+).*

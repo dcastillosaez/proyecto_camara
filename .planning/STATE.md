@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
+milestone: v1.1
 milestone_name: milestone
-status: complete
-stopped_at: "Phase 10 complete — proyecto v1.0 terminado"
-last_updated: "2026-04-19"
-last_activity: 2026-04-19
+status: planning
+stopped_at: "Phase 10 complete — v1.0 terminado. Fases 11-16 planificadas"
+last_updated: "2026-04-23"
+last_activity: 2026-04-23
 progress:
-  total_phases: 10
+  total_phases: 16
   completed_phases: 10
   total_plans: 4
   completed_plans: 4
-  percent: 100
+  percent: 63
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-19)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial y grabación automática integrados en el mismo panel.
-**Current focus:** COMPLETO — todas las fases implementadas y con tests
+**Current focus:** v1.1 — fases 11-16 pendientes (rendimiento, alertas, detección avanzada, seguridad, UI, operaciones)
 
 ## Current Position
 
-Phase: 10 (grabacion-video-gdrive) — COMPLETE
-Status: Proyecto v1.0 terminado
-Last activity: 2026-04-19
+Phase: 10 (grabacion-video-gdrive) — COMPLETE (último completado)
+Status: v1.0 terminado — planificando v1.1
+Last activity: 2026-04-23
 
-Progress: [██████████] 100%
+Progress: [██████░░░░] 63% (10/16 fases)
 
 ## Phases Summary
 
@@ -45,6 +45,12 @@ Progress: [██████████] 100%
 | 8 | Configuración centralizada | ✓ Complete | 2026-04-16 |
 | 9 | Reconocimiento facial y enrolamiento | ✓ Complete | 2026-04-19 |
 | 10 | Grabación de video y upload Google Drive | ✓ Complete | 2026-04-19 |
+| 11 | Rendimiento y estabilidad | ○ Pending | — |
+| 12 | Alertas y notificaciones | ○ Pending | — |
+| 13 | Detección avanzada e historial | ○ Pending | — |
+| 14 | Seguridad | ○ Pending | — |
+| 15 | UI y exportación | ○ Pending | — |
+| 16 | Operaciones | ○ Pending | — |
 
 ## Test Coverage
 
