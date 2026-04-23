@@ -12,9 +12,6 @@ import cv2
 
 logger = logging.getLogger(__name__)
 
-_FOURCC = cv2.VideoWriter_fourcc(*"mp4v")
-
-
 class ClipRecorder:
     """
     Monitors RTSPStream.get_live_count(). While persons visible:
@@ -30,12 +27,14 @@ class ClipRecorder:
         clips_dir: str = "data/clips",
         fps: float = 15.0,
         tail_secs: float = 5.0,
+        codec: str = "mp4v",
         on_clip_ready: Callable[[str], None] | None = None,
     ) -> None:
         self._stream = stream
         self._clips_dir = Path(clips_dir)
         self._fps = fps
         self._tail_secs = tail_secs
+        self._fourcc = cv2.VideoWriter_fourcc(*codec)
         self._on_clip_ready = on_clip_ready
 
         self._running = False
@@ -94,7 +93,7 @@ class ClipRecorder:
     def _start_clip(self) -> None:
         ts = time.strftime("%Y%m%d_%H%M%S")
         path = str(self._clips_dir / f"clip_{ts}.mp4")
-        writer = cv2.VideoWriter(path, _FOURCC, self._fps, self._frame_size)
+        writer = cv2.VideoWriter(path, self._fourcc, self._fps, self._frame_size)
         if not writer.isOpened():
             logger.error("ClipRecorder: VideoWriter failed to open %s", path)
             return

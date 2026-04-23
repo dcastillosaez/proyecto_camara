@@ -15,7 +15,6 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, W
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.camera import router as camera_router, set_refs as camera_set_refs
 from backend.config import get_settings
 from backend.database import (
     delete_events_range,
@@ -30,7 +29,6 @@ from backend.database import (
 )
 from backend.detector import PersonDetector
 from backend.gdrive import DriveUploader
-from backend.ptz import router as ptz_router
 from backend.recognizer import PersonRecognizer
 from backend.recorder import ClipRecorder
 from backend.stream import RTSPStream
@@ -86,7 +84,12 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
     drain_task = asyncio.create_task(_drain_events(event_queue))
 
-    detector = PersonDetector(confidence=settings.yolo_confidence)
+    detector = PersonDetector(
+        model_path=settings.yolo_model_path,
+        confidence=settings.yolo_confidence,
+        classes=settings.yolo_classes,
+        label=settings.detection_label,
+    )
     tracker = PersonTracker(
         start=sv.Point(
             int(settings.line_start_x_frac * settings.process_width),
@@ -106,7 +109,9 @@ async def lifespan(app: FastAPI):
         event_loop=loop,
         event_queue=event_queue,
     )
-    camera_set_refs(rtsp_stream, tracker)
+    if settings.camera_driver == "tapo":
+        from backend.camera import set_refs as camera_set_refs
+        camera_set_refs(rtsp_stream, tracker)
     # Apply initial processing resolution from config
     if settings.process_width > 0:
         rtsp_stream.set_process_size(settings.process_width, settings.process_height)
@@ -178,6 +183,7 @@ async def lifespan(app: FastAPI):
         clips_dir=settings.clips_dir,
         fps=settings.recording_fps,
         tail_secs=settings.recording_tail_secs,
+        codec=settings.recording_codec,
         on_clip_ready=_on_clip_ready,
     )
     uploader.start()
@@ -192,8 +198,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(ptz_router)
-app.include_router(camera_router)
+
+_settings = get_settings()
+if _settings.camera_driver == "tapo":
+    from backend.ptz import router as ptz_router
+    from backend.camera import router as camera_router
+    app.include_router(ptz_router)
+    app.include_router(camera_router)
+
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 

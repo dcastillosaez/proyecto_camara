@@ -1,4 +1,4 @@
-"""Person detection using YOLOv8n with bounding-box overlay."""
+"""Object detection via a configurable YOLO model with bounding-box overlay."""
 
 from dataclasses import dataclass
 
@@ -18,15 +18,23 @@ class Detection:
 
 
 class PersonDetector:
-    """Wraps YOLOv8n to detect persons (class 0) and annotate frames."""
+    """Wraps a YOLO model to detect objects and annotate frames."""
 
-    def __init__(self, model_path: str = "yolov8n.pt", confidence: float = 0.45) -> None:
+    def __init__(
+        self,
+        model_path: str = "yolov8n.pt",
+        confidence: float = 0.45,
+        classes: list[int] | None = None,
+        label: str = "person",
+    ) -> None:
         self._model = YOLO(model_path)
         self._confidence = confidence
+        self._classes = classes if classes is not None else [0]
+        self._label = label
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
-        """Return bounding boxes for persons detected in *frame*."""
-        results = self._model(frame, classes=[0], conf=self._confidence, verbose=False)
+        """Return bounding boxes for objects detected in *frame*."""
+        results = self._model(frame, classes=self._classes, conf=self._confidence, verbose=False)
         detections: list[Detection] = []
         for r in results:
             for box in r.boxes:
@@ -36,12 +44,8 @@ class PersonDetector:
         return detections
 
     def detect_sv(self, frame: np.ndarray) -> sv.Detections:
-        """Run inference and return a supervision ``Detections`` object.
-
-        Used by the tracker pipeline — avoids a second inference pass by
-        converting the ultralytics result directly via ``from_ultralytics``.
-        """
-        results = self._model(frame, classes=[0], conf=self._confidence, verbose=False)
+        """Run inference and return a supervision ``Detections`` object."""
+        results = self._model(frame, classes=self._classes, conf=self._confidence, verbose=False)
         return sv.Detections.from_ultralytics(results[0])
 
     def annotate(self, frame: np.ndarray, detections: list[Detection]) -> np.ndarray:
@@ -49,7 +53,7 @@ class PersonDetector:
         annotated = frame.copy()
         for det in detections:
             cv2.rectangle(annotated, (det.x1, det.y1), (det.x2, det.y2), (0, 255, 0), 2)
-            label = f"person {det.confidence:.2f}"
+            label = f"{self._label} {det.confidence:.2f}"
             cv2.putText(
                 annotated, label, (det.x1, det.y1 - 8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA,
