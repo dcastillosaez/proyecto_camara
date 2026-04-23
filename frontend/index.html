@@ -937,9 +937,17 @@
       }
     }
 
-    function connectWS() {
+    async function connectWS() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      _ws = new WebSocket(`${proto}//${location.host}/ws`);
+      let wsUrl = `${proto}//${location.host}/ws`;
+      try {
+        const res = await fetch('/api/ws-token');
+        if (res.ok) {
+          const { token } = await res.json();
+          if (token) wsUrl += `?token=${token}`;
+        }
+      } catch (_) {}
+      _ws = new WebSocket(wsUrl);
 
       _ws.onopen = () => {
         _wsRetry = 1000;

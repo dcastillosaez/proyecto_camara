@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     process_width: int = 1280
     process_height: int = 720
 
+    # Dashboard auth — leave empty to disable (default: open access on LAN)
+    dashboard_user: str = ""
+    dashboard_pass: str = ""
+
+    # HTTPS — leave empty for plain HTTP. Set both to enable SSL.
+    # Cert auto-generated on first run via backend/run.py.
+    ssl_certfile: str = ""
+    ssl_keyfile: str = ""
+
     # Clip recording + Google Drive upload
     clips_dir: str = "data/clips"
     gdrive_folder_id: str = "1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir"

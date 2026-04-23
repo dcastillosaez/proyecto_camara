@@ -11,10 +11,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 import supervision as sv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.auth import issue_ws_token, verify, verify_ws_token
 from backend.config import get_settings
 from backend.database import (
     delete_events_range,
@@ -197,7 +198,7 @@ async def lifespan(app: FastAPI):
     logger.info("RTSP stream stopped")
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify)])
 
 _settings = get_settings()
 if _settings.camera_driver == "tapo":
@@ -284,8 +285,17 @@ async def api_delete_events(from_dt: datetime.datetime, to_dt: datetime.datetime
     return {"deleted": deleted}
 
 
+@app.get("/api/ws-token")
+async def ws_token():
+    """Issue a single-use WebSocket auth token (noop when auth disabled)."""
+    return {"token": issue_ws_token()}
+
+
 @app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
+async def websocket_endpoint(ws: WebSocket, token: str | None = Query(default=None)):
+    if not verify_ws_token(token):
+        await ws.close(code=1008)
+        return
     await ws.accept()
     _ws_clients.add(ws)
     try:
