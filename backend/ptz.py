@@ -1,6 +1,7 @@
 """PTZ control endpoints using pytapo."""
 
 import asyncio
+import threading
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -18,23 +19,40 @@ _DIRECTION: dict[str, tuple[int, int]] = {
     "right": (10, 0),
 }
 
+# Shared Tapo instance — recreated on failure to avoid stale connections.
+# Lock serializes all calls so the camera never sees parallel auth attempts
+# (which it interprets as brute-force and triggers a Temporary Suspension).
+_tapo_instance: Tapo | None = None
+_tapo_lock = threading.Lock()
+
+
+def _get_tapo() -> Tapo:
+    global _tapo_instance
+    if _tapo_instance is None:
+        s = get_settings()
+        _tapo_instance = Tapo(s.tapo_host, s.tapo_user, s.tapo_pass)
+    return _tapo_instance
+
 
 def _tapo_op(method_name: str, *args):
     """
-    Instantiate Tapo and call *method_name* inside a worker thread that owns
-    a brand-new event loop.
+    Call *method_name* on the shared Tapo singleton inside a worker thread
+    that owns a fresh event loop (pytapo calls run_until_complete internally).
 
-    pytapo calls asyncio.get_event_loop().run_until_complete() internally.
-    If the thread inherits FastAPI's running loop that call raises
-    "Cannot run the event loop while another loop is running".
-    Setting a fresh loop before touching pytapo avoids the clash entirely.
+    The module-level lock ensures only one call runs at a time, preventing
+    the parallel-auth issue that triggers camera Temporary Suspension.
+    On any exception the singleton is discarded so the next call reconnects.
     """
+    global _tapo_instance
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        s = get_settings()
-        tapo = Tapo(s.tapo_host, s.tapo_user, s.tapo_pass)
-        return getattr(tapo, method_name)(*args)
+        with _tapo_lock:
+            tapo = _get_tapo()
+            return getattr(tapo, method_name)(*args)
+    except Exception:
+        _tapo_instance = None  # force reconnect on next call
+        raise
     finally:
         loop.close()
         asyncio.set_event_loop(None)
