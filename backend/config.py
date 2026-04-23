@@ -1,7 +1,9 @@
 """Centralized configuration via pydantic-settings."""
 
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -23,7 +25,22 @@ class Settings(BaseSettings):
     cors_origins: list[str] = []
 
     # YOLO model file — swap for yolo26n.pt, yolov8s.pt, etc.
+    # Must end in .pt and must not contain path traversal sequences.
     yolo_model_path: str = "yolov8n.pt"
+
+    @field_validator("yolo_model_path")
+    @classmethod
+    def validate_yolo_model_path(cls, v: str) -> str:
+        p = Path(v)
+        if p.suffix.lower() != ".pt":
+            raise ValueError("yolo_model_path must end in .pt")
+        resolved = p.resolve()
+        project_root = Path(__file__).parent.parent.resolve()
+        try:
+            resolved.relative_to(project_root)
+        except ValueError:
+            raise ValueError("yolo_model_path must be inside the project directory")
+        return v
     yolo_confidence: float = 0.45
     # COCO class IDs to detect. Default [0] = person.
     yolo_classes: list[int] = [0]
