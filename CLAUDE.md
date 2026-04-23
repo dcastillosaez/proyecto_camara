@@ -32,7 +32,7 @@ Ejecutar **siempre desde** `F:\Documentos\IA\Proyecto_Camara` (raíz del proyect
 .venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 # Con recarga automática (desarrollo)
-.venv/Scripts/python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 # Correr tests
 pytest tests/ -v
