@@ -8,10 +8,19 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from environment / .env file."""
 
+    # Base RTSP URL — sin credenciales embebidas.
+    # Usar RTSP_USER / RTSP_PASS para autenticación (más seguro que embebir en la URL).
     camera_url: str = "rtsp://192.168.1.132:554/stream1"
+    rtsp_user: str = ""
+    rtsp_pass: str = ""
+
     # "tapo" enables PTZ/camera-control endpoints via pytapo.
     # Set to "generic" for any RTSP camera without vendor control.
     camera_driver: str = "tapo"
+
+    # CORS — lista de orígenes permitidos, e.g. ["https://192.168.1.10:8000"].
+    # Vacío = sin CORS cross-origin (acceso solo desde el mismo origen).
+    cors_origins: list[str] = []
 
     # YOLO model file — swap for yolo26n.pt, yolov8s.pt, etc.
     yolo_model_path: str = "yolov8n.pt"
@@ -66,3 +75,28 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return cached Settings singleton."""
     return Settings()
+
+
+def build_rtsp_url(s: Settings) -> str:
+    """Return RTSP URL with credentials injected from RTSP_USER/RTSP_PASS.
+    Falls back to camera_url as-is when no separate credentials are configured."""
+    if not s.rtsp_user:
+        return s.camera_url
+    from urllib.parse import urlparse, urlunparse
+    p = urlparse(s.camera_url)
+    netloc = f"{s.rtsp_user}:{s.rtsp_pass}@{p.hostname}"
+    if p.port:
+        netloc += f":{p.port}"
+    return urlunparse(p._replace(netloc=netloc))
+
+
+def mask_rtsp_url(url: str) -> str:
+    """Replace credentials in RTSP URL with *** for safe logging."""
+    from urllib.parse import urlparse, urlunparse
+    p = urlparse(url)
+    if p.username:
+        netloc = f"***:***@{p.hostname}"
+        if p.port:
+            netloc += f":{p.port}"
+        return urlunparse(p._replace(netloc=netloc))
+    return url

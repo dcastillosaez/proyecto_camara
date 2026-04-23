@@ -12,11 +12,12 @@ import cv2
 import numpy as np
 import supervision as sv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.auth import issue_ws_token, verify, verify_ws_token
-from backend.config import get_settings
+from backend.config import build_rtsp_url, get_settings, mask_rtsp_url
 from backend.database import (
     delete_events_range,
     delete_recordings_range,
@@ -103,7 +104,7 @@ async def lifespan(app: FastAPI):
     )
     recognizer = PersonRecognizer(db_path=settings.db_path.replace("events.db", "persons.db"))
     rtsp_stream = RTSPStream(
-        settings.camera_url,
+        build_rtsp_url(settings),
         detector=detector,
         tracker=tracker,
         recognizer=recognizer,
@@ -118,7 +119,7 @@ async def lifespan(app: FastAPI):
         rtsp_stream.set_process_size(settings.process_width, settings.process_height)
 
     rtsp_stream.start()
-    logger.info("RTSP stream started: %s", settings.camera_url)
+    logger.info("RTSP stream started: %s", mask_rtsp_url(build_rtsp_url(settings)))
 
     # Phase 10 — clip recorder + Drive uploader
     def _on_clip_ready(path: str) -> None:
@@ -201,6 +202,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify)])
 
 _settings = get_settings()
+
+if _settings.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
 if _settings.camera_driver == "tapo":
     from backend.ptz import router as ptz_router
     from backend.camera import router as camera_router
