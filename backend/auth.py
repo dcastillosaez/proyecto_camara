@@ -2,7 +2,8 @@
 import base64
 import secrets
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, status
+from starlette.requests import HTTPConnection
 
 from backend.config import get_settings
 
@@ -13,15 +14,15 @@ def _auth_enabled() -> bool:
     return bool(get_settings().dashboard_user)
 
 
-async def verify(request: Request) -> None:
+async def verify(conn: HTTPConnection) -> None:
     """FastAPI dependency — enforces Basic Auth on HTTP routes when DASHBOARD_USER is set.
-    WebSocket scope is skipped here; WS auth uses single-use tokens instead."""
+    WebSocket scope is skipped; WS auth uses single-use tokens instead."""
     if not _auth_enabled():
         return
-    if request.scope.get("type") == "websocket":
+    if conn.scope.get("type") == "websocket":
         return
 
-    auth = request.headers.get("Authorization", "")
+    auth = conn.headers.get("Authorization", "")
     if not auth.startswith("Basic "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
