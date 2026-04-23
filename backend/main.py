@@ -271,7 +271,7 @@ async def api_stats():
 
 
 @app.get("/api/events")
-async def api_events(limit: int = 50):
+async def api_events(limit: int = Query(default=50, ge=1, le=500)):
     """Most recent crossing events."""
     return {"events": await get_recent_events(limit)}
 
@@ -322,9 +322,13 @@ async def persons():
     }
 
 
+_ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
 @app.post("/api/enroll_face")
 async def enroll_face(
-    name: str = Form(...),
+    name: str = Form(..., max_length=100),
     image: UploadFile | None = File(default=None),
     use_current_frame: bool = Form(default=False),
 ):
@@ -340,7 +344,11 @@ async def enroll_face(
             raise HTTPException(status_code=503, detail="No frame available from camera")
         img_bgr = frame
     else:
+        if image.content_type not in _ALLOWED_IMAGE_TYPES:
+            raise HTTPException(status_code=415, detail=f"Unsupported media type: {image.content_type}. Allowed: jpeg, png, webp")
         data = await image.read()
+        if len(data) > _MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large (max 10 MB)")
         arr = np.frombuffer(data, np.uint8)
         img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if img_bgr is None:

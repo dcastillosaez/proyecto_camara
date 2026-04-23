@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import pickle
 import sqlite3
 import threading
 from pathlib import Path
@@ -163,7 +162,7 @@ class PersonRecognizer:
                     # Add new embedding sample if under the cap
                     count = self._person_ids.count(pid)
                     if count < self.MAX_EMBEDDINGS_PER_PERSON:
-                        blob = pickle.dumps(enc)
+                        blob = enc.tobytes()
                         self._conn.execute(
                             "INSERT INTO face_encodings (person_id, encoding) VALUES (?, ?)",
                             (pid, blob),
@@ -235,24 +234,48 @@ class PersonRecognizer:
         """)
         self._conn.commit()
 
+    @staticmethod
+    def _blob_to_encoding(blob: bytes) -> np.ndarray:
+        """Deserialize an embedding blob. Migrates legacy pickle blobs on the fly."""
+        _NUMPY_SIZE = 128 * 8  # 128 float64 values = 1024 bytes
+        if len(blob) == _NUMPY_SIZE:
+            return np.frombuffer(blob, dtype=np.float64)
+        # Legacy pickle format — migrate transparently
+        import pickle  # noqa: PLC0415 — only imported during one-time migration
+        enc = pickle.loads(blob)  # noqa: S301
+        return np.array(enc, dtype=np.float64)
+
     def _load(self) -> None:
+        migrated = 0
         # Primary embeddings (one per person, stored in persons table)
         cur = self._conn.execute("SELECT id, name, encoding FROM persons")
         for pid, name, blob in cur.fetchall():
+            enc = self._blob_to_encoding(blob)
+            if len(blob) != 128 * 8:
+                self._conn.execute("UPDATE persons SET encoding=? WHERE id=?", (enc.tobytes(), pid))
+                migrated += 1
             self._person_ids.append(pid)
             self._person_names.append(name)
-            self._encodings.append(pickle.loads(blob))
+            self._encodings.append(enc)
 
         # Additional embeddings added via enroll_named_face
         cur = self._conn.execute(
-            "SELECT fe.person_id, p.name, fe.encoding "
+            "SELECT fe.id, fe.person_id, p.name, fe.encoding "
             "FROM face_encodings fe JOIN persons p ON fe.person_id = p.id "
             "ORDER BY fe.person_id, fe.id"
         )
-        for pid, name, blob in cur.fetchall():
+        for feid, pid, name, blob in cur.fetchall():
+            enc = self._blob_to_encoding(blob)
+            if len(blob) != 128 * 8:
+                self._conn.execute("UPDATE face_encodings SET encoding=? WHERE id=?", (enc.tobytes(), feid))
+                migrated += 1
             self._person_ids.append(pid)
             self._person_names.append(name)
-            self._encodings.append(pickle.loads(blob))
+            self._encodings.append(enc)
+
+        if migrated:
+            self._conn.commit()
+            logger.info("PersonRecognizer: migrated %d legacy pickle blobs to numpy format", migrated)
 
         persons_count = len(set(self._person_ids))
         logger.info(
