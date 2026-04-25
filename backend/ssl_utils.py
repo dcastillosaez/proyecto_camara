@@ -2,6 +2,10 @@
 import datetime
 import ipaddress
 import logging
+import os
+import platform
+import socket
+import subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -34,10 +38,7 @@ def ensure_self_signed_cert(certfile: str, keyfile: str) -> None:
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
         .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3650))
         .add_extension(
-            x509.SubjectAlternativeName([
-                x509.DNSName("localhost"),
-                x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
-            ]),
+            x509.SubjectAlternativeName(_build_san_entries()),
             critical=False,
         )
         .sign(key, hashes.SHA256())
@@ -51,4 +52,52 @@ def ensure_self_signed_cert(certfile: str, keyfile: str) -> None:
             serialization.NoEncryption(),
         )
     )
+    _restrict_key_permissions(key_path)
     logger.info("Self-signed cert generated → %s / %s", certfile, keyfile)
+
+
+def _build_san_entries() -> list:
+    from cryptography import x509
+
+    entries: list = [
+        x509.DNSName("localhost"),
+        x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+    ]
+    lan_ip = _detect_lan_ip()
+    if lan_ip and lan_ip != "127.0.0.1":
+        try:
+            entries.append(x509.IPAddress(ipaddress.IPv4Address(lan_ip)))
+            logger.debug("SAN incluye IP LAN: %s", lan_ip)
+        except ValueError:
+            pass
+    return entries
+
+
+def _detect_lan_ip() -> str | None:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return None
+
+
+def _restrict_key_permissions(key_path: Path) -> None:
+    if platform.system() == "Windows":
+        try:
+            username = os.environ.get("USERNAME", "")
+            if username:
+                subprocess.run(
+                    ["icacls", str(key_path), "/inheritance:r", "/grant:r", f"{username}:R"],
+                    check=False,
+                    capture_output=True,
+                )
+        except Exception:
+            pass
+    else:
+        try:
+            os.chmod(key_path, 0o600)
+        except Exception:
+            pass

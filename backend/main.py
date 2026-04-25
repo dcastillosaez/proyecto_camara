@@ -11,10 +11,15 @@ from pathlib import Path
 import cv2
 import numpy as np
 import supervision as sv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 from backend.auth import issue_ws_token, verify, verify_ws_token
 from backend.config import build_rtsp_url, get_settings, mask_rtsp_url
@@ -199,7 +204,11 @@ async def lifespan(app: FastAPI):
     logger.info("RTSP stream stopped")
 
 
+_limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify)])
+app.state.limiter = _limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _settings = get_settings()
 
@@ -211,6 +220,26 @@ if _settings.cors_origins:
         allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' https://cdn.tailwindcss.com https://cdn.jsdelivr.net 'unsafe-inline'; "
+            "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' blob: data:; "
+            "connect-src 'self' wss:;"
+        )
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 if _settings.camera_driver == "tapo":
     from backend.ptz import router as ptz_router
@@ -297,7 +326,8 @@ async def api_delete_events(from_dt: datetime.datetime, to_dt: datetime.datetime
 
 
 @app.get("/api/ws-token")
-async def ws_token():
+@_limiter.limit("10/minute")
+async def ws_token(request: Request):
     """Issue a single-use WebSocket auth token (noop when auth disabled)."""
     return {"token": issue_ws_token()}
 
@@ -338,7 +368,9 @@ _MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 @app.post("/api/enroll_face")
+@_limiter.limit("5/minute")
 async def enroll_face(
+    request: Request,
     name: str = Form(..., max_length=100),
     image: UploadFile | None = File(default=None),
     use_current_frame: bool = Form(default=False),
