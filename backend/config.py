@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     # OpenCV VideoWriter fourcc string. "mp4v" is reliable on Windows; use "avc1" for H.264.
     recording_codec: str = "mp4v"
 
+    # Horario de acceso — fuera de este rango los crossing events se marcan como intrusión.
+    # Requiere schedule_enabled=True; si está en False todos los eventos son "normales".
+    schedule_enabled: bool = False
+    schedule_start: str = "08:00"   # HH:MM (hora local)
+    schedule_end: str = "22:00"     # HH:MM
+    # Días activos: 0=lunes … 6=domingo (default: lunes–viernes)
+    schedule_days: list[int] = [0, 1, 2, 3, 4]
+
+    # Galería de capturas — crop de persona guardado al reconocerla (throttled)
+    gallery_dir: str = "data/gallery"
+    gallery_throttle_secs: float = 30.0
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

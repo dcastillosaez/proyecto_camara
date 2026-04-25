@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import threading
 import time
 from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np
+
+from backend.config import get_settings
 
 if TYPE_CHECKING:
     from backend.detector import Detection, PersonDetector
@@ -60,6 +64,11 @@ class RTSPStream:
         self._frame_num = 0
         # tracker_id → (person_id, name) for the current session
         self._person_cache: dict[int, tuple[int, str | None]] = {}
+        self._settings = get_settings()
+        # person_id → unix timestamp of last gallery capture
+        self._last_capture: dict[int, float] = {}
+        # active interest zones loaded from DB (updated via set_zones)
+        self._zones: list[dict] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -116,9 +125,60 @@ class RTSPStream:
             return {"in": 0, "out": 0, "total": 0}
         return self._tracker.get_counts()
 
+    def set_zones(self, zones: list[dict]) -> None:
+        """Replace the active interest zones list. Thread-safe."""
+        with self._lock:
+            self._zones = list(zones)
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _is_in_schedule(self) -> bool:
+        """Return True if current time falls within the configured access schedule."""
+        import datetime as _dt
+        s = self._settings
+        if not s.schedule_enabled:
+            return True
+        now = _dt.datetime.now()
+        if now.weekday() not in s.schedule_days:
+            return False
+        sh, sm = map(int, s.schedule_start.split(":"))
+        eh, em = map(int, s.schedule_end.split(":"))
+        start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+        end = now.replace(hour=eh, minute=em, second=0, microsecond=0)
+        return start <= now <= end
+
+    def _try_save_capture(
+        self,
+        frame: np.ndarray,
+        bbox: tuple[int, int, int, int],
+        person_id: int,
+    ) -> None:
+        """Save a cropped capture for a recognised person (throttled)."""
+        import datetime as _dt
+        now = time.time()
+        if now - self._last_capture.get(person_id, 0) < self._settings.gallery_throttle_secs:
+            return
+        self._last_capture[person_id] = now
+
+        x1, y1, x2, y2 = bbox
+        pad = 20
+        h, w = frame.shape[:2]
+        crop = frame[max(0, y1 - pad):min(h, y2 + pad), max(0, x1 - pad):min(w, x2 + pad)]
+        if crop.size == 0:
+            return
+
+        gallery_dir = os.path.join(self._settings.gallery_dir, str(person_id))
+        os.makedirs(gallery_dir, exist_ok=True)
+        ts = _dt.datetime.now()
+        image_path = os.path.join(gallery_dir, f"{ts.strftime('%Y%m%d_%H%M%S')}.jpg")
+        cv2.imwrite(image_path, crop)
+
+        if self._event_loop is not None:
+            import asyncio as _asyncio
+            from backend.database import insert_capture as _ic
+            _asyncio.run_coroutine_threadsafe(_ic(person_id, ts, image_path), self._event_loop)
 
     def _capture_loop(self) -> None:
         """Read frames in a tight loop, keeping only the newest."""
@@ -145,6 +205,7 @@ class RTSPStream:
                 sv_dets = self._detector.detect_sv(frame)
                 tracked, crossings = self._tracker.update(sv_dets)
                 if crossings and self._event_loop and self._event_queue:
+                    is_intrusion = not self._is_in_schedule()
                     for c in crossings:
                         tid_c = c.get("tracker_id")
                         person_name = None
@@ -152,7 +213,8 @@ class RTSPStream:
                             pid_c, name_c = self._person_cache[tid_c]
                             person_name = name_c if name_c else f"P{pid_c}"
                         self._event_loop.call_soon_threadsafe(
-                            self._event_queue.put_nowait, {**c, "person_name": person_name}
+                            self._event_queue.put_nowait,
+                            {**c, "person_name": person_name, "is_intrusion": is_intrusion},
                         )
 
                 # Face recognition — try to identify each tracked person
@@ -170,6 +232,7 @@ class RTSPStream:
                             )
                             if pid is not None:
                                 self._person_cache[tid] = (pid, name)
+                                self._try_save_capture(frame, (x1, y1, x2, y2), pid)
 
                         if tid in self._person_cache:
                             pid, name = self._person_cache[tid]
@@ -179,6 +242,29 @@ class RTSPStream:
                             labels.append(f"#{tid} {conf:.2f}")
 
                 frame = self._tracker.annotate(frame, tracked, labels=labels or None)
+
+                # Draw interest zones overlay on annotated frame
+                with self._lock:
+                    zones_snap = list(self._zones)
+                if zones_snap:
+                    fh, fw = frame.shape[:2]
+                    for z in zones_snap:
+                        if not z.get("enabled", True):
+                            continue
+                        try:
+                            pts = np.array(
+                                [[int(p[0] * fw), int(p[1] * fh)]
+                                 for p in json.loads(z["polygon_json"])],
+                                dtype=np.int32,
+                            )
+                            cv2.polylines(frame, [pts], isClosed=True, color=(0, 200, 255), thickness=2)
+                            cv2.putText(
+                                frame, z["name"], tuple(pts[0]),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1,
+                            )
+                        except Exception:
+                            pass
+
                 detections = []
                 live = len(tracked.xyxy) if tracked.xyxy is not None else 0
 

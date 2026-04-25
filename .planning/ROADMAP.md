@@ -24,7 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 10: Grabacion de video y upload a Google Drive** - Grabar clips .mp4 cuando se detecte persona, subir automaticamente a Google Drive via API (completed 2026-04-19)
 - [x] **Phase 11: Rendimiento y estabilidad** - Migrar a YOLO26n, usar stream2 (720p), watchdog para reinicio automático (completed 2026-04-23)
 - [ ] **Phase 12: Alertas y notificaciones** - Push/email al detectar desconocido + Web Push API en el navegador
-- [ ] **Phase 13: Detección avanzada e historial** - Zonas de interés configurables, detección de intrusión por horario, galería de capturas por individuo
+- [x] **Phase 13: Detección avanzada e historial** - Zonas de interés configurables, detección de intrusión por horario, galería de capturas por individuo (completed 2026-04-25)
 - [x] **Phase 14: Seguridad** - Autenticación básica en el dashboard, HTTPS con certificado autofirmado (completed 2026-04-23)
 - [ ] **Phase 15: UI y exportación** - Filtros en tabla de eventos, vista de clips reproducible desde dashboard, exportar CSV de eventos
 - [ ] **Phase 16: Operaciones** - Docker Compose, rotación automática de eventos antiguos (>30 días), métricas de salud (CPU/RAM/FPS) en dashboard
@@ -240,5 +240,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 
 ---
 *Roadmap created: 2026-04-16*
-*Last updated: 2026-04-23*
-*Status snapshot: 12/16 phases complete — v1.1 en progreso. Fases 12, 13, 15, 16 pendientes.*
+*Last updated: 2026-04-25*
+*Status snapshot: 13/16 phases complete — v1.2 en progreso. Fases 12, 15, 16 pendientes.*

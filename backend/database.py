@@ -6,7 +6,7 @@ import datetime
 import os
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, func, select, text
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -28,6 +28,26 @@ class CrossingEvent(Base):
     timestamp = Column(DateTime, nullable=False)
     direction = Column(String(3), nullable=False)  # "in" | "out"
     person_name = Column(String(100), nullable=True)
+    is_intrusion = Column(Boolean, nullable=False, default=False)
+
+
+class Zone(Base):
+    __tablename__ = "zones"
+
+    id = Column(String(50), primary_key=True)
+    name = Column(String(100), nullable=False)
+    polygon_json = Column(String, nullable=False)  # JSON: [[x_frac, y_frac], ...]
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.now)
+
+
+class Capture(Base):
+    __tablename__ = "captures"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    person_id = Column(Integer, nullable=False, index=True)
+    timestamp = Column(DateTime, nullable=False)
+    image_path = Column(String(255), nullable=True)
 
 
 class Recording(Base):
@@ -78,24 +98,31 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.execute(text("PRAGMA journal_mode=WAL"))
         await conn.run_sync(Base.metadata.create_all)
-        # Migrate: add person_name column if it doesn't exist yet
-        try:
-            await conn.execute(text("ALTER TABLE events ADD COLUMN person_name VARCHAR(100)"))
-        except Exception:
-            pass  # Column already exists
+        for migration in [
+            "ALTER TABLE events ADD COLUMN person_name VARCHAR(100)",
+            "ALTER TABLE events ADD COLUMN is_intrusion BOOLEAN DEFAULT 0",
+        ]:
+            try:
+                await conn.execute(text(migration))
+            except Exception:
+                pass  # Column already exists
 
 
 async def insert_event(
     direction: str,
     timestamp: datetime.datetime | None = None,
     person_name: str | None = None,
+    is_intrusion: bool = False,
 ) -> None:
     """Persist one crossing event (non-blocking)."""
     ts = timestamp or datetime.datetime.now()
     sf = _get_session_factory()
     async with sf() as session:
         async with session.begin():
-            session.add(CrossingEvent(timestamp=ts, direction=direction, person_name=person_name))
+            session.add(CrossingEvent(
+                timestamp=ts, direction=direction,
+                person_name=person_name, is_intrusion=is_intrusion,
+            ))
 
 
 async def get_recent_events(limit: int = 50) -> list[dict[str, Any]]:
@@ -106,7 +133,13 @@ async def get_recent_events(limit: int = 50) -> list[dict[str, Any]]:
             select(CrossingEvent).order_by(CrossingEvent.timestamp.desc()).limit(limit)
         )
         return [
-            {"id": r.id, "timestamp": r.timestamp.isoformat(), "direction": r.direction, "person_name": r.person_name}
+            {
+                "id": r.id,
+                "timestamp": r.timestamp.isoformat(),
+                "direction": r.direction,
+                "person_name": r.person_name,
+                "is_intrusion": bool(r.is_intrusion),
+            }
             for r in result.scalars().all()
         ]
 
@@ -192,6 +225,93 @@ async def delete_recordings_range(from_dt: datetime.datetime, to_dt: datetime.da
             for row in rows:
                 await session.delete(row)
     return count
+
+
+async def get_zones() -> list[dict[str, Any]]:
+    """Return all zones ordered by creation date."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        result = await session.execute(select(Zone).order_by(Zone.created_at))
+        return [
+            {
+                "id": z.id,
+                "name": z.name,
+                "polygon_json": z.polygon_json,
+                "enabled": bool(z.enabled),
+                "created_at": z.created_at.isoformat(),
+            }
+            for z in result.scalars().all()
+        ]
+
+
+async def upsert_zone(
+    zone_id: str,
+    name: str,
+    polygon_json: str,
+    enabled: bool = True,
+) -> None:
+    """Insert or update a zone by id."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            existing = await session.get(Zone, zone_id)
+            if existing:
+                existing.name = name
+                existing.polygon_json = polygon_json
+                existing.enabled = enabled
+            else:
+                session.add(Zone(
+                    id=zone_id, name=name, polygon_json=polygon_json,
+                    enabled=enabled, created_at=datetime.datetime.now(),
+                ))
+
+
+async def delete_zone(zone_id: str) -> bool:
+    """Delete a zone by id. Returns True if it existed."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            z = await session.get(Zone, zone_id)
+            if z:
+                await session.delete(z)
+                return True
+    return False
+
+
+async def insert_capture(
+    person_id: int,
+    timestamp: datetime.datetime,
+    image_path: str,
+) -> int:
+    """Persist a gallery capture. Returns the row id."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            cap = Capture(person_id=person_id, timestamp=timestamp, image_path=image_path)
+            session.add(cap)
+            await session.flush()
+            return int(cap.id)
+
+
+async def get_captures_for_person(person_id: int, limit: int = 20) -> list[dict[str, Any]]:
+    """Return the *limit* most recent captures for a person, newest first."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        result = await session.execute(
+            select(Capture)
+            .where(Capture.person_id == person_id)
+            .order_by(Capture.timestamp.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "id": c.id,
+                "person_id": c.person_id,
+                "timestamp": c.timestamp.isoformat(),
+                "image_path": c.image_path,
+            }
+            for c in result.scalars().all()
+        ]
 
 
 async def get_stats_today() -> dict[str, Any]:

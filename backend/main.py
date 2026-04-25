@@ -26,13 +26,17 @@ from backend.config import build_rtsp_url, get_settings, mask_rtsp_url
 from backend.database import (
     delete_events_range,
     delete_recordings_range,
+    get_captures_for_person,
     get_recent_events,
     get_recent_recordings,
     get_stats_today,
+    get_zones,
     init_db,
     insert_event,
     insert_recording,
     update_recording,
+    upsert_zone,
+    delete_zone,
 )
 from backend.detector import PersonDetector
 from backend.gdrive import DriveUploader
@@ -66,7 +70,13 @@ async def _drain_events(queue: asyncio.Queue) -> None:
     while True:
         event = await queue.get()
         try:
-            await insert_event(event["direction"], event["timestamp"], event.get("person_name"))
+            is_intrusion = bool(event.get("is_intrusion", False))
+            await insert_event(
+                event["direction"],
+                event["timestamp"],
+                event.get("person_name"),
+                is_intrusion,
+            )
             stats = await get_stats_today()
             current_hour = datetime.datetime.now().strftime("%H")
             await _broadcast({
@@ -75,6 +85,8 @@ async def _drain_events(queue: asyncio.Queue) -> None:
                 "direction": event["direction"],
                 "total_today": stats["total_today"],
                 "last_hour": stats["hourly"].get(current_hour, 0),
+                "person_name": event.get("person_name"),
+                "is_intrusion": is_intrusion,
             })
         except Exception as exc:
             logger.error("DB insert / broadcast failed: %s", exc)
@@ -125,6 +137,14 @@ async def lifespan(app: FastAPI):
 
     rtsp_stream.start()
     logger.info("RTSP stream started: %s", mask_rtsp_url(build_rtsp_url(settings)))
+
+    # Load persisted zones into stream overlay
+    initial_zones = await get_zones()
+    rtsp_stream.set_zones(initial_zones)
+
+    # Ensure gallery directory exists
+    import os as _os
+    _os.makedirs(settings.gallery_dir, exist_ok=True)
 
     # Phase 10 — clip recorder + Drive uploader
     def _on_clip_ready(path: str) -> None:
@@ -248,6 +268,11 @@ if _settings.camera_driver == "tapo":
     app.include_router(camera_router)
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+# Gallery images served as static files under /gallery/{person_id}/{filename}
+_gallery_dir = Path(_settings.gallery_dir)
+_gallery_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/gallery", StaticFiles(directory=str(_gallery_dir)), name="gallery")
 
 
 @app.get("/")
@@ -416,3 +441,75 @@ async def api_delete_recordings(from_dt: datetime.datetime, to_dt: datetime.date
         raise HTTPException(status_code=400, detail="to_dt must be >= from_dt")
     deleted = await delete_recordings_range(from_dt, to_dt)
     return {"deleted": deleted}
+
+
+# ---------------------------------------------------------------------------
+# Phase 13: Zones
+# ---------------------------------------------------------------------------
+
+@app.get("/api/zones")
+async def api_get_zones():
+    """Return all configured interest zones."""
+    return {"zones": await get_zones()}
+
+
+class ZoneBody(dict):
+    pass
+
+
+@app.post("/api/zones")
+async def api_upsert_zone(request: Request):
+    """Create or update a zone. Body: {id, name, polygon_json, enabled?}."""
+    body = await request.json()
+    zone_id = str(body.get("id", "")).strip()
+    name = str(body.get("name", "")).strip()
+    polygon_json = body.get("polygon_json", "[]")
+    enabled = bool(body.get("enabled", True))
+    if not zone_id or not name:
+        raise HTTPException(status_code=400, detail="id and name are required")
+    if len(zone_id) > 50 or len(name) > 100:
+        raise HTTPException(status_code=400, detail="id/name too long")
+    import json as _json
+    try:
+        pts = _json.loads(polygon_json) if isinstance(polygon_json, str) else polygon_json
+        if not isinstance(pts, list) or len(pts) < 3:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="polygon_json must be a JSON array with ≥3 points")
+    await upsert_zone(zone_id, name, _json.dumps(pts), enabled)
+    zones = await get_zones()
+    if rtsp_stream is not None:
+        rtsp_stream.set_zones(zones)
+    return {"zones": zones}
+
+
+@app.delete("/api/zones/{zone_id}")
+async def api_delete_zone(zone_id: str):
+    """Delete a zone by id."""
+    deleted = await delete_zone(zone_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    zones = await get_zones()
+    if rtsp_stream is not None:
+        rtsp_stream.set_zones(zones)
+    return {"zones": zones}
+
+
+# ---------------------------------------------------------------------------
+# Phase 13: Gallery captures
+# ---------------------------------------------------------------------------
+
+@app.get("/persons/{person_id}/captures")
+async def person_captures(
+    person_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """Return the most recent gallery captures for a person."""
+    captures = await get_captures_for_person(person_id, limit)
+    # Build relative URL paths usable from the frontend
+    for c in captures:
+        if c.get("image_path"):
+            p = Path(c["image_path"])
+            # Serve via /gallery/{person_id}/{filename}
+            c["url"] = f"/gallery/{person_id}/{p.name}"
+    return {"captures": captures}
