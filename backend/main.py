@@ -40,6 +40,7 @@ from backend.database import (
 )
 from backend.detector import PersonDetector
 from backend.gdrive import DriveUploader
+from backend.notifier import Notifier
 from backend.recognizer import PersonRecognizer
 from backend.recorder import ClipRecorder
 from backend.stream import RTSPStream
@@ -50,6 +51,7 @@ FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 logger = logging.getLogger(__name__)
 
 rtsp_stream: RTSPStream | None = None
+notifier: Notifier | None = None
 _ws_clients: set[WebSocket] = set()
 
 
@@ -88,8 +90,26 @@ async def _drain_events(queue: asyncio.Queue) -> None:
                 "person_name": event.get("person_name"),
                 "is_intrusion": is_intrusion,
             })
+            if notifier:
+                await notifier.fire_event(event)
+                await notifier.fire_count_threshold(stats["total_today"])
         except Exception as exc:
             logger.error("DB insert / broadcast failed: %s", exc)
+
+
+async def _camera_watchdog(check_interval: float = 10.0) -> None:
+    """Periodically detect camera offline/online state and fire alerts."""
+    was_offline = False
+    while True:
+        await asyncio.sleep(check_interval)
+        if rtsp_stream is None or notifier is None:
+            continue
+        is_offline = rtsp_stream.get_frame() is None
+        if is_offline and not was_offline:
+            await notifier.fire_camera_offline()
+        elif not is_offline and was_offline:
+            await notifier.fire_camera_online()
+        was_offline = is_offline
 
 
 @asynccontextmanager
@@ -216,7 +236,21 @@ async def lifespan(app: FastAPI):
     uploader.start()
     recorder.start()
 
+    global notifier
+    notifier = Notifier(
+        webhook_url=settings.alert_webhook_url,
+        telegram_token=settings.alert_telegram_token,
+        telegram_chat_id=settings.alert_telegram_chat_id,
+        alert_on_intrusion=settings.alert_on_intrusion,
+        alert_on_unknown=settings.alert_on_unknown,
+        alert_on_detection=settings.alert_on_detection,
+        cooldown_secs=settings.alert_cooldown_secs,
+        count_threshold=settings.alert_count_threshold,
+    )
+    watchdog_task = asyncio.create_task(_camera_watchdog())
+
     yield
+    watchdog_task.cancel()
     recorder.stop()
     uploader.stop()
     rtsp_stream.stop()
@@ -498,6 +532,39 @@ async def api_delete_zone(zone_id: str):
 # ---------------------------------------------------------------------------
 # Phase 13: Gallery captures
 # ---------------------------------------------------------------------------
+
+@app.get("/api/alerts/config")
+async def api_alerts_config():
+    """Return current alert configuration (tokens masked)."""
+    s = get_settings()
+    return {
+        "webhook_url": s.alert_webhook_url,
+        "telegram_configured": bool(s.alert_telegram_token and s.alert_telegram_chat_id),
+        "alert_on_intrusion": s.alert_on_intrusion,
+        "alert_on_unknown": s.alert_on_unknown,
+        "alert_on_detection": s.alert_on_detection,
+        "cooldown_secs": s.alert_cooldown_secs,
+        "count_threshold": s.alert_count_threshold,
+        "active_channels": notifier.active_channels if notifier else [],
+    }
+
+
+@app.post("/api/alerts/test")
+async def api_alerts_test():
+    """Send a test alert to every configured channel."""
+    if not notifier:
+        raise HTTPException(status_code=503, detail="notifier not initialised")
+    results = await notifier.test()
+    return {"results": results}
+
+
+@app.get("/api/alerts/status")
+async def api_alerts_status():
+    """Return notifier runtime status (last fired times, cooldown)."""
+    if not notifier:
+        raise HTTPException(status_code=503, detail="notifier not initialised")
+    return notifier.status()
+
 
 @app.get("/persons/{person_id}/captures")
 async def person_captures(

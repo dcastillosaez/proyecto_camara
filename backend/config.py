@@ -97,6 +97,16 @@ class Settings(BaseSettings):
     gallery_dir: str = "data/gallery"
     gallery_throttle_secs: float = 30.0
 
+    # Phase 12 — Alerts
+    alert_webhook_url: str = ""
+    alert_telegram_token: str = ""
+    alert_telegram_chat_id: str = ""
+    alert_on_intrusion: bool = True
+    alert_on_unknown: bool = True
+    alert_on_detection: bool = False
+    alert_cooldown_secs: float = 60.0
+    alert_count_threshold: int = 0  # 0 = disabled
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
