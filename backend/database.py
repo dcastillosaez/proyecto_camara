@@ -6,7 +6,7 @@ import datetime
 import os
 from typing import Any
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, func, select, text
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -132,6 +132,46 @@ async def get_recent_events(limit: int = 50) -> list[dict[str, Any]]:
         result = await session.execute(
             select(CrossingEvent).order_by(CrossingEvent.timestamp.desc()).limit(limit)
         )
+        return [
+            {
+                "id": r.id,
+                "timestamp": r.timestamp.isoformat(),
+                "direction": r.direction,
+                "person_name": r.person_name,
+                "is_intrusion": bool(r.is_intrusion),
+            }
+            for r in result.scalars().all()
+        ]
+
+
+async def get_events_filtered(
+    limit: int = 200,
+    direction: str | None = None,
+    person_name: str | None = None,
+    is_intrusion: bool | None = None,
+    from_dt: datetime.datetime | None = None,
+    to_dt: datetime.datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Return events matching the supplied filters, newest first."""
+    sf = _get_session_factory()
+    async with sf() as session:
+        conditions = []
+        if direction in ("in", "out"):
+            conditions.append(CrossingEvent.direction == direction)
+        if person_name is not None:
+            conditions.append(CrossingEvent.person_name.ilike(f"%{person_name}%"))
+        if is_intrusion is not None:
+            conditions.append(CrossingEvent.is_intrusion == is_intrusion)
+        if from_dt is not None:
+            conditions.append(CrossingEvent.timestamp >= from_dt)
+        if to_dt is not None:
+            conditions.append(CrossingEvent.timestamp <= to_dt)
+
+        q = select(CrossingEvent).order_by(CrossingEvent.timestamp.desc()).limit(limit)
+        if conditions:
+            q = q.where(and_(*conditions))
+
+        result = await session.execute(q)
         return [
             {
                 "id": r.id,

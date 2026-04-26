@@ -27,6 +27,7 @@ from backend.database import (
     delete_events_range,
     delete_recordings_range,
     get_captures_for_person,
+    get_events_filtered,
     get_recent_events,
     get_recent_recordings,
     get_stats_today,
@@ -308,6 +309,10 @@ _gallery_dir = Path(_settings.gallery_dir)
 _gallery_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/gallery", StaticFiles(directory=str(_gallery_dir)), name="gallery")
 
+_clips_dir = Path(_settings.clips_dir)
+_clips_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/clips", StaticFiles(directory=str(_clips_dir)), name="clips")
+
 
 @app.get("/")
 async def root():
@@ -370,9 +375,59 @@ async def api_stats():
 
 
 @app.get("/api/events")
-async def api_events(limit: int = Query(default=50, ge=1, le=500)):
-    """Most recent crossing events."""
-    return {"events": await get_recent_events(limit)}
+async def api_events(
+    limit: int = Query(default=50, ge=1, le=500),
+    direction: str | None = Query(default=None),
+    person_name: str | None = Query(default=None),
+    is_intrusion: bool | None = Query(default=None),
+    from_dt: datetime.datetime | None = Query(default=None),
+    to_dt: datetime.datetime | None = Query(default=None),
+):
+    """Most recent crossing events, with optional filters."""
+    any_filter = any(v is not None for v in (direction, person_name, is_intrusion, from_dt, to_dt))
+    if any_filter:
+        events = await get_events_filtered(
+            limit=limit,
+            direction=direction,
+            person_name=person_name,
+            is_intrusion=is_intrusion,
+            from_dt=from_dt,
+            to_dt=to_dt,
+        )
+    else:
+        events = await get_recent_events(limit)
+    return {"events": events}
+
+
+@app.get("/api/events/export")
+async def api_events_export(
+    direction: str | None = Query(default=None),
+    person_name: str | None = Query(default=None),
+    is_intrusion: bool | None = Query(default=None),
+    from_dt: datetime.datetime | None = Query(default=None),
+    to_dt: datetime.datetime | None = Query(default=None),
+):
+    """Export crossing events as a CSV file."""
+    import csv, io
+    events = await get_events_filtered(
+        limit=10000,
+        direction=direction,
+        person_name=person_name,
+        is_intrusion=is_intrusion,
+        from_dt=from_dt,
+        to_dt=to_dt,
+    )
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=["id", "timestamp", "direction", "person_name", "is_intrusion"])
+    writer.writeheader()
+    writer.writerows(events)
+    buf.seek(0)
+    fname = f"eventos_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
 
 
 @app.delete("/api/events")

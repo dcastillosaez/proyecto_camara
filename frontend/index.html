@@ -97,6 +97,23 @@
     .gallery-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; }
     .gallery-thumb { aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid #334155; cursor: pointer; transition: border-color 120ms; }
     .gallery-thumb:hover { border-color: #3b82f6; }
+
+    /* Phase 15 */
+    .filter-input {
+      background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+      padding: 3px 8px; font-size: 11px; color: #cbd5e1;
+      outline: none; transition: border-color 120ms;
+    }
+    .filter-input:focus { border-color: #3b82f6; }
+    .filter-select { appearance: none; -webkit-appearance: none; }
+
+    #clip-modal {
+      display: none; position: fixed; inset: 0; z-index: 60;
+      background: rgba(2,6,23,0.85); backdrop-filter: blur(6px);
+      align-items: center; justify-content: center;
+    }
+    #clip-modal.open { display: flex; }
+    #clip-modal video { max-width: min(90vw,960px); max-height: 80vh; border-radius: 12px; background: #000; }
   </style>
 </head>
 <body>
@@ -439,12 +456,42 @@
           </div>
           <div class="flex items-center gap-2">
             <span id="events-badge" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-600 border border-slate-700 tabular-nums" aria-label="Número de eventos registrados">0</span>
+            <button id="btn-export-csv" title="Exportar eventos filtrados a CSV"
+              class="text-slate-600 hover:text-green-400 transition-colors cursor-pointer" aria-label="Exportar CSV">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
             <button id="btn-delete-events" title="Borrar eventos por rango de fechas"
               class="text-slate-600 hover:text-red-400 transition-colors cursor-pointer" aria-label="Borrar eventos">
               <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
             </button>
           </div>
         </div>
+
+        <!-- Filter bar -->
+        <div class="flex flex-wrap gap-2 mb-3 items-center">
+          <select id="filter-direction" class="filter-input filter-select" aria-label="Filtrar por dirección">
+            <option value="">Todas</option>
+            <option value="in">Entrada (IN)</option>
+            <option value="out">Salida (OUT)</option>
+          </select>
+          <input id="filter-person" type="text" placeholder="Persona…" maxlength="50"
+            class="filter-input w-24" aria-label="Filtrar por nombre de persona">
+          <label class="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
+            <input id="filter-intrusion" type="checkbox" class="accent-red-500 w-3 h-3 rounded">
+            Solo intrusiones
+          </label>
+          <input id="filter-from" type="date" class="filter-input" aria-label="Desde fecha">
+          <input id="filter-to"   type="date" class="filter-input" aria-label="Hasta fecha">
+          <button id="btn-apply-filters"
+            class="text-xs px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-600/30 rounded-lg cursor-pointer transition-colors">
+            Filtrar
+          </button>
+          <button id="btn-clear-filters"
+            class="text-xs px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-500 border border-slate-700 rounded-lg cursor-pointer transition-colors">
+            Limpiar
+          </button>
+        </div>
+
         <!-- Delete events date-range panel (hidden by default) -->
         <div id="delete-events-panel" class="hidden mb-3 p-3 bg-slate-800/60 border border-slate-700 rounded-xl flex flex-col gap-2">
           <p class="text-xs text-slate-400 font-medium">Borrar eventos en el intervalo:</p>
@@ -1247,8 +1294,10 @@
       row.dataset.filename = r.filename;
       row.innerHTML = `
         <div class="flex items-center gap-2 min-w-0">
-          <svg class="w-3 h-3 flex-shrink-0 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
-          <span class="text-xs text-slate-300 truncate max-w-[120px]" title="${r.filename}">${r.filename.replace('clip_', '')}</span>
+          <button class="btn-play-clip flex-shrink-0 text-slate-500 hover:text-blue-400 transition-colors cursor-pointer" data-src="/clips/${r.filename}" aria-label="Reproducir clip">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          </button>
+          <span class="text-xs text-slate-300 truncate max-w-[110px]" title="${r.filename}">${r.filename.replace('clip_', '')}</span>
         </div>
         <div class="flex items-center gap-1 flex-shrink-0">
           <span class="rec-status text-xs ${col}">${lbl}</span>${link}
@@ -1635,6 +1684,109 @@
     }
 
     loadZones();
+
+    // ── Phase 15: event delegation for clip play buttons ──────────────
+    document.getElementById('recordings-list').addEventListener('click', e => {
+      const btn = e.target.closest('.btn-play-clip');
+      if (!btn) return;
+      openClipModal(btn.dataset.src);
+    });
+
+    // ── Phase 15: video player modal ──────────────────────────────────
+    function openClipModal(src) {
+      const modal = document.getElementById('clip-modal');
+      const vid   = document.getElementById('clip-video');
+      vid.src = src;
+      modal.classList.add('open');
+      vid.play().catch(() => {});
+    }
+
+    document.getElementById('clip-modal').addEventListener('click', e => {
+      if (e.target === e.currentTarget || e.target.id === 'clip-modal-close') {
+        const vid = document.getElementById('clip-video');
+        vid.pause(); vid.src = '';
+        document.getElementById('clip-modal').classList.remove('open');
+      }
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        const vid = document.getElementById('clip-video');
+        vid.pause(); vid.src = '';
+        document.getElementById('clip-modal').classList.remove('open');
+      }
+    });
+
+    // ── Phase 15: event filters ───────────────────────────────────────
+    function _eventsFilterParams() {
+      const p = new URLSearchParams();
+      const dir = document.getElementById('filter-direction').value;
+      const pn  = document.getElementById('filter-person').value.trim();
+      const intr = document.getElementById('filter-intrusion').checked;
+      const from = document.getElementById('filter-from').value;
+      const to   = document.getElementById('filter-to').value;
+      p.set('limit', '200');
+      if (dir)  p.set('direction', dir);
+      if (pn)   p.set('person_name', pn);
+      if (intr) p.set('is_intrusion', 'true');
+      if (from) p.set('from_dt', from + 'T00:00:00');
+      if (to)   p.set('to_dt',   to   + 'T23:59:59');
+      return p;
+    }
+
+    async function applyFilters() {
+      const params = _eventsFilterParams();
+      try {
+        const res = await fetch('/api/events?' + params.toString());
+        if (!res.ok) return;
+        const data   = await res.json();
+        const events = (data.events ?? []).reverse();
+        const list   = document.getElementById('events-list');
+        const empty  = document.getElementById('events-empty');
+        list.querySelectorAll('.event-item').forEach(el => el.remove());
+        if (events.length === 0) {
+          empty.style.display = '';
+        } else {
+          empty.style.display = 'none';
+          let badge = 0;
+          events.forEach(ev => {
+            const ts = new Date(ev.timestamp).toLocaleTimeString('es-ES', { hour12: false });
+            dashboardAPI.addEvent(ts, ev.direction, ++badge, ev.person_name ?? null, ev.is_intrusion ?? false);
+          });
+          document.getElementById('events-badge').textContent = events.length;
+        }
+      } catch {}
+    }
+
+    document.getElementById('btn-apply-filters').addEventListener('click', applyFilters);
+
+    document.getElementById('btn-clear-filters').addEventListener('click', () => {
+      document.getElementById('filter-direction').value = '';
+      document.getElementById('filter-person').value = '';
+      document.getElementById('filter-intrusion').checked = false;
+      document.getElementById('filter-from').value = '';
+      document.getElementById('filter-to').value = '';
+      loadInitialData();
+    });
+
+    // ── Phase 15: CSV export ──────────────────────────────────────────
+    document.getElementById('btn-export-csv').addEventListener('click', () => {
+      const params = _eventsFilterParams();
+      params.delete('limit');
+      window.location.href = '/api/events/export?' + params.toString();
+    });
+
   </script>
+
+  <!-- Phase 15: clip player modal -->
+  <div id="clip-modal" role="dialog" aria-modal="true" aria-label="Reproductor de clip">
+    <div class="relative flex flex-col items-center gap-3">
+      <button id="clip-modal-close"
+        class="absolute -top-8 right-0 text-slate-400 hover:text-white text-xs px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 cursor-pointer transition-colors"
+        aria-label="Cerrar reproductor">✕ Cerrar</button>
+      <video id="clip-video" controls preload="metadata" class="shadow-2xl shadow-black/80"></video>
+    </div>
+  </div>
+
 </body>
 </html>
