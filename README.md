@@ -1,19 +1,26 @@
 # Tapo Dashboard
 
-Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta personas en tiempo real con YOLOv8, identifica rostros conocidos y graba clips automáticos con subida a Google Drive.
+Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta y reconoce personas en tiempo real con YOLO26n, graba clips automáticos con subida a Google Drive y muestra estadísticas, alertas y métricas de sistema — todo desde un único panel accesible en red local.
 
 ## Características
 
-- **Stream RTSP en vivo**: Conexión directa a cámara Tapo C220 vía `rtsp://192.168.1.132:554/stream1`
-- **Detección de personas**: YOLOv8 nano con inferencia <50 ms en CPU
-- **Conteo por línea virtual**: Evita dobles conteos con tracking persistente (ByteTrack + LineZone)
-- **Reconocimiento facial**: Identifica personas por nombre usando embeddings de 128 dimensiones (face-recognition/dlib)
-- **Enrolamiento de rostros**: Registro vía API con imagen subida o frame actual de la cámara
-- **Grabación automática**: Clips .mp4 generados cuando hay actividad; se detienen 5 s después de la última detección
-- **Subida a Google Drive**: Upload automático de cada clip a la carpeta «Grabaciones Tapo» con reintentos exponenciales
-- **Estadísticas en tiempo real**: Personas hoy, histograma por hora, últimos eventos con nombre de persona
-- **WebSocket**: Actualizaciones en vivo sin polling — detecciones, grabaciones, uploads
-- **Dashboard integrado**: HTML + Tailwind + Chart.js, sin build step
+- **Stream RTSP en vivo** — Conexión directa a Tapo C220 vía RTSP, retransmisión MJPEG al navegador
+- **Detección de personas** — YOLO26n (38.9 ms en CPU, 31% más rápido que YOLOv8n)
+- **Conteo por línea virtual** — ByteTrack + LineZone, sin dobles conteos
+- **Reconocimiento facial** — Embeddings 128-dim (face-recognition/dlib), enrolamiento vía API
+- **Grabación automática** — Clips .mp4 al detectar actividad, fin 5 s tras última detección
+- **Subida a Google Drive** — Upload automático con reintentos exponenciales
+- **Zonas de interés** — Polígonos configurables con overlay en el stream
+- **Detección de intrusión** — Eventos marcados como intrusión fuera del horario definido
+- **Galería por persona** — Capturas automáticas, navegables por individuo
+- **Alertas y notificaciones** — Webhook HTTP y Telegram al detectar desconocido/intrusión
+- **Filtros y exportación** — Tabla de eventos filtrable (dirección, persona, fecha); exportar CSV
+- **Reproductor de clips** — Clips reproducibles desde el dashboard sin salir de la página
+- **Métricas de salud** — CPU%, RAM%, FPS y uptime actualizados cada 30 s
+- **Rotación automática** — Eventos y grabaciones más antiguos de 30 días eliminados diariamente
+- **Seguridad** — HTTPS con certificado autofirmado, autenticación HTTP Basic, rate limiting, SRI
+- **Control PTZ** — Pan/Tilt/Zoom de la cámara desde el dashboard (driver Tapo)
+- **Docker** — `docker-compose up` para arranque contenedorizado en producción
 
 ## Stack
 
@@ -21,15 +28,17 @@ Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta
 |------|-----------|
 | Backend | FastAPI + Uvicorn |
 | Captura | OpenCV (RTSP) |
-| Detección | YOLOv8 nano (Ultralytics) |
+| Detección | YOLO26n (Ultralytics) |
 | Tracking | supervision (ByteTrack + LineZone) |
 | Reconocimiento | face-recognition + dlib |
 | Grabación | cv2.VideoWriter (mp4v) |
-| Cloud storage | Google Drive API v3 (OAuth2 desktop) |
+| Cloud | Google Drive API v3 (OAuth2 desktop) |
 | Base de datos | SQLite + aiosqlite + SQLAlchemy async |
 | Streaming | MJPEG sobre HTTP |
 | Tiempo real | WebSocket |
 | Frontend | HTML + Tailwind + Chart.js |
+| Contenerización | Docker + Docker Compose |
+| Alertas | Webhook HTTP + Telegram Bot API |
 
 ## Requisitos
 
@@ -38,7 +47,7 @@ Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta
 - Dependencias en `requirements.txt`
 - *(Opcional)* `credentials.json` de Google Cloud Console para subida a Drive
 
-## Instalación
+## Instalación — entorno local
 
 ```bash
 # Crear entorno virtual
@@ -47,43 +56,45 @@ py -3.12 -m venv .venv
 
 # Instalar dependencias
 pip install -r requirements.txt
-
-# Descargar modelo YOLOv8n (auto en primer uso)
-python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 ```
+
+## Instalación — Docker
+
+```bash
+# Copiar y editar configuración
+cp .env.example .env
+
+# Arrancar
+docker-compose up -d
+```
+
+El dashboard queda disponible en `http://<IP-local>:8000`.
 
 ## Configuración de Google Drive (opcional)
 
-Para que los clips se suban automáticamente a Drive:
-
 1. Ve a [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
-2. Crea credenciales de tipo **OAuth 2.0 → Desktop app**
-3. Descarga el JSON y guárdalo en la raíz del proyecto como `credentials.json`
-4. En el primer arranque se abrirá el navegador para autorizar acceso; el token queda en `data/token.json`
+2. Crea credenciales **OAuth 2.0 → Desktop app**
+3. Descarga el JSON y guárdalo como `credentials.json` en la raíz del proyecto
+4. En el primer arranque se abrirá el navegador para autorizar; el token queda en `data/token.json`
 
-Los clips se subirán a la carpeta **«Grabaciones Tapo»** (ID: `1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir`) de tu Google Drive. Sin `credentials.json` el sistema funciona con normalidad pero no sube los clips.
+Sin `credentials.json` el sistema funciona con normalidad pero no sube clips a Drive.
 
 ## Uso
 
-### Producción (recomendado)
+### Producción (watchdog + HTTPS)
 
 ```bash
-# Arrancar con watchdog (reinicio automático si cae) + HTTPS
-.venv\Scripts\python.exe watchdog.py
+.venv\Scripts\python.exe backend/run.py
 ```
 
-Dashboard disponible en `https://<IP-local>:8000` desde cualquier dispositivo de la red.  
-Obtén tu IP local con `ipconfig` → busca «Dirección IPv4».  
+Dashboard disponible en `https://<IP-local>:8000`. Obtén tu IP con `ipconfig`.  
 El navegador mostrará aviso de certificado autofirmado — click en «Avanzado» → «Continuar».
 
-### Desarrollo
+### Desarrollo (recarga automática, HTTP)
 
 ```bash
-# Sin watchdog, sin SSL (HTTP plano, recarga automática)
 .venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
-
-Dashboard en `http://localhost:8000`.
 
 ### Diagnóstico
 
@@ -98,14 +109,85 @@ Dashboard en `http://localhost:8000`.
 |--------|------|-------------|
 | GET | `/` | Dashboard HTML |
 | GET | `/video_feed` | Stream MJPEG con overlays |
-| WS | `/ws` | Eventos en tiempo real (detecciones, grabaciones) |
-| GET | `/api/stats` | Resumen de estadísticas (últimas 24 h) |
-| GET | `/api/events` | Últimos eventos de cruce con nombre de persona |
+| WS | `/ws` | Eventos en tiempo real |
+| GET | `/api/stats` | Resumen estadísticas (últimas 24 h) |
+| GET | `/api/events` | Eventos con filtros (dirección, persona, fecha, intrusión) |
+| GET | `/api/events/export` | Exportar eventos filtrados a CSV |
 | GET | `/api/recordings` | Clips grabados con estado de subida |
-| GET | `/persons` | Personas enroladas con historial de visitas |
+| GET | `/api/health` | Métricas de sistema: CPU%, RAM%, FPS, uptime |
+| GET | `/api/zones` | Zonas de interés configuradas |
+| POST | `/api/zones` | Crear / actualizar zona |
+| DELETE | `/api/zones/{id}` | Eliminar zona |
+| GET | `/api/alerts/config` | Configuración de alertas activa |
+| POST | `/api/alerts/test` | Enviar alerta de prueba a todos los canales |
+| GET | `/persons` | Personas enroladas con historial |
 | POST | `/api/enroll_face` | Registrar rostro (imagen o frame actual) |
 | GET | `/detections` | Detecciones y bounding boxes del frame actual |
 | GET | `/counts` | Conteos acumulados in/out/total |
+
+## Variables de entorno (`.env`)
+
+```
+# Cámara
+CAMERA_URL=rtsp://192.168.1.132:554/stream2
+RTSP_USER=
+RTSP_PASS=
+CAMERA_DRIVER=tapo
+
+# Detección
+YOLO_MODEL_PATH=yolo26n.pt
+YOLO_CONFIDENCE=0.45
+
+# Base de datos
+DB_PATH=data/events.db
+
+# Servidor
+HOST=0.0.0.0
+PORT=8000
+
+# Grabación
+CLIPS_DIR=data/clips
+RECORDING_FPS=15.0
+RECORDING_TAIL_SECS=5.0
+
+# Google Drive
+GDRIVE_FOLDER_ID=1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir
+GDRIVE_CREDENTIALS_PATH=credentials.json
+GDRIVE_TOKEN_PATH=data/token.json
+
+# Alertas
+ALERT_WEBHOOK_URL=
+ALERT_TELEGRAM_TOKEN=
+ALERT_TELEGRAM_CHAT_ID=
+ALERT_ON_INTRUSION=true
+ALERT_ON_UNKNOWN=true
+ALERT_COOLDOWN_SECS=60
+
+# Horario (intrusión fuera de rango)
+SCHEDULE_ENABLED=false
+SCHEDULE_START=08:00
+SCHEDULE_END=22:00
+
+# Retención de datos
+EVENTS_RETENTION_DAYS=30
+RECORDINGS_RETENTION_DAYS=30
+
+# Seguridad
+DASHBOARD_USER=
+DASHBOARD_PASS=
+SSL_CERTFILE=
+SSL_KEYFILE=
+```
+
+## Tests
+
+```bash
+# Suite completa
+pytest tests/ -v
+
+# Módulo específico
+pytest tests/test_phase9.py -v
+```
 
 ## Arquitectura
 
@@ -113,62 +195,35 @@ Dashboard en `http://localhost:8000`.
 Cámara RTSP
   └─► stream.py (hilo de captura)
         ├─► /video_feed (MJPEG + overlays)
-        ├─► detector.py (YOLOv8n)
+        ├─► detector.py (YOLO26n)
         │     └─► tracker.py (ByteTrack + LineZone)
-        │           ├─► recognizer.py (face-recognition — embeddings 128-dim)
-        │           └─► database.py events (SQLite async)
-        │                 └─► WebSocket → dashboard
-        └─► recorder.py (ClipRecorder — hilo)
+        │           ├─► recognizer.py (embeddings 128-dim)
+        │           ├─► database.py — events (SQLite async)
+        │           │     └─► WebSocket → dashboard
+        │           └─► notifier.py — alertas (webhook + Telegram)
+        └─► recorder.py (ClipRecorder — hilo daemon)
               └─► VideoWriter mp4v → data/clips/
                     └─► gdrive.py (DriveUploader — hilo)
-                          └─► Google Drive API v3 → carpeta Grabaciones Tapo
-                                └─► database.py recordings (insert/update)
-                                      └─► WebSocket → panel grabaciones
-```
+                          └─► Google Drive API v3
 
-## Variables de entorno (`.env`)
-
-```
-CAMERA_URL=rtsp://192.168.1.132:554/stream1
-YOLO_CONFIDENCE=0.45
-DB_PATH=data/events.db
-HOST=0.0.0.0
-PORT=8000
-
-# Google Drive
-GDRIVE_FOLDER_ID=1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir
-GDRIVE_CREDENTIALS_PATH=credentials.json
-GDRIVE_TOKEN_PATH=data/token.json
-
-# Grabación
-CLIPS_DIR=data/clips
-RECORDING_FPS=15.0
-RECORDING_TAIL_SECS=5.0
-```
-
-## Tests
-
-```bash
-# Suite completa (38 tests)
-pytest tests/ -v
-
-# Módulo específico
-pytest tests/test_phase10.py -v
+FastAPI
+  ├─► /api/health      — CPU / RAM / FPS / uptime
+  ├─► /api/events      — filtros + CSV export
+  ├─► /api/zones       — CRUD zonas de interés
+  ├─► /api/alerts/*    — configuración y test de alertas
+  └─► _purge_loop      — rotación diaria de datos (>30 días)
 ```
 
 ## Decisiones de diseño
 
-- **MJPEG en lugar de WebRTC**: Simplicidad en LAN, sin STUN/TURN
-- **YOLOv8n**: Inferencia <50 ms en CPU modesta
-- **face-recognition/dlib HOG**: Más ligero que modelos CNN para LAN local sin GPU
-- **mp4v fourcc en Windows**: Más fiable que H.264/avc1 en VideoWriter sin codecs externos
-- **Thread→async bridge**: `asyncio.run_coroutine_threadsafe` para llamar a DB async desde hilos de grabación/upload
-- **Degradación elegante sin credentials.json**: El sistema arranca y funciona; solo deshabilita el upload
+- **YOLO26n en lugar de YOLOv8n**: 31% más rápido en CPU, misma API `ultralytics`
+- **MJPEG en lugar de WebRTC**: Sin STUN/TURN, latencia aceptable en LAN
+- **face-recognition/dlib HOG**: Más ligero que CNNs para LAN sin GPU
+- **mp4v fourcc en VideoWriter**: Más fiable que H.264/avc1 en Windows sin codecs externos
+- **asyncio.run_coroutine_threadsafe**: Bridge correcto entre hilos daemon y event loop async de FastAPI
 - **Línea virtual de conteo**: Evita contar personas múltiples veces mientras permanecen en escena
-
-## Desarrollo
-
-Consulta `CLAUDE.md` para detalles de arquitectura, convenciones y stack.
+- **Rotación diaria automática**: Tarea async que elimina datos viejos sin bloquear el event loop
+- **Degradación elegante**: Sin `credentials.json` el sistema arranca y funciona; solo se deshabilita Drive
 
 ## Licencia
 

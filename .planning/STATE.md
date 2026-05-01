@@ -1,35 +1,35 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
+milestone: v1.2
 milestone_name: milestone
-status: planning
-stopped_at: "Phase 10 complete — v1.0 terminado. Fases 11-16 planificadas"
-last_updated: "2026-04-23"
-last_activity: 2026-04-23
+status: complete
+stopped_at: "Phase 16 complete — proyecto finalizado (16/16 fases)"
+last_updated: "2026-05-01"
+last_activity: 2026-05-01
 progress:
   total_phases: 16
-  completed_phases: 10
+  completed_phases: 16
   total_plans: 4
   completed_plans: 4
-  percent: 63
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-19)
+See: .planning/PROJECT.md (updated 2026-05-01)
 
-**Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial y grabación automática integrados en el mismo panel.
-**Current focus:** v1.1 — fases 11-16 pendientes (rendimiento, alertas, detección avanzada, seguridad, UI, operaciones)
+**Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
+**Current focus:** v1.2 — COMPLETO. Todas las fases implementadas.
 
 ## Current Position
 
-Phase: 10 (grabacion-video-gdrive) — COMPLETE (último completado)
-Status: v1.0 terminado — planificando v1.1
-Last activity: 2026-04-23
+Phase: 16 (operaciones) — COMPLETE
+Status: v1.2 finalizado
+Last activity: 2026-05-01
 
-Progress: [██████░░░░] 63% (10/16 fases)
+Progress: [██████████] 100% (16/16 fases)
 
 ## Phases Summary
 
@@ -45,12 +45,12 @@ Progress: [██████░░░░] 63% (10/16 fases)
 | 8 | Configuración centralizada | ✓ Complete | 2026-04-16 |
 | 9 | Reconocimiento facial y enrolamiento | ✓ Complete | 2026-04-19 |
 | 10 | Grabación de video y upload Google Drive | ✓ Complete | 2026-04-19 |
-| 11 | Rendimiento y estabilidad | ○ Pending | — |
-| 12 | Alertas y notificaciones | ○ Pending | — |
-| 13 | Detección avanzada e historial | ○ Pending | — |
-| 14 | Seguridad | ○ Pending | — |
-| 15 | UI y exportación | ○ Pending | — |
-| 16 | Operaciones | ○ Pending | — |
+| 11 | Rendimiento y estabilidad | ✓ Complete | 2026-04-23 |
+| 12 | Alertas y notificaciones | ✓ Complete | 2026-04-26 |
+| 13 | Detección avanzada e historial | ✓ Complete | 2026-04-25 |
+| 14 | Seguridad | ✓ Complete | 2026-04-23 |
+| 15 | UI y exportación | ✓ Complete | 2026-04-26 |
+| 16 | Operaciones | ✓ Complete | 2026-05-01 |
 
 ## Test Coverage
 
@@ -74,6 +74,9 @@ Progress: [██████░░░░] 63% (10/16 fases)
 - mp4v fourcc para VideoWriter en Windows (más fiable que H.264)
 - asyncio.run_coroutine_threadsafe para bridge thread→async en recorder/uploader
 - Degradación elegante sin credentials.json (Drive upload deshabilitado, resto funciona)
+- psutil para métricas de salud (CPU/RAM) sin dependencias extra
+- Rotación diaria con tarea async (`_purge_loop`) usando `asyncio.sleep(24*3600)`
+- Docker Compose con volúmenes para `data/`, `certs/` y `.env`
 
 ### Pendiente manual (no es código)
 
@@ -83,10 +86,10 @@ Progress: [██████░░░░] 63% (10/16 fases)
 
 ### Blockers/Concerns
 
-Ninguno — proyecto funcional. Drive upload requiere credenciales manuales por diseño de seguridad de Google.
+Ninguno — proyecto finalizado. Drive upload requiere credenciales manuales por diseño de seguridad de Google.
 
 ## Session Continuity
 
-Last session: 2026-04-19
-Stopped at: Phase 10 complete, 38/38 tests passing, commit b5df449
+Last session: 2026-05-01
+Stopped at: Phase 16 complete, 38/38 tests passing, commit bd12055
 Resume file: None

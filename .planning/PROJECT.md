@@ -2,50 +2,58 @@
 
 ## What This Is
 
-Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta y reconoce personas en tiempo real con YOLOv8 + face-recognition, muestra estadísticas de actividad y graba clips automáticos con subida a Google Drive. Todo accesible desde cualquier dispositivo de la red local sin depender de la nube para el funcionamiento básico.
+Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta y reconoce personas en tiempo real con YOLO26n + face-recognition, muestra estadísticas de actividad, graba clips automáticos con subida a Google Drive, lanza alertas por webhook/Telegram y expone métricas de salud del sistema. Todo accesible desde cualquier dispositivo de la red local sin depender de la nube para el funcionamiento básico.
 
 ## Core Value
 
-Ver en tiempo real cuántas personas han pasado frente a la cámara, a qué horas hay más actividad y quiénes son, con el vídeo en vivo y las grabaciones integrados en el mismo panel.
+Ver en tiempo real cuántas personas han pasado frente a la cámara, a qué horas hay más actividad y quiénes son, con el vídeo en vivo, las grabaciones y las métricas de sistema integrados en el mismo panel.
 
 ## Requirements
 
-### Validated (v1.0 — 2026-04-19)
+### Validated (v1.2 — 2026-05-01)
 
 - [x] Stream RTSP de la cámara Tapo C220 capturado y retransmitido vía MJPEG al navegador
-- [x] Detección de personas en cada frame usando YOLOv8 nano
-- [x] Contador de cruces basado en línea virtual para evitar dobles conteos
+- [x] Detección de personas en cada frame usando YOLO26n (38.9 ms CPU)
+- [x] Contador de cruces basado en línea virtual para evitar dobles conteos (ByteTrack + LineZone)
 - [x] Almacenamiento de eventos de detección en SQLite con timestamp y nombre de persona
 - [x] Dashboard web con vídeo en directo + bounding boxes visuales
 - [x] Contador de personas del día actual visible en el dashboard
 - [x] Histograma de actividad por hora (últimas 24 h) con Chart.js
 - [x] API REST para consultar estadísticas históricas, eventos y grabaciones
 - [x] WebSocket que emite eventos en tiempo real al frontend
-- [x] Configuración centralizada (URL cámara, confianza YOLO, puerto, Drive, grabación)
-- [x] Servicio arrancable con un solo comando (uvicorn)
+- [x] Configuración centralizada con pydantic-settings + .env validado
 - [x] Reconocimiento facial por embeddings 128-dim (face-recognition/dlib); enrolamiento vía API
 - [x] Grabación automática de clips .mp4 al detectar actividad; se detiene 5 s después de la última detección
 - [x] Subida automática de clips a Google Drive (carpeta «Grabaciones Tapo») con reintentos exponenciales
 - [x] Panel de grabaciones en dashboard con estado en tiempo real (pending / uploaded / failed)
+- [x] Rendimiento: YOLO26n en stream2 (720p), watchdog con reinicio automático
+- [x] Alertas: webhook HTTP y Telegram al detectar desconocido, intrusión o umbral de conteo
+- [x] Zonas de interés configurables con overlay en el stream; detección de intrusión por horario
+- [x] Galería de capturas por persona, navegable desde el dashboard
+- [x] Seguridad: HTTPS autofirmado, HTTP Basic Auth, rate limiting, SRI, headers de seguridad
+- [x] Filtros en tabla de eventos (dirección, persona, fechas, intrusión); exportar CSV
+- [x] Reproductor de clips integrado en el dashboard (modal de vídeo)
+- [x] Métricas de salud: CPU%, RAM%, FPS, uptime — panel en dashboard, refresh 30 s
+- [x] Rotación automática de datos: eventos y grabaciones más antiguos de 30 días, tarea diaria
+- [x] Docker Compose para arranque contenedorizado en producción
 
 ### Out of Scope
 
-- Notificaciones push / alertas — complejidad innecesaria para v1; el dashboard es observacional
-- Autenticación de usuarios — es un dashboard local de red privada
-- Acceso remoto / túnel — se opera exclusivamente en LAN
-- Múltiples cámaras — una sola cámara en v1
+- Múltiples cámaras simultáneas — una sola cámara en v1
 - WebRTC — MJPEG suficiente para LAN, sin señalización
+- Acceso remoto / túnel — se opera exclusivamente en LAN
+- Autenticación OAuth / multi-usuario — dashboard local de red privada
 
 ## Context
 
-- **Cámara**: Tapo C220, IP local `192.168.1.132`, stream RTSP en `rtsp://192.168.1.132:554/stream1`
-- **Entorno**: Windows 11, red local, sin acceso GPU → YOLOv8 nano (CPU-friendly)
-- **Acceso**: Dashboard en `http://localhost:8000` para cualquier dispositivo de la LAN
-- **Drive**: Carpeta «Grabaciones Tapo» (ID: `1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir`); requiere `credentials.json` OAuth2 Desktop descargado de Google Cloud Console
+- **Cámara**: Tapo C220, IP local `192.168.1.132`, stream RTSP en `rtsp://192.168.1.132:554/stream2`
+- **Entorno**: Windows 11, red local, sin acceso GPU → YOLO26n (CPU-friendly)
+- **Acceso**: Dashboard en `https://<IP-LAN>:8000` para cualquier dispositivo de la LAN
+- **Drive**: Carpeta «Grabaciones Tapo» (ID: `1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir`); requiere `credentials.json` OAuth2 Desktop
 
 ## Constraints
 
-- **Hardware**: Sin GPU dedicada — YOLOv8n para mantener inferencia < 50 ms en CPU
+- **Hardware**: Sin GPU dedicada — YOLO26n para mantener inferencia < 40 ms en CPU
 - **Red**: Solo LAN — no se diseña para exposición pública
 - **Stack**: Python 3.12, FastAPI, OpenCV, Ultralytics, supervision, face-recognition, SQLite, HTML+JS vanilla
 - **Streaming**: MJPEG sobre HTTP — sin WebRTC
@@ -54,8 +62,8 @@ Ver en tiempo real cuántas personas han pasado frente a la cámara, a qué hora
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
+| YOLO26n en lugar de YOLOv8n | 31% más rápido en CPU, sin NMS, misma API | ✓ Validado |
 | MJPEG en lugar de WebRTC | Más simple, cero dependencias de STUN/TURN, latencia aceptable en LAN | ✓ Validado |
-| YOLOv8 nano | Inferencia rápida en CPU, suficiente precisión para conteo de personas | ✓ Validado |
 | Línea virtual de conteo | Evita contar la misma persona múltiples veces mientras permanece en escena | ✓ Validado |
 | SQLite en lugar de PostgreSQL | Volumen bajo de eventos, sin usuarios concurrentes, sin servidores extra | ✓ Validado |
 | Frontend sin framework JS | Sin build step, carga instantánea, fácil de mantener para un dashboard local | ✓ Validado |
@@ -63,6 +71,8 @@ Ver en tiempo real cuántas personas han pasado frente a la cámara, a qué hora
 | mp4v fourcc en VideoWriter | Más fiable que H.264/avc1 en Windows sin codecs externos | ✓ Validado |
 | asyncio.run_coroutine_threadsafe | Bridge correcto entre hilos daemon y event loop async de FastAPI | ✓ Validado |
 | Degradación sin credentials.json | El sistema arranca y funciona; Drive upload deshabilitado, no falla | ✓ Validado |
+| psutil para métricas de salud | Sin dependencias extra en el stack; CPU/RAM en una línea | ✓ Validado |
+| Tarea async para rotación de datos | No bloquea el event loop; se ejecuta cada 24 h con asyncio.sleep | ✓ Validado |
 
 ---
-*Last updated: 2026-04-19 — v1.0 completo, 10/10 fases, 38/38 tests*
+*Last updated: 2026-05-01 — v1.2 completo, 16/16 fases*
