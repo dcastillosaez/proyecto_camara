@@ -23,11 +23,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 9: Reconocimiento facial y enrolamiento** - Identificar personas con face-recognition, guardar embeddings, comparar rostros detectados (completed 2026-04-19)
 - [x] **Phase 10: Grabacion de video y upload a Google Drive** - Grabar clips .mp4 cuando se detecte persona, subir automaticamente a Google Drive via API (completed 2026-04-19)
 - [x] **Phase 11: Rendimiento y estabilidad** - Migrar a YOLO26n, usar stream2 (720p), watchdog para reinicio automático (completed 2026-04-23)
-- [ ] **Phase 12: Alertas y notificaciones** - Push/email al detectar desconocido + Web Push API en el navegador
+- [x] **Phase 12: Alertas y notificaciones** - Push/email al detectar desconocido + Web Push API en el navegador (completed 2026-04-26)
 - [x] **Phase 13: Detección avanzada e historial** - Zonas de interés configurables, detección de intrusión por horario, galería de capturas por individuo (completed 2026-04-25)
 - [x] **Phase 14: Seguridad** - Autenticación básica en el dashboard, HTTPS con certificado autofirmado (completed 2026-04-23)
-- [ ] **Phase 15: UI y exportación** - Filtros en tabla de eventos, vista de clips reproducible desde dashboard, exportar CSV de eventos
-- [ ] **Phase 16: Operaciones** - Docker Compose, rotación automática de eventos antiguos (>30 días), métricas de salud (CPU/RAM/FPS) en dashboard
+- [x] **Phase 15: UI y exportación** - Filtros en tabla de eventos, vista de clips reproducible desde dashboard, exportar CSV de eventos (completed 2026-04-26)
+- [x] **Phase 16: Operaciones** - Docker Compose, rotación automática de eventos antiguos (>30 días), métricas de salud (CPU/RAM/FPS) en dashboard (completed 2026-05-01)
 
 ## Phase Details
 
@@ -232,13 +232,13 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 9. Reconocimiento facial y enrolamiento | Done (inline) | Complete | 2026-04-19 |
 | 10. Grabacion de video y upload a Google Drive | Done (inline) | Complete | 2026-04-19 |
 | 11. Rendimiento y estabilidad | Done (inline) | Complete | 2026-04-23 |
-| 12. Alertas y notificaciones | — | Pending | — |
-| 13. Deteccion avanzada e historial | — | Pending | — |
+| 12. Alertas y notificaciones | Done (inline) | Complete | 2026-04-26 |
+| 13. Deteccion avanzada e historial | — | Complete | 2026-04-25 |
 | 14. Seguridad | Done (inline) | Complete | 2026-04-23 |
-| 15. UI y exportacion | — | Pending | — |
-| 16. Operaciones | — | Pending | — |
+| 15. UI y exportacion | Done (inline) | Complete | 2026-04-26 |
+| 16. Operaciones | Done (inline) | Complete | 2026-05-01 |
 
 ---
 *Roadmap created: 2026-04-16*
-*Last updated: 2026-04-25*
-*Status snapshot: 13/16 phases complete — v1.2 en progreso. Fases 12, 15, 16 pendientes.*
+*Last updated: 2026-05-01*
+*Status snapshot: 16/16 phases complete — proyecto finalizado.*

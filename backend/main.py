@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -35,6 +36,8 @@ from backend.database import (
     init_db,
     insert_event,
     insert_recording,
+    purge_old_events,
+    purge_old_recordings,
     update_recording,
     upsert_zone,
     delete_zone,
@@ -54,6 +57,7 @@ logger = logging.getLogger(__name__)
 rtsp_stream: RTSPStream | None = None
 notifier: Notifier | None = None
 _ws_clients: set[WebSocket] = set()
+_start_time: float = time.time()
 
 
 async def _broadcast(message: dict) -> None:
@@ -111,6 +115,24 @@ async def _camera_watchdog(check_interval: float = 10.0) -> None:
         elif not is_offline and was_offline:
             await notifier.fire_camera_online()
         was_offline = is_offline
+
+
+async def _purge_loop() -> None:
+    """Delete events and recordings older than the configured retention window. Runs daily."""
+    while True:
+        await asyncio.sleep(24 * 3600)
+        settings = get_settings()
+        try:
+            if settings.events_retention_days > 0:
+                n = await purge_old_events(settings.events_retention_days)
+                if n:
+                    logger.info("Purged %d events older than %d days", n, settings.events_retention_days)
+            if settings.recordings_retention_days > 0:
+                n = await purge_old_recordings(settings.recordings_retention_days)
+                if n:
+                    logger.info("Purged %d recordings older than %d days", n, settings.recordings_retention_days)
+        except Exception as exc:
+            logger.error("Purge loop error: %s", exc)
 
 
 @asynccontextmanager
@@ -249,8 +271,10 @@ async def lifespan(app: FastAPI):
         count_threshold=settings.alert_count_threshold,
     )
     watchdog_task = asyncio.create_task(_camera_watchdog())
+    purge_task = asyncio.create_task(_purge_loop())
 
     yield
+    purge_task.cancel()
     watchdog_task.cancel()
     recorder.stop()
     uploader.stop()
@@ -372,6 +396,29 @@ async def counts():
 async def api_stats():
     """Total crossings today and per-hour breakdown for the last 24 h."""
     return await get_stats_today()
+
+
+@app.get("/api/health")
+async def api_health():
+    """System health metrics: CPU, RAM, FPS, uptime."""
+    try:
+        import psutil
+        cpu = psutil.cpu_percent(interval=None)
+        vm = psutil.virtual_memory()
+        ram_pct = vm.percent
+        ram_mb = vm.used // (1024 * 1024)
+    except ImportError:
+        cpu = ram_pct = ram_mb = -1
+    fps = round(rtsp_stream.get_fps(), 1) if rtsp_stream else 0.0
+    uptime = int(time.time() - _start_time)
+    return {
+        "cpu_percent": cpu,
+        "ram_percent": ram_pct,
+        "ram_used_mb": ram_mb,
+        "fps": fps,
+        "uptime_secs": uptime,
+        "ws_clients": len(_ws_clients),
+    }
 
 
 @app.get("/api/events")

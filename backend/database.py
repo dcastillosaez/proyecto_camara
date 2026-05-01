@@ -382,3 +382,35 @@ async def get_stats_today() -> dict[str, Any]:
         hourly = {row.hour: row.count for row in rows}
 
     return {"total_today": total, "hourly": hourly}
+
+
+async def purge_old_events(retention_days: int) -> int:
+    """Delete events older than *retention_days*. Returns deleted count."""
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=retention_days)
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(CrossingEvent).where(CrossingEvent.timestamp < cutoff)
+            )
+            rows = result.scalars().all()
+            count = len(rows)
+            for row in rows:
+                await session.delete(row)
+    return count
+
+
+async def purge_old_recordings(retention_days: int) -> int:
+    """Delete recording rows older than *retention_days*. Returns deleted count."""
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=retention_days)
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(Recording).where(Recording.created_at < cutoff)
+            )
+            rows = result.scalars().all()
+            count = len(rows)
+            for row in rows:
+                await session.delete(row)
+    return count

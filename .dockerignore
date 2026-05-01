@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.planning/
+tests/
+*.db
+*.db-shm
+*.db-wal
+data/clips/
+data/gallery/
+data/token.json
+certs/
+*.log
+.env
+credentials.json

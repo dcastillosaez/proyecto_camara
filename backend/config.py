@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     alert_cooldown_secs: float = 60.0
     alert_count_threshold: int = 0  # 0 = disabled
 
+    # Phase 16 — data retention (0 = disabled)
+    events_retention_days: int = 30
+    recordings_retention_days: int = 30
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

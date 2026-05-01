@@ -445,6 +445,33 @@
         <span id="ws-badge" class="flex-shrink-0 text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-600 border border-slate-700 font-medium" aria-live="polite">…</span>
       </div>
 
+      <!-- HEALTH METRICS -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-3.5">
+        <div class="flex items-center gap-2 mb-3">
+          <svg class="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <h2 class="text-sm font-semibold text-slate-200">Salud del sistema</h2>
+          <span id="health-updated" class="ml-auto text-xs text-slate-700 mono">–</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500">CPU</span>
+            <span id="health-cpu" class="mono text-base font-semibold text-slate-200">–</span>
+          </div>
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500">RAM</span>
+            <span id="health-ram" class="mono text-base font-semibold text-slate-200">–</span>
+          </div>
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500">FPS</span>
+            <span id="health-fps" class="mono text-base font-semibold text-slate-200">–</span>
+          </div>
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500">Uptime</span>
+            <span id="health-uptime" class="mono text-base font-semibold text-slate-200">–</span>
+          </div>
+        </div>
+      </div>
+
       <!-- EVENTS LIST -->
       <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col" style="min-height:0">
         <div class="flex items-center justify-between mb-3">
@@ -1775,6 +1802,30 @@
       params.delete('limit');
       window.location.href = '/api/events/export?' + params.toString();
     });
+
+    // ── Phase 16: health metrics ──────────────────────────────────────
+    function _fmtUptime(secs) {
+      const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+      if (h > 0) return `${h}h ${m}m`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
+    async function loadHealth() {
+      try {
+        const res = await fetch('/api/health');
+        if (!res.ok) return;
+        const d = await res.json();
+        document.getElementById('health-cpu').textContent    = d.cpu_percent >= 0 ? `${d.cpu_percent.toFixed(1)}%` : '–';
+        document.getElementById('health-ram').textContent    = d.ram_percent >= 0 ? `${d.ram_percent.toFixed(1)}%` : '–';
+        document.getElementById('health-fps').textContent    = `${d.fps}`;
+        document.getElementById('health-uptime').textContent = _fmtUptime(d.uptime_secs);
+        document.getElementById('health-updated').textContent = new Date().toLocaleTimeString();
+      } catch {}
+    }
+
+    loadHealth();
+    setInterval(loadHealth, 30000);
 
   </script>
 

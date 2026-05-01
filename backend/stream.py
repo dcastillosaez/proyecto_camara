@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 import time
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 import cv2
@@ -69,6 +70,8 @@ class RTSPStream:
         self._last_capture: dict[int, float] = {}
         # active interest zones loaded from DB (updated via set_zones)
         self._zones: list[dict] = []
+        self._fps_times: deque[float] = deque()
+        self._fps: float = 0.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -101,6 +104,11 @@ class RTSPStream:
         """Return the number of persons visible in the current frame."""
         with self._lock:
             return self._live_count
+
+    def get_fps(self) -> float:
+        """Return the measured processing FPS over the last 5 seconds."""
+        with self._lock:
+            return self._fps
 
     def get_native_resolution(self) -> tuple[int, int]:
         """Return native camera resolution (w, h) from the capture, or (0, 0)."""
@@ -277,10 +285,15 @@ class RTSPStream:
                 detections = []
                 live = 0
 
+            now = time.monotonic()
+            self._fps_times.append(now)
+            while self._fps_times and now - self._fps_times[0] > 5.0:
+                self._fps_times.popleft()
             with self._lock:
                 self._frame = frame
                 self._detections = detections
                 self._live_count = live
+                self._fps = len(self._fps_times) / 5.0
 
     def _create_capture(self) -> cv2.VideoCapture:
         """Create a fresh ``VideoCapture`` tuned for low-latency RTSP."""
