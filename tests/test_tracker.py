@@ -41,7 +41,7 @@ def _make_tracked(n: int, tracker_ids=None) -> sv.Detections:
 # contadores deben partir de cero. Este test actúa como línea base para
 # los tests de conteo que vienen después.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_initial_counts_all_zero(tracker):
+def TEST_078_initial_counts_all_zero(tracker):
     """Fresh tracker reports zero crossings in all directions."""
     assert tracker.get_counts() == {"in": 0, "out": 0, "total": 0}
 
@@ -51,7 +51,7 @@ def test_initial_counts_all_zero(tracker):
 # Ambos esperan exactamente las claves 'in', 'out' y 'total'.
 # Un cambio de nombre rompería el frontend sin error en Python.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_get_counts_has_all_keys(tracker):
+def TEST_079_get_counts_has_all_keys(tracker):
     """get_counts always returns a dict with 'in', 'out', and 'total' keys."""
     counts = tracker.get_counts()
     assert {"in", "out", "total"} == set(counts.keys())
@@ -62,7 +62,7 @@ def test_get_counts_has_all_keys(tracker):
 # Verifica que in sube a 1, total sube a 1 y out permanece en 0.
 # Confirma que los contadores son independientes entre sí.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_counts_after_in_crossing(tracker):
+def TEST_080_counts_after_in_crossing(tracker):
     """One IN crossing increments 'in' and 'total', leaves 'out' at zero."""
     det = _make_tracked(1, [7])
     with (
@@ -82,7 +82,7 @@ def test_counts_after_in_crossing(tracker):
 # Verifica que in=1, out=1, total=2 — los contadores no se mezclan entre sí
 # ni se anulan mutuamente.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_counts_in_plus_out_independent(tracker):
+def TEST_081_counts_in_plus_out_independent(tracker):
     """IN and OUT crossings from different tracker IDs are counted independently."""
     for tid, crossed_in, crossed_out in [(1, True, False), (2, False, True)]:
         det = _make_tracked(1, [tid])
@@ -104,7 +104,7 @@ def test_counts_in_plus_out_independent(tracker):
 # El tracker usa _crossed_ids (set) para deduplicar: el mismo ID que cruza
 # 3 veces debe contar como total=1, no total=3.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_total_counts_unique_ids_not_events(tracker):
+def TEST_082_total_counts_unique_ids_not_events(tracker):
     """'total' equals the number of unique IDs that crossed, not the sum of in+out."""
     det = _make_tracked(1, [99])
     for _ in range(3):
@@ -125,7 +125,7 @@ def test_total_counts_unique_ids_not_events(tracker):
 # Debe devolver siempre (sv.Detections, list) para que el pipeline de anotación
 # y la cola de eventos funcionen sin comprobaciones de tipo adicionales.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_update_returns_tuple_of_detections_and_crossings(tracker):
+def TEST_083_update_returns_tuple_of_detections_and_crossings(tracker):
     """update() returns (sv.Detections, list)."""
     empty = sv.Detections.empty()
     with (
@@ -145,7 +145,7 @@ def test_update_returns_tuple_of_detections_and_crossings(tracker):
 #   - tracker_id → para enriquecer con nombre de persona (person_cache)
 # Un campo faltante causaría KeyError silencioso en producción.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_update_crossing_event_has_required_keys(tracker):
+def TEST_084_update_crossing_event_has_required_keys(tracker):
     """Each crossing dict must contain 'direction', 'timestamp', and 'tracker_id'."""
     det = _make_tracked(1, [5])
     with (
@@ -167,7 +167,7 @@ def test_update_crossing_event_has_required_keys(tracker):
 # Ambos requieren un ndarray de numpy; devolver None o un tipo distinto
 # causaría una excepción en cv2.imencode o writer.write().
 # ─────────────────────────────────────────────────────────────────────────────
-def test_annotate_returns_ndarray(tracker, blank_frame):
+def TEST_085_annotate_returns_ndarray(tracker, blank_frame):
     """annotate() always returns a numpy ndarray."""
     assert isinstance(tracker.annotate(blank_frame, _make_tracked(1, [1])), np.ndarray)
 
@@ -177,7 +177,7 @@ def test_annotate_returns_ndarray(tracker, blank_frame):
 # alterar el shape del frame. Un cambio de dimensiones rompería el MJPEG
 # stream y la grabación de clips.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_annotate_preserves_frame_shape(tracker, blank_frame):
+def TEST_086_annotate_preserves_frame_shape(tracker, blank_frame):
     """annotate() does not change the frame dimensions."""
     result = tracker.annotate(blank_frame, _make_tracked(1, [1]))
     assert result.shape == blank_frame.shape
@@ -189,7 +189,7 @@ def test_annotate_preserves_frame_shape(tracker, blank_frame):
 # RTSPStream._frame se corromperían para todos los consumidores concurrentes
 # (endpoint MJPEG, grabador, reconocedor).
 # ─────────────────────────────────────────────────────────────────────────────
-def test_annotate_does_not_mutate_original(tracker, blank_frame):
+def TEST_087_annotate_does_not_mutate_original(tracker, blank_frame):
     """annotate() must not modify the input frame in-place."""
     original = blank_frame.copy()
     tracker.annotate(blank_frame, _make_tracked(1, [1]))
@@ -201,7 +201,7 @@ def test_annotate_does_not_mutate_original(tracker, blank_frame):
 # annotate() debe manejar correctamente ese caso sin iterar sobre arrays nulos
 # ni lanzar IndexError/AttributeError.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_annotate_empty_detections_no_crash(tracker, blank_frame):
+def TEST_088_annotate_empty_detections_no_crash(tracker, blank_frame):
     """annotate() with empty Detections does not raise."""
     result = tracker.annotate(blank_frame, sv.Detections.empty())
     assert isinstance(result, np.ndarray)
@@ -216,7 +216,7 @@ def test_annotate_empty_detections_no_crash(tracker, blank_frame):
 # dashboard sin reiniciar el servidor. Debe aceptar nuevas coordenadas
 # y reemplazar el LineZone interno sin lanzar ninguna excepción.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_reconfigure_line_does_not_raise(tracker):
+def TEST_089_reconfigure_line_does_not_raise(tracker):
     """reconfigure_line() can be called without crashing."""
     tracker.reconfigure_line(sv.Point(0, 100), sv.Point(1280, 100))
 
@@ -226,7 +226,7 @@ def test_reconfigure_line_does_not_raise(tracker):
 # funcionando. Si reconfigure_line dejara el tracker en estado inconsistente,
 # la siguiente llamada a update() lanzaría AttributeError.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_reconfigure_line_tracker_still_works_after(tracker):
+def TEST_090_reconfigure_line_tracker_still_works_after(tracker):
     """update() succeeds after reconfigure_line()."""
     tracker.reconfigure_line(sv.Point(0, 100), sv.Point(1280, 100))
     det = _make_tracked(1, [42])

@@ -4,6 +4,10 @@ import time
 from unittest.mock import MagicMock, call, patch
 
 import numpy as np
+import pytest
+import httpx
+from httpx import ASGITransport
+from unittest.mock import AsyncMock
 
 from backend.stream import RTSPStream
 
@@ -20,7 +24,7 @@ def _make_frame(value: int) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests — RTSPStream unit
 # ---------------------------------------------------------------------------
 
 # ─── Patrón drain: get_frame devuelve el último frame leído ──────────────────
@@ -29,7 +33,7 @@ def _make_frame(value: int) -> np.ndarray:
 # debe devolver el frame con valor 4 (pixel[0,0,0]==4).
 # Esto garantiza que el dashboard nunca muestra frames acumulados antiguos.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_drain_keeps_latest_frame(mock_video_capture):
+def TEST_069_drain_keeps_latest_frame(mock_video_capture):
     """After draining 5 distinct frames, get_frame() returns the last one."""
     frames = [_make_frame(i) for i in range(5)]
     call_count = {"n": 0}
@@ -49,7 +53,6 @@ def test_drain_keeps_latest_frame(mock_video_capture):
 
     result = stream.get_frame()
     assert result is not None
-    # The last frame value should be 4
     assert result[0, 0, 0] == 4
 
 
@@ -59,14 +62,13 @@ def test_drain_keeps_latest_frame(mock_video_capture):
 # versiones), corrompiendo el frame almacenado para el siguiente ciclo.
 # Se verifica que mutar la copia no afecta a self._frame.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_get_frame_returns_copy():
+def TEST_070_get_frame_returns_copy():
     """The ndarray returned by get_frame() is a copy, not the internal ref."""
     stream = RTSPStream("rtsp://fake")
     stream._frame = np.zeros((720, 1280, 3), dtype=np.uint8)
 
     frame = stream.get_frame()
     assert frame is not stream._frame
-    # Mutating the copy must not affect the internal frame
     frame[0, 0, 0] = 255
     assert stream._frame[0, 0, 0] == 0
 
@@ -78,12 +80,11 @@ def test_get_frame_returns_copy():
 # confirmando que el mecanismo de reconexión se activa.
 # ─────────────────────────────────────────────────────────────────────────────
 @patch("backend.stream.time.sleep")
-def test_reconnect_on_failure(mock_sleep, mock_video_capture):
+def TEST_071_reconnect_on_failure(mock_sleep, mock_video_capture):
     """On read() failure, RTSPStream releases and creates a new VideoCapture."""
     good_frame = _make_frame(42)
     cap = mock_video_capture._mock_cap
 
-    # Fail twice, then succeed
     cap.read.side_effect = [
         (False, None),
         (False, None),
@@ -95,7 +96,6 @@ def test_reconnect_on_failure(mock_sleep, mock_video_capture):
     time.sleep(0.3)
     stream.stop()
 
-    # VideoCapture should have been instantiated more than once (reconnection)
     assert mock_video_capture.call_count >= 2
 
 
@@ -107,14 +107,13 @@ def test_reconnect_on_failure(mock_sleep, mock_video_capture):
 # reconexiones en bucle o esperas innecesariamente largas.
 # ─────────────────────────────────────────────────────────────────────────────
 @patch("backend.stream.time.sleep")
-def test_backoff_increases(mock_sleep, mock_video_capture):
+def TEST_072_backoff_increases(mock_sleep, mock_video_capture):
     """Reconnection delays grow exponentially: 1, 2, 4, 8, 16."""
     import threading as _threading
 
     cap = mock_video_capture._mock_cap
     reconnected = _threading.Event()
 
-    # Fail 5 reconnection attempts, then succeed
     fail_cap = MagicMock()
     fail_cap.isOpened.return_value = False
 
@@ -124,22 +123,16 @@ def test_backoff_increases(mock_sleep, mock_video_capture):
         reconnected.set() or (True, _make_frame(1))
     )
 
-    # First call (initial _create_capture), then 5 failures, then success
     caps = [cap] + [fail_cap] * 5 + [success_cap] + [success_cap] * 200
     mock_video_capture.side_effect = caps
-
-    # Initial cap.read fails to trigger _reconnect
     cap.read.return_value = (False, None)
 
     stream = RTSPStream("rtsp://fake")
     stream.start()
-    # Wait until reconnection succeeds (event set by success_cap.read)
     reconnected.wait(timeout=5.0)
     stream.stop()
 
-    # Extract sleep delays from reconnection
     sleep_args = [c.args[0] for c in mock_sleep.call_args_list if c.args]
-    # Should see exponential growth: 1, 2, 4, 8, 16
     expected = [1.0, 2.0, 4.0, 8.0, 16.0]
     assert len(sleep_args) >= 5
     for i, exp in enumerate(expected):
@@ -151,7 +144,7 @@ def test_backoff_increases(mock_sleep, mock_video_capture):
 # cerrar el socket RTSP correctamente. Sin release(), la cámara mantendría
 # la conexión abierta y podría no aceptar nuevas conexiones al reiniciar.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_stop_releases_capture(mock_video_capture):
+def TEST_073_stop_releases_capture(mock_video_capture):
     """After stop(), VideoCapture.release() is called."""
     cap = mock_video_capture._mock_cap
     good_frame = _make_frame(1)
@@ -171,7 +164,7 @@ def test_stop_releases_capture(mock_video_capture):
 # leído ningún frame. El endpoint MJPEG y el grabador deben manejar None
 # sin lanzar excepción. Este test verifica el valor inicial de self._frame.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_get_frame_none_before_start():
+def TEST_074_get_frame_none_before_start():
     """Before any frame arrives, get_frame() returns None."""
     stream = RTSPStream("rtsp://fake")
     assert stream.get_frame() is None
@@ -180,14 +173,6 @@ def test_get_frame_none_before_start():
 # ---------------------------------------------------------------------------
 # Integration tests — FastAPI /video_feed endpoint
 # ---------------------------------------------------------------------------
-
-import asyncio as _asyncio
-
-import pytest
-import httpx
-from httpx import ASGITransport
-from unittest.mock import AsyncMock
-
 
 @pytest.fixture
 def fake_jpeg_frame():
@@ -201,14 +186,12 @@ def fake_jpeg_frame():
 # mostraría la respuesta como texto o binario en lugar de vídeo.
 # Se sustituye mjpeg_generator por un generador finito de un solo frame.
 # ─────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-async def test_video_feed_returns_mjpeg_content_type(fake_jpeg_frame):
+async def TEST_075_video_feed_returns_mjpeg_content_type(fake_jpeg_frame):
     """GET /video_feed returns multipart/x-mixed-replace content type."""
     import backend.main as main_module
+    import cv2
 
     async def _finite_generator():
-        """Yield one MJPEG frame then stop."""
-        import cv2
         _, jpeg = cv2.imencode(".jpg", fake_jpeg_frame)
         yield (
             b"--frame\r\n"
@@ -232,14 +215,12 @@ async def test_video_feed_returns_mjpeg_content_type(fake_jpeg_frame):
 # 'Content-Type: image/jpeg' antes de cada frame. Sin ellos, el navegador
 # no puede delimitar los frames individuales y la imagen se corrompe.
 # ─────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-async def test_video_feed_contains_jpeg_boundary(fake_jpeg_frame):
+async def TEST_076_video_feed_contains_jpeg_boundary(fake_jpeg_frame):
     """Response body starts with MJPEG boundary marker."""
     import backend.main as main_module
+    import cv2
 
     async def _finite_generator():
-        """Yield one MJPEG frame then stop."""
-        import cv2
         _, jpeg = cv2.imencode(".jpg", fake_jpeg_frame)
         yield (
             b"--frame\r\n"
@@ -264,16 +245,14 @@ async def test_video_feed_contains_jpeg_boundary(fake_jpeg_frame):
 # llegan frames al dashboard. Si stop() no se llama, el proceso queda zombie
 # con el socket RTSP abierto al hacer Ctrl+C.
 # ─────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-async def test_app_creates_rtsp_stream_on_startup():
+async def TEST_077_app_creates_rtsp_stream_on_startup():
     """Lifespan calls RTSPStream.start() on startup."""
+    import backend.main as main_module
+
     with patch("backend.main.RTSPStream") as MockStream:
         instance = MockStream.return_value
         instance.get_frame.return_value = None
 
-        import backend.main as main_module
-
-        # Trigger lifespan manually
         async with main_module.lifespan(main_module.app):
             pass
 

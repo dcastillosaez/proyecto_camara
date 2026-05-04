@@ -16,7 +16,7 @@ from backend.config import Settings, build_rtsp_url, mask_rtsp_url
 # sea .pt y que la ruta resuelta quede dentro del directorio del proyecto.
 # Un nombre de modelo estándar debe pasar sin error.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_valid_pt_extension_accepted():
+def TEST_000_valid_pt_extension_accepted():
     """A .pt path inside the project directory is accepted."""
     s = Settings(yolo_model_path="yolov8n.pt")
     assert s.yolo_model_path == "yolov8n.pt"
@@ -27,7 +27,7 @@ def test_valid_pt_extension_accepted():
 # configurarse como yolo_model_path. El validador debe lanzar ValidationError
 # antes de que el servidor intente cargar el modelo, evitando errores en runtime.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_non_pt_extension_rejected():
+def TEST_001_non_pt_extension_rejected():
     """A model path not ending in .pt raises ValidationError."""
     with pytest.raises((ValidationError, ValueError)):
         Settings(yolo_model_path="model.onnx")
@@ -38,7 +38,7 @@ def test_non_pt_extension_rejected():
 # 'yolov8n.pt.onnx'. Path.suffix devuelve la última extensión (.onnx),
 # así que el validador debe rechazarlo igualmente.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_non_pt_extension_onnx_rejected():
+def TEST_002_non_pt_extension_onnx_rejected():
     """An .onnx path is rejected even if it contains .pt elsewhere in name."""
     with pytest.raises((ValidationError, ValueError)):
         Settings(yolo_model_path="yolov8n.pt.onnx")
@@ -50,7 +50,7 @@ def test_non_pt_extension_onnx_rejected():
 # como '../../etc/passwd.pt' saldría del proyecto y debe ser rechazada,
 # previniendo lectura de archivos arbitrarios del sistema operativo.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_path_traversal_rejected():
+def TEST_003_path_traversal_rejected():
     """A path with ../ traversal is rejected."""
     with pytest.raises((ValidationError, ValueError)):
         Settings(yolo_model_path="../../etc/passwd.pt")
@@ -65,7 +65,7 @@ def test_path_traversal_rejected():
 # Inyectar credenciales vacías (':@host') rompería la autenticación RTSP
 # en cámaras que no requieren usuario.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_build_rtsp_url_no_credentials_returns_unchanged():
+def TEST_004_build_rtsp_url_no_credentials_returns_unchanged():
     """Returns camera_url unchanged when rtsp_user is empty."""
     s = Settings(camera_url="rtsp://192.168.1.1:554/stream1", rtsp_user="")
     assert build_rtsp_url(s) == "rtsp://192.168.1.1:554/stream1"
@@ -76,7 +76,7 @@ def test_build_rtsp_url_no_credentials_returns_unchanged():
 # la URL con formato 'rtsp://user:pass@host:port/path'. Esto permite separar
 # las credenciales de la URL base en el .env sin exponerlas en logs.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_build_rtsp_url_injects_user_and_pass():
+def TEST_005_build_rtsp_url_injects_user_and_pass():
     """Injects user:pass into the netloc when rtsp_user is set."""
     s = Settings(
         camera_url="rtsp://192.168.1.1:554/stream1",
@@ -94,7 +94,7 @@ def test_build_rtsp_url_injects_user_and_pass():
 # urlparse + urlunparse debe preservar el path; si se perdiera, OpenCV
 # no podría conectar al stream correcto.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_build_rtsp_url_preserves_path():
+def TEST_006_build_rtsp_url_preserves_path():
     """Path component (/stream1) is preserved after credential injection."""
     s = Settings(
         camera_url="rtsp://192.168.1.1:554/stream1",
@@ -114,7 +114,7 @@ def test_build_rtsp_url_preserves_path():
 # usuario y contraseña en texto plano en uvicorn_startup.log ni en diag.log.
 # La contraseña y el usuario no deben aparecer en la URL enmascarada.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_mask_rtsp_url_hides_password():
+def TEST_007_mask_rtsp_url_hides_password():
     """Credentials in RTSP URL are replaced with ***:***."""
     url = "rtsp://admin:secret@192.168.1.1:554/stream1"
     masked = mask_rtsp_url(url)
@@ -127,7 +127,7 @@ def test_mask_rtsp_url_hides_password():
 # El log debe seguir siendo útil para depuración: el operador necesita ver
 # a qué IP y stream se está conectando aunque no vea las credenciales.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_mask_rtsp_url_preserves_host_and_path():
+def TEST_008_mask_rtsp_url_preserves_host_and_path():
     """Host and path are preserved after masking."""
     url = "rtsp://admin:secret@192.168.1.1:554/stream1"
     masked = mask_rtsp_url(url)
@@ -139,7 +139,7 @@ def test_mask_rtsp_url_preserves_host_and_path():
 # Si la URL base no tiene usuario embebido, mask_rtsp_url no debe alterar
 # nada (no añadir @, no truncar el host, no modificar el puerto).
 # ─────────────────────────────────────────────────────────────────────────────
-def test_mask_rtsp_url_no_credentials_unchanged():
+def TEST_009_mask_rtsp_url_no_credentials_unchanged():
     """URL without credentials is returned unchanged."""
     url = "rtsp://192.168.1.1:554/stream1"
     assert mask_rtsp_url(url) == url
@@ -150,7 +150,7 @@ def test_mask_rtsp_url_no_credentials_unchanged():
 # con/sin path). Ninguna URL válida debe causar una excepción; el resultado
 # debe ser siempre un string no vacío.
 # ─────────────────────────────────────────────────────────────────────────────
-def test_mask_rtsp_url_round_trip_consistency():
+def TEST_010_mask_rtsp_url_round_trip_consistency():
     """mask then check — masking never crashes for valid RTSP URLs."""
     for url in [
         "rtsp://192.168.1.1:554/stream1",

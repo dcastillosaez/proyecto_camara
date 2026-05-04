@@ -89,40 +89,40 @@
 
 ## Traceability
 
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| CAP-01 | Phase 2 | ✓ Complete |
-| CAP-02 | Phase 2 | ✓ Complete |
-| CAP-03 | Phase 2 | ✓ Complete |
-| DET-01 | Phase 3 | ✓ Complete |
-| DET-02 | Phase 3 | ✓ Complete |
-| DET-03 | Phase 3 | ✓ Complete |
-| DET-04 | Phase 3 | ✓ Complete |
-| CNT-01 | Phase 4 | ✓ Complete |
-| CNT-02 | Phase 4 | ✓ Complete |
-| CNT-03 | Phase 4 | ✓ Complete |
-| DB-01 | Phase 5 | ✓ Complete |
-| DB-02 | Phase 5 | ✓ Complete |
-| DB-03 | Phase 5 | ✓ Complete |
-| API-01 | Phase 6 | ✓ Complete |
-| API-02 | Phase 6 | ✓ Complete |
-| API-03 | Phase 6 | ✓ Complete |
-| API-04 | Phase 6 | ✓ Complete |
-| UI-01 | Phase 7 | ✓ Complete |
-| UI-02 | Phase 7 | ✓ Complete |
-| UI-03 | Phase 7 | ✓ Complete |
-| UI-04 | Phase 7 | ✓ Complete |
-| UI-05 | Phase 7 | ✓ Complete |
-| UI-06 | Phase 7 | ✓ Complete |
-| CFG-01 | Phase 8 | ✓ Complete |
-| CFG-02 | Phase 8 | ✓ Complete |
-| FR-01 | Phase 9 | ✓ Complete |
-| FR-02 | Phase 9 | ✓ Complete |
-| FR-03 | Phase 9 | ✓ Complete |
-| REC-01 | Phase 10 | ✓ Complete |
-| REC-02 | Phase 10 | ✓ Complete |
-| REC-03 | Phase 10 | ✓ Complete |
-| REC-04 | Phase 10 | ✓ Complete |
+| Requirement | Phase | Status | Tests |
+|-------------|-------|--------|-------|
+| CAP-01 | Phase 2 | ✓ Complete | TEST_069, TEST_070 |
+| CAP-02 | Phase 2 | ✓ Complete | TEST_071, TEST_072 |
+| CAP-03 | Phase 2 | ✓ Complete | TEST_075, TEST_076 |
+| DET-01 | Phase 3 | ✓ Complete | TEST_030, TEST_031, TEST_033 |
+| DET-02 | Phase 3 | ✓ Complete | TEST_037, TEST_039 |
+| DET-03 | Phase 3 | ✓ Complete | TEST_031, TEST_037 |
+| DET-04 | Phase 3 | ✓ Complete | TEST_077 |
+| CNT-01 | Phase 4 | ✓ Complete | TEST_054, TEST_055, TEST_082 |
+| CNT-02 | Phase 4 | ✓ Complete | TEST_080, TEST_081, TEST_057 |
+| CNT-03 | Phase 4 | ✓ Complete | TEST_058, TEST_084 |
+| DB-01 | Phase 5 | ✓ Complete | TEST_011, TEST_058, TEST_029 |
+| DB-02 | Phase 5 | ✓ Complete | TEST_061, TEST_023 |
+| DB-03 | Phase 5 | ✓ Complete | TEST_058, TEST_060 |
+| API-01 | Phase 6 | ✓ Complete | TEST_011, TEST_012, TEST_013 |
+| API-02 | Phase 6 | ✓ Complete | TEST_015, TEST_016, TEST_023 |
+| API-03 | Phase 6 | ✓ Complete | TEST_077 |
+| API-04 | Phase 6 | ✓ Complete | TEST_075, TEST_076 |
+| UI-01 | Phase 7 | ✓ Complete | — (frontend, sin test automatizado) |
+| UI-02 | Phase 7 | ✓ Complete | — (frontend, sin test automatizado) |
+| UI-03 | Phase 7 | ✓ Complete | — (frontend, sin test automatizado) |
+| UI-04 | Phase 7 | ✓ Complete | — (frontend, sin test automatizado) |
+| UI-05 | Phase 7 | ✓ Complete | — (frontend, sin test automatizado) |
+| UI-06 | Phase 7 | ✓ Complete | — (frontend, sin test automatizado) |
+| CFG-01 | Phase 8 | ✓ Complete | TEST_000, TEST_001, TEST_002, TEST_003, TEST_004 |
+| CFG-02 | Phase 8 | ✓ Complete | TEST_077 |
+| FR-01 | Phase 9 | ✓ Complete | TEST_066, TEST_067, TEST_068 |
+| FR-02 | Phase 9 | ✓ Complete | TEST_062, TEST_063, TEST_064 |
+| FR-03 | Phase 9 | ✓ Complete | TEST_058, TEST_059, TEST_060 |
+| REC-01 | Phase 10 | ✓ Complete | TEST_040, TEST_041 |
+| REC-02 | Phase 10 | ✓ Complete | TEST_040, TEST_042 |
+| REC-03 | Phase 10 | ✓ Complete | TEST_044, TEST_045 |
+| REC-04 | Phase 10 | ✓ Complete | TEST_046, TEST_047 |
 
 **Coverage:**
 - v1 requirements: 31 total
