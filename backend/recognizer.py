@@ -284,7 +284,7 @@ class PersonRecognizer:
         )
 
     def _register(self, encoding: np.ndarray) -> int:
-        blob = pickle.dumps(encoding)
+        blob = encoding.tobytes()
         cur = self._conn.execute(
             "INSERT INTO persons (encoding) VALUES (?)", (blob,)
         )

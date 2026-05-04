@@ -1,1 +1,138 @@
-"""Tests for person detection module."""
+"""Tests for PersonDetector — bounding-box detection and frame annotation."""
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pytest
+import supervision as sv
+
+from backend.detector import Detection, PersonDetector
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_yolo_box(x1: float, y1: float, x2: float, y2: float, conf: float):
+    box = MagicMock()
+    box.xyxy = [np.array([x1, y1, x2, y2], dtype=np.float32)]
+    box.conf = [np.float32(conf)]
+    return box
+
+
+def _make_yolo_result(boxes):
+    r = MagicMock()
+    r.boxes = boxes
+    return r
+
+
+@pytest.fixture
+def detector():
+    """PersonDetector with a mocked YOLO backend (no weights loaded)."""
+    with patch("backend.detector.YOLO") as MockYOLO:
+        d = PersonDetector(model_path="yolov8n.pt", confidence=0.45)
+        d._mock_model = MockYOLO.return_value
+        yield d
+
+
+@pytest.fixture
+def blank_frame():
+    return np.zeros((720, 1280, 3), dtype=np.uint8)
+
+
+# ---------------------------------------------------------------------------
+# detect()
+# ---------------------------------------------------------------------------
+
+def test_detect_empty_when_no_boxes(detector, blank_frame):
+    """detect() returns [] when the model produces no boxes."""
+    detector._mock_model.return_value = [_make_yolo_result([])]
+    assert detector.detect(blank_frame) == []
+
+
+def test_detect_returns_detection_objects(detector, blank_frame):
+    """detect() converts YOLO boxes to Detection dataclass instances."""
+    box = _make_yolo_box(10.0, 20.0, 100.0, 200.0, 0.9)
+    detector._mock_model.return_value = [_make_yolo_result([box])]
+    result = detector.detect(blank_frame)
+    assert len(result) == 1
+    d = result[0]
+    assert isinstance(d, Detection)
+    assert (d.x1, d.y1, d.x2, d.y2) == (10, 20, 100, 200)
+    assert abs(d.confidence - 0.9) < 1e-4
+
+
+def test_detect_multiple_boxes(detector, blank_frame):
+    """detect() handles multiple boxes in one frame."""
+    boxes = [_make_yolo_box(0, 0, 50, 50, 0.8), _make_yolo_box(60, 60, 120, 120, 0.7)]
+    detector._mock_model.return_value = [_make_yolo_result(boxes)]
+    assert len(detector.detect(blank_frame)) == 2
+
+
+def test_detect_passes_confidence_and_classes_to_model(detector, blank_frame):
+    """detect() forwards configured confidence and classes to the YOLO call."""
+    detector._mock_model.return_value = [_make_yolo_result([])]
+    detector.detect(blank_frame)
+    _, kwargs = detector._mock_model.call_args
+    assert kwargs["conf"] == 0.45
+    assert kwargs["classes"] == [0]
+    assert kwargs["verbose"] is False
+
+
+# ---------------------------------------------------------------------------
+# detect_sv()
+# ---------------------------------------------------------------------------
+
+def test_detect_sv_returns_supervision_detections(detector, blank_frame):
+    """detect_sv() returns a supervision.Detections object."""
+    mock_result = MagicMock()
+    detector._mock_model.return_value = [mock_result]
+    with patch("backend.detector.sv.Detections.from_ultralytics", return_value=sv.Detections.empty()) as mock_from:
+        result = detector.detect_sv(blank_frame)
+    mock_from.assert_called_once_with(mock_result)
+    assert isinstance(result, sv.Detections)
+
+
+def test_detect_sv_passes_correct_kwargs(detector, blank_frame):
+    """detect_sv() uses the same confidence/classes as detect()."""
+    mock_result = MagicMock()
+    detector._mock_model.return_value = [mock_result]
+    with patch("backend.detector.sv.Detections.from_ultralytics", return_value=sv.Detections.empty()):
+        detector.detect_sv(blank_frame)
+    _, kwargs = detector._mock_model.call_args
+    assert kwargs["conf"] == 0.45
+    assert kwargs["verbose"] is False
+
+
+# ---------------------------------------------------------------------------
+# annotate()
+# ---------------------------------------------------------------------------
+
+def test_annotate_does_not_mutate_original(detector, blank_frame):
+    """annotate() must return a copy without modifying the input frame."""
+    original = blank_frame.copy()
+    det = Detection(x1=10, y1=10, x2=100, y2=100, confidence=0.8)
+    annotated = detector.annotate(blank_frame, [det])
+    np.testing.assert_array_equal(blank_frame, original)
+    assert annotated is not blank_frame
+
+
+def test_annotate_draws_non_black_pixels(detector, blank_frame):
+    """annotate() paints green pixels where the bounding box is drawn."""
+    det = Detection(x1=50, y1=50, x2=200, y2=200, confidence=0.75)
+    annotated = detector.annotate(blank_frame, [det])
+    assert annotated.max() > 0
+
+
+def test_annotate_empty_detections_returns_equal_copy(detector, blank_frame):
+    """annotate() with no detections returns an unchanged copy."""
+    annotated = detector.annotate(blank_frame, [])
+    np.testing.assert_array_equal(annotated, blank_frame)
+
+
+def test_annotate_preserves_frame_shape(detector, blank_frame):
+    """annotate() preserves input dimensions."""
+    det = Detection(x1=0, y1=0, x2=100, y2=100, confidence=0.5)
+    annotated = detector.annotate(blank_frame, [det])
+    assert annotated.shape == blank_frame.shape
