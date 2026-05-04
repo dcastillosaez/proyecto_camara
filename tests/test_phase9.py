@@ -42,6 +42,11 @@ def tracker():
     return PersonTracker(start=sv.Point(0, 360), end=sv.Point(1280, 360))
 
 
+# ─── El evento de cruce IN incluye el tracker_id de la persona ───────────────
+# _drain_events en main.py usa tracker_id para buscar el nombre de la persona
+# en _person_cache. Si el evento no lleva tracker_id, la persona cruzaría
+# como anónima aunque haya sido reconocida, perdiéndose el vínculo nombre-cruce.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_crossing_in_includes_tracker_id(tracker):
     """IN crossing event must carry the tracker_id of the crossing person."""
     det = _fake_detections([7])
@@ -56,6 +61,11 @@ def test_crossing_in_includes_tracker_id(tracker):
     assert crossings[0]["direction"] == "in"
 
 
+# ─── El evento de cruce OUT incluye el tracker_id de la persona ──────────────
+# Análogo al test anterior para la dirección OUT. Valida que el campo
+# tracker_id se propaga correctamente en ambas direcciones de cruce,
+# no solo en la dirección IN.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_crossing_out_includes_tracker_id(tracker):
     """OUT crossing event must carry the tracker_id of the crossing person."""
     det = _fake_detections([42])
@@ -70,6 +80,11 @@ def test_crossing_out_includes_tracker_id(tracker):
     assert crossings[0]["direction"] == "out"
 
 
+# ─── Sin cruce de línea no se generan eventos ─────────────────────────────────
+# Si LineZone.trigger devuelve False para todos los IDs (personas en escena
+# pero sin cruzar), update() debe devolver lista de cruces vacía. Generar
+# eventos falsos inflaría los contadores y la BD de forma incorrecta.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_no_crossing_produces_no_events(tracker):
     """When nobody crosses, crossing list is empty."""
     det = _fake_detections([1, 2])
@@ -82,6 +97,13 @@ def test_no_crossing_produces_no_events(tracker):
     assert crossings == []
 
 
+# ─── El mismo tracker_id no puede generar dos eventos de cruce ───────────────
+# _crossed_ids es un set que deduplica IDs ya contados. Si el mismo ID
+# pudiera disparar múltiples eventos, una persona que permanece en escena
+# incrementaría el contador indefinidamente en cada frame.
+# Se llama update() dos veces con el mismo ID cruzando; solo el primer
+# update debe producir un cruce.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_same_tracker_id_not_counted_twice(tracker):
     """The same tracker_id cannot generate two crossing events."""
     det = _fake_detections([5])
@@ -118,6 +140,11 @@ async def isolated_db(tmp_path):
     await engine.dispose()
 
 
+# ─── insert_event persiste el nombre de persona en BD ────────────────────────
+# Cuando un cruce se asocia a una persona reconocida, su nombre se guarda en
+# la columna events.person_name. Este test verifica el round-trip completo:
+# insert → query → valor recuperado correctamente.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_insert_event_stores_person_name(isolated_db):
     """insert_event persists person_name when provided."""
@@ -126,6 +153,11 @@ async def test_insert_event_stores_person_name(isolated_db):
     assert events[0]["person_name"] == "Alice"
 
 
+# ─── insert_event acepta person_name=None para cruces anónimos ───────────────
+# La mayoría de cruces serán de personas no reconocidas (face_recognition no
+# disponible o cara no enrolada). La columna person_name es nullable y debe
+# almacenarse como NULL en SQLite, no como la cadena "None".
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_insert_event_person_name_nullable(isolated_db):
     """insert_event accepts None person_name (anonymous crossing)."""
@@ -134,6 +166,12 @@ async def test_insert_event_person_name_nullable(isolated_db):
     assert events[0]["person_name"] is None
 
 
+# ─── get_recent_events incluye la clave person_name en cada dict ─────────────
+# El WebSocket broadcast y el endpoint /api/events acceden a person_name
+# por clave. Si la clave no existe en el dict devuelto por get_recent_events,
+# el JSON del WebSocket no incluiría ese campo y el frontend no podría
+# mostrar el nombre de la persona detectada.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_recent_events_includes_person_name_key(isolated_db):
     """Every event dict returned by get_recent_events has a 'person_name' key."""
@@ -142,6 +180,12 @@ async def test_get_recent_events_includes_person_name_key(isolated_db):
     assert "person_name" in events[0]
 
 
+# ─── init_db es idempotente: llamarlo dos veces no lanza excepción ────────────
+# init_db ejecuta ALTER TABLE para añadir columnas nuevas (person_name,
+# is_intrusion). En una BD existente esas columnas ya existen y el ALTER
+# lanzaría OperationalError. El bloque try/except en init_db lo captura.
+# Este test simula una migración sobre una BD ya inicializada.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_migration_adds_column_to_existing_db(tmp_path):
     """init_db is idempotent — calling it twice does not raise."""
@@ -174,6 +218,11 @@ def _make_mock_fr(face_found: bool = True, distance: float = 0.8, encoding=None)
     return m, enc
 
 
+# ─── Sin cara detectada en la imagen: devuelve None ──────────────────────────
+# Si face_locations no encuentra ninguna cara en el frame o la imagen subida,
+# enroll_named_face debe devolver None sin registrar ninguna persona ni
+# lanzar excepción. El endpoint /api/enroll_face responderá con 422.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_enroll_named_face_no_face_returns_none(tmp_path):
     """Returns None when no face is detected in the provided image."""
     r = PersonRecognizer(db_path=str(tmp_path / "p.db"))
@@ -183,6 +232,11 @@ def test_enroll_named_face_no_face_returns_none(tmp_path):
     assert result is None
 
 
+# ─── Primera enrolación: crea persona nueva con ID positivo ──────────────────
+# Cuando no hay embeddings previos (o la distancia supera TOLERANCE=0.55),
+# _register() inserta una nueva fila en persons y devuelve su id autoincremental.
+# Se verifica que el ID es positivo y que list_persons() incluye el nombre.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_enroll_named_face_registers_new_person(tmp_path):
     """Registers a new person and returns a positive integer ID."""
     r = PersonRecognizer(db_path=str(tmp_path / "p.db"))
@@ -193,6 +247,12 @@ def test_enroll_named_face_registers_new_person(tmp_path):
     assert any(p["name"] == "Carol" for p in r.list_persons())
 
 
+# ─── Re-enrolación: actualiza nombre sin crear duplicado ─────────────────────
+# Si la cara ya existe en BD (distancia <= TOLERANCE), enroll_named_face debe
+# actualizar el nombre en lugar de crear una segunda entrada. De lo contrario,
+# la misma persona aparecería dos veces en el panel de personas reconocidas.
+# Se usa el mismo encoding con distancia 0.1 para simular un match seguro.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_enroll_named_face_updates_existing_person(tmp_path):
     """Renames an existing matched person instead of creating a duplicate."""
     r = PersonRecognizer(db_path=str(tmp_path / "p.db"))
@@ -220,6 +280,12 @@ def test_enroll_named_face_updates_existing_person(tmp_path):
     assert not any(p["name"] == "Dave" for p in persons)
 
 
+# ─── Sin librería face_recognition: devuelve None inmediatamente ─────────────
+# En sistemas donde dlib/face_recognition no está instalado (p.ej. CI sin
+# compilación de dlib, Raspberry Pi sin wheels), PersonRecognizer._available
+# es False. enroll_named_face debe devolver None sin intentar llamar a fr.*,
+# lo que causaría NameError o AttributeError.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_enroll_named_face_unavailable_returns_none(tmp_path):
     """Returns None immediately when face_recognition library is unavailable."""
     r = PersonRecognizer(db_path=str(tmp_path / "p.db"))
@@ -238,6 +304,11 @@ from httpx import ASGITransport
 import backend.main as main_module
 
 
+# ─── 503 cuando face_recognition no está disponible ──────────────────────────
+# Si recognizer.available es False (librería no instalada), el endpoint debe
+# devolver 503 Service Unavailable con un mensaje claro, en lugar de 500 con
+# NameError o intentar ejecutar código que no existe.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_enroll_face_503_when_recognizer_unavailable():
     """Returns 503 when the recognizer reports the library is not installed."""
@@ -254,6 +325,11 @@ async def test_enroll_face_503_when_recognizer_unavailable():
     assert resp.status_code == 503
 
 
+# ─── 422 cuando no se detecta cara en la imagen ──────────────────────────────
+# enroll_named_face devuelve None si face_locations no encuentra ninguna cara.
+# El endpoint debe traducir ese None en un 422 Unprocessable Entity con mensaje
+# descriptivo, para que el usuario sepa que debe usar una imagen con cara visible.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_enroll_face_422_when_no_face_detected():
     """Returns 422 when enroll_named_face finds no face in the image."""
@@ -272,6 +348,11 @@ async def test_enroll_face_422_when_no_face_detected():
     assert resp.status_code == 422
 
 
+# ─── 200 con person_id y name en enrolación exitosa ──────────────────────────
+# Cuando enroll_named_face devuelve un ID válido, el endpoint debe responder
+# con 200 y un JSON que incluya person_id y name. El frontend usa estos valores
+# para actualizar el panel de personas sin necesidad de recargar la página.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_enroll_face_success_returns_person_id():
     """Returns 200 with person_id and name on successful enrolment."""

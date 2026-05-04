@@ -23,6 +23,12 @@ def _make_frame(value: int) -> np.ndarray:
 # Tests
 # ---------------------------------------------------------------------------
 
+# ─── Patrón drain: get_frame devuelve el último frame leído ──────────────────
+# RTSPStream usa un hilo de captura en bucle tight que descarta todos los
+# frames salvo el más reciente. Tras 5 frames con valores 0..4, get_frame()
+# debe devolver el frame con valor 4 (pixel[0,0,0]==4).
+# Esto garantiza que el dashboard nunca muestra frames acumulados antiguos.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_drain_keeps_latest_frame(mock_video_capture):
     """After draining 5 distinct frames, get_frame() returns the last one."""
     frames = [_make_frame(i) for i in range(5)]
@@ -47,6 +53,12 @@ def test_drain_keeps_latest_frame(mock_video_capture):
     assert result[0, 0, 0] == 4
 
 
+# ─── get_frame devuelve una copia, no la referencia interna ──────────────────
+# Si get_frame devolviera la referencia directa a self._frame, el consumidor
+# podría modificar el array (p.ej. cv2.imencode lo hace in-place en algunas
+# versiones), corrompiendo el frame almacenado para el siguiente ciclo.
+# Se verifica que mutar la copia no afecta a self._frame.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_get_frame_returns_copy():
     """The ndarray returned by get_frame() is a copy, not the internal ref."""
     stream = RTSPStream("rtsp://fake")
@@ -59,6 +71,12 @@ def test_get_frame_returns_copy():
     assert stream._frame[0, 0, 0] == 0
 
 
+# ─── Reconexión automática tras fallo de cap.read() ──────────────────────────
+# Si cap.read() devuelve (False, None) (cámara desconectada o pérdida de red),
+# _capture_loop llama a _reconnect(), que hace release() y crea un nuevo
+# VideoCapture. Se verifica que VideoCapture se instancia más de una vez,
+# confirmando que el mecanismo de reconexión se activa.
+# ─────────────────────────────────────────────────────────────────────────────
 @patch("backend.stream.time.sleep")
 def test_reconnect_on_failure(mock_sleep, mock_video_capture):
     """On read() failure, RTSPStream releases and creates a new VideoCapture."""
@@ -81,6 +99,13 @@ def test_reconnect_on_failure(mock_sleep, mock_video_capture):
     assert mock_video_capture.call_count >= 2
 
 
+# ─── Backoff exponencial en reconexión: 1s → 2s → 4s → 8s → 16s ─────────────
+# _reconnect() implementa backoff exponencial para no saturar la red ni la
+# cámara con intentos continuos. Se simula una secuencia de 5 fallos de
+# isOpened() y se verifica que los delays de time.sleep siguen la progresión
+# 1, 2, 4, 8, 16 (capped a 30s). Un backoff incorrecto podría causar
+# reconexiones en bucle o esperas innecesariamente largas.
+# ─────────────────────────────────────────────────────────────────────────────
 @patch("backend.stream.time.sleep")
 def test_backoff_increases(mock_sleep, mock_video_capture):
     """Reconnection delays grow exponentially: 1, 2, 4, 8, 16."""
@@ -121,6 +146,11 @@ def test_backoff_increases(mock_sleep, mock_video_capture):
         assert sleep_args[i] == exp, f"Delay {i}: expected {exp}, got {sleep_args[i]}"
 
 
+# ─── stop() llama a VideoCapture.release() ───────────────────────────────────
+# Al detener el servidor, stop() debe liberar el recurso de VideoCapture para
+# cerrar el socket RTSP correctamente. Sin release(), la cámara mantendría
+# la conexión abierta y podría no aceptar nuevas conexiones al reiniciar.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_stop_releases_capture(mock_video_capture):
     """After stop(), VideoCapture.release() is called."""
     cap = mock_video_capture._mock_cap
@@ -136,6 +166,11 @@ def test_stop_releases_capture(mock_video_capture):
     cap.release.assert_called()
 
 
+# ─── get_frame devuelve None antes de recibir el primer frame ────────────────
+# En los primeros milisegundos tras start(), el hilo de captura aún no ha
+# leído ningún frame. El endpoint MJPEG y el grabador deben manejar None
+# sin lanzar excepción. Este test verifica el valor inicial de self._frame.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_get_frame_none_before_start():
     """Before any frame arrives, get_frame() returns None."""
     stream = RTSPStream("rtsp://fake")
@@ -160,6 +195,12 @@ def fake_jpeg_frame():
     return np.zeros((100, 100, 3), dtype=np.uint8)
 
 
+# ─── /video_feed devuelve Content-Type multipart/x-mixed-replace ─────────────
+# El navegador usa el Content-Type para saber que es un stream MJPEG y
+# renderizar los frames en el <img> del dashboard. Un Content-Type incorrecto
+# mostraría la respuesta como texto o binario en lugar de vídeo.
+# Se sustituye mjpeg_generator por un generador finito de un solo frame.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_video_feed_returns_mjpeg_content_type(fake_jpeg_frame):
     """GET /video_feed returns multipart/x-mixed-replace content type."""
@@ -186,6 +227,11 @@ async def test_video_feed_returns_mjpeg_content_type(fake_jpeg_frame):
     assert "multipart/x-mixed-replace" in response.headers["content-type"]
 
 
+# ─── Cuerpo de /video_feed contiene el boundary MJPEG y el MIME de imagen ────
+# El protocolo MJPEG requiere el separador '--frame' y el header
+# 'Content-Type: image/jpeg' antes de cada frame. Sin ellos, el navegador
+# no puede delimitar los frames individuales y la imagen se corrompe.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_video_feed_contains_jpeg_boundary(fake_jpeg_frame):
     """Response body starts with MJPEG boundary marker."""
@@ -212,6 +258,12 @@ async def test_video_feed_contains_jpeg_boundary(fake_jpeg_frame):
     assert b"Content-Type: image/jpeg" in response.content
 
 
+# ─── El lifespan llama a RTSPStream.start() y stop() ─────────────────────────
+# El lifespan de FastAPI debe iniciar el stream en startup y detenerlo en
+# shutdown. Si start() no se llama, el hilo de captura nunca arranca y no
+# llegan frames al dashboard. Si stop() no se llama, el proceso queda zombie
+# con el socket RTSP abierto al hacer Ctrl+C.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_app_creates_rtsp_stream_on_startup():
     """Lifespan calls RTSPStream.start() on startup."""

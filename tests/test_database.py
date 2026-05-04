@@ -31,6 +31,11 @@ async def isolated_db(tmp_path):
 # get_stats_today
 # ---------------------------------------------------------------------------
 
+# ─── BD vacía: ceros y dict vacío ────────────────────────────────────────────
+# Al arrancar el sistema por primera vez o tras un purge total, la BD no tiene
+# eventos. get_stats_today() debe devolver total_today=0 y hourly={} sin
+# lanzar excepción ni devolver None.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_stats_today_empty_db(isolated_db):
     """Returns total_today=0 and empty hourly dict when no events exist."""
@@ -39,6 +44,11 @@ async def test_get_stats_today_empty_db(isolated_db):
     assert stats["hourly"] == {}
 
 
+# ─── total_today excluye eventos de días anteriores ──────────────────────────
+# El dashboard muestra "personas detectadas hoy". Si total_today incluyera
+# eventos de ayer, el contador se reiniciaría a un valor incorrecto cada
+# medianoche. Se insertan 2 eventos de hoy y 1 de ayer; solo deben contar 2.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_stats_today_counts_only_todays_events(isolated_db):
     """total_today must not include events from previous days."""
@@ -51,6 +61,12 @@ async def test_get_stats_today_counts_only_todays_events(isolated_db):
     assert stats["total_today"] == 2
 
 
+# ─── Claves del histograma con formato de hora correcto ──────────────────────
+# El frontend Chart.js espera claves de dos caracteres ('08', '14', '23').
+# SQLite strftime('%H', ...) siempre produce strings de 2 dígitos con cero
+# inicial. Este test verifica que ninguna clave tenga longitud distinta de 2,
+# lo que causaría huecos o colisiones en el gráfico horario.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_stats_today_hourly_keys_are_two_char_strings(isolated_db):
     """hourly dict keys are zero-padded 2-char hour strings like '08', '14'."""
@@ -60,6 +76,11 @@ async def test_get_stats_today_hourly_keys_are_two_char_strings(isolated_db):
         assert len(key) == 2, f"Expected 2-char hour key, got {key!r}"
 
 
+# ─── Estructura mínima del resultado ─────────────────────────────────────────
+# El endpoint /api/stats y el WebSocket 'init' consumen este dict directamente.
+# Si falta alguna clave, el frontend lanzará un TypeError en JavaScript sin
+# mensaje de error claro. Se verifica la presencia de ambas claves esperadas.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_stats_today_has_required_keys(isolated_db):
     """get_stats_today always returns total_today and hourly keys."""
@@ -72,6 +93,11 @@ async def test_get_stats_today_has_required_keys(isolated_db):
 # get_events_filtered
 # ---------------------------------------------------------------------------
 
+# ─── Filtro por dirección IN ──────────────────────────────────────────────────
+# El endpoint GET /api/events acepta ?direction=in|out. Cuando se filtra por
+# 'in', solo deben aparecer eventos con direction='in'. Se insertan un IN y
+# un OUT para confirmar que el OUT queda excluido.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_events_filtered_by_direction_in(isolated_db):
     """direction='in' returns only IN events."""
@@ -83,6 +109,10 @@ async def test_get_events_filtered_by_direction_in(isolated_db):
     assert len(result) == 1
 
 
+# ─── Filtro por dirección OUT ─────────────────────────────────────────────────
+# Análogo al anterior pero para 'out'. Valida la simetría del filtro y que
+# el campo direction se almacena y recupera exactamente como 'out' (3 chars).
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_events_filtered_by_direction_out(isolated_db):
     """direction='out' returns only OUT events."""
@@ -94,6 +124,11 @@ async def test_get_events_filtered_by_direction_out(isolated_db):
     assert len(result) == 1
 
 
+# ─── Filtro por nombre: coincidencia parcial sin distinguir mayúsculas ────────
+# El filtro person_name usa ILIKE('%valor%') para encontrar coincidencias
+# parciales. Un usuario que busca 'ali' debe encontrar 'Alice' pero no 'Bob'.
+# La búsqueda no debe ser sensible a mayúsculas (SQLite ILIKE).
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_events_filtered_by_person_name_partial_match(isolated_db):
     """person_name filter performs case-insensitive partial match."""
@@ -105,6 +140,11 @@ async def test_get_events_filtered_by_person_name_partial_match(isolated_db):
     assert result[0]["person_name"] == "Alice"
 
 
+# ─── Filtro is_intrusion=True: solo intrusiones ───────────────────────────────
+# Los eventos de intrusión (fuera del horario configurado) se marcan con
+# is_intrusion=True. El filtro debe devolver exclusivamente esos eventos para
+# el panel de alertas, excluyendo los eventos normales.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_events_filtered_by_intrusion_true(isolated_db):
     """is_intrusion=True returns only intrusion events."""
@@ -116,6 +156,11 @@ async def test_get_events_filtered_by_intrusion_true(isolated_db):
     assert result[0]["is_intrusion"] is True
 
 
+# ─── Filtro is_intrusion=False: excluye intrusiones ──────────────────────────
+# El filtro False debe devolver solo eventos normales. Valida que el booleano
+# se almacena correctamente en SQLite (donde BOOLEAN es INTEGER 0/1) y que
+# la comparación funciona en ambas direcciones.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_events_filtered_by_intrusion_false(isolated_db):
     """is_intrusion=False excludes intrusion events."""
@@ -126,6 +171,11 @@ async def test_get_events_filtered_by_intrusion_false(isolated_db):
     assert all(not e["is_intrusion"] for e in result)
 
 
+# ─── Filtro de rango de fechas: límites inclusivos ───────────────────────────
+# from_dt y to_dt son ambos inclusivos (>= y <=). Se insertan 3 eventos en
+# días consecutivos y se filtra entre el 1 y el 2: deben aparecer exactamente
+# 2 eventos (el del día 3 queda excluido).
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_events_filtered_date_range_inclusive(isolated_db):
     """from_dt/to_dt boundaries are inclusive."""
@@ -138,6 +188,11 @@ async def test_get_events_filtered_date_range_inclusive(isolated_db):
     assert len(result) == 2
 
 
+# ─── Sin filtros activos: devuelve todos hasta el límite ─────────────────────
+# Cuando ningún filtro está activo, get_events_filtered actúa como
+# get_recent_events. Se insertan 5 eventos y se consulta con limit=10;
+# deben aparecer los 5 sin que ninguno se descarte.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_events_filtered_no_filters_returns_all(isolated_db):
     """With no filters, returns all events up to limit."""
@@ -148,6 +203,10 @@ async def test_get_events_filtered_no_filters_returns_all(isolated_db):
     assert len(result) == 5
 
 
+# ─── El parámetro limit recorta el resultado ──────────────────────────────────
+# La exportación CSV y el endpoint /api/events usan limit para paginar.
+# Se insertan 10 eventos y se pide limit=3; deben devolverse exactamente 3.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_events_filtered_respects_limit(isolated_db):
     """limit parameter caps the number of returned events."""
@@ -158,6 +217,11 @@ async def test_get_events_filtered_respects_limit(isolated_db):
     assert len(result) == 3
 
 
+# ─── Estructura completa de cada evento devuelto ─────────────────────────────
+# El frontend y la exportación CSV acceden por clave. Si falta algún campo
+# (id, timestamp, direction, person_name, is_intrusion), aparecería un
+# KeyError o columna vacía en el CSV exportado.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_get_events_filtered_event_has_all_keys(isolated_db):
     """Every event dict has all expected keys."""
@@ -170,6 +234,11 @@ async def test_get_events_filtered_event_has_all_keys(isolated_db):
 # purge_old_events
 # ---------------------------------------------------------------------------
 
+# ─── Purge borra solo los eventos fuera de la ventana de retención ────────────
+# purge_old_events(retention_days=30) debe eliminar únicamente eventos con
+# timestamp < ahora-30días. Se insertan 2 eventos de hace 40 días y 1 de ahora;
+# tras el purge deben quedar exactamente 1 evento y deleted=2.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_purge_old_events_deletes_old_keeps_recent(isolated_db):
     """purge_old_events removes events beyond retention_days, keeps recent ones."""
@@ -184,6 +253,11 @@ async def test_purge_old_events_deletes_old_keeps_recent(isolated_db):
     assert len(remaining) == 1
 
 
+# ─── Purge devuelve 0 cuando no hay datos caducados ──────────────────────────
+# Si todos los eventos están dentro de la ventana de retención, el purge no
+# debe borrar nada. Devolver 0 permite al _purge_loop de main.py omitir el
+# log "Purged N events" cuando no hay nada que limpiar.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_purge_old_events_returns_zero_when_nothing_old(isolated_db):
     """purge_old_events returns 0 when all events are within the window."""
@@ -192,6 +266,11 @@ async def test_purge_old_events_returns_zero_when_nothing_old(isolated_db):
     assert deleted == 0
 
 
+# ─── retention_days=0 elimina todos los eventos ──────────────────────────────
+# Con retention_days=0, el cutoff es datetime.now(), así que todos los eventos
+# anteriores a este instante quedan fuera de ventana. Útil para limpiezas
+# manuales completas desde el panel de administración.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_purge_old_events_deletes_all_old(isolated_db):
     """purge_old_events with retention_days=0 deletes everything."""
@@ -206,6 +285,11 @@ async def test_purge_old_events_deletes_all_old(isolated_db):
 # purge_old_recordings
 # ---------------------------------------------------------------------------
 
+# ─── Purge borra solo grabaciones fuera de ventana, conserva las recientes ───
+# La rotación de datos de Phase 16 elimina grabaciones antiguas para liberar
+# espacio. Se verifica que solo se borra la grabación de hace 40 días y que
+# la reciente permanece intacta con su filename correcto.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_purge_old_recordings_deletes_old_keeps_recent(isolated_db):
     """purge_old_recordings removes old rows and keeps recent ones."""
@@ -220,6 +304,10 @@ async def test_purge_old_recordings_deletes_old_keeps_recent(isolated_db):
     assert remaining[0]["filename"] == "new.mp4"
 
 
+# ─── Purge de grabaciones devuelve 0 sin datos caducados ─────────────────────
+# Analogía directa con el purge de eventos: no debe borrar nada si todo está
+# dentro de la ventana y debe devolver 0 para evitar logs innecesarios.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_purge_old_recordings_returns_zero_when_nothing_old(isolated_db):
     """purge_old_recordings returns 0 when all recordings are recent."""
@@ -232,6 +320,11 @@ async def test_purge_old_recordings_returns_zero_when_nothing_old(isolated_db):
 # delete_events_range
 # ---------------------------------------------------------------------------
 
+# ─── Borrado manual por rango de fechas: solo afecta al rango indicado ────────
+# El endpoint DELETE /api/events borra eventos entre from_dt y to_dt.
+# Se insertan 3 eventos en días distintos y se borra el rango [t1, t2];
+# el evento del día 3 debe quedar intacto con su timestamp original.
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_delete_events_range_removes_in_range(isolated_db):
     """delete_events_range removes only events within [from_dt, to_dt]."""

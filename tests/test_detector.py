@@ -45,12 +45,22 @@ def blank_frame():
 # detect()
 # ---------------------------------------------------------------------------
 
+# ─── Contrato: lista vacía sin detecciones ───────────────────────────────────
+# Cuando el modelo YOLO no encuentra ningún objeto en el frame (r.boxes = []),
+# detect() debe devolver [] en lugar de None o lanzar excepción.
+# El mock devuelve un resultado vacío para aislar este comportamiento.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_detect_empty_when_no_boxes(detector, blank_frame):
     """detect() returns [] when the model produces no boxes."""
     detector._mock_model.return_value = [_make_yolo_result([])]
     assert detector.detect(blank_frame) == []
 
 
+# ─── Conversión correcta de box YOLO a dataclass Detection ──────────────────
+# detect() debe mapear xyxy (float32) a enteros y preservar la confianza.
+# Se verifica que x1/y1/x2/y2 y confidence coinciden exactamente con los
+# valores del mock (dentro de tolerancia float).
+# ─────────────────────────────────────────────────────────────────────────────
 def test_detect_returns_detection_objects(detector, blank_frame):
     """detect() converts YOLO boxes to Detection dataclass instances."""
     box = _make_yolo_box(10.0, 20.0, 100.0, 200.0, 0.9)
@@ -63,6 +73,11 @@ def test_detect_returns_detection_objects(detector, blank_frame):
     assert abs(d.confidence - 0.9) < 1e-4
 
 
+# ─── Múltiples detecciones en el mismo frame ─────────────────────────────────
+# detect() itera sobre todos los boxes del resultado YOLO.
+# Este test asegura que no se descarta ninguna detección cuando hay varias
+# personas en escena simultáneamente.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_detect_multiple_boxes(detector, blank_frame):
     """detect() handles multiple boxes in one frame."""
     boxes = [_make_yolo_box(0, 0, 50, 50, 0.8), _make_yolo_box(60, 60, 120, 120, 0.7)]
@@ -70,6 +85,12 @@ def test_detect_multiple_boxes(detector, blank_frame):
     assert len(detector.detect(blank_frame)) == 2
 
 
+# ─── Parámetros transmitidos al modelo YOLO ──────────────────────────────────
+# detect() debe reenviar al modelo: conf (umbral mínimo configurado),
+# classes (lista de clases COCO a detectar, por defecto [0]=persona) y
+# verbose=False para no contaminar los logs del servidor.
+# Se comprueba mediante call_args después de la llamada.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_detect_passes_confidence_and_classes_to_model(detector, blank_frame):
     """detect() forwards configured confidence and classes to the YOLO call."""
     detector._mock_model.return_value = [_make_yolo_result([])]
@@ -84,6 +105,11 @@ def test_detect_passes_confidence_and_classes_to_model(detector, blank_frame):
 # detect_sv()
 # ---------------------------------------------------------------------------
 
+# ─── Integración con supervision: tipo de retorno ────────────────────────────
+# detect_sv() alimenta el pipeline ByteTrack+LineZone de supervision.
+# Debe devolver sv.Detections (no una lista de Detection) y delegar la
+# conversión a sv.Detections.from_ultralytics con el resultado de YOLO[0].
+# ─────────────────────────────────────────────────────────────────────────────
 def test_detect_sv_returns_supervision_detections(detector, blank_frame):
     """detect_sv() returns a supervision.Detections object."""
     mock_result = MagicMock()
@@ -94,6 +120,11 @@ def test_detect_sv_returns_supervision_detections(detector, blank_frame):
     assert isinstance(result, sv.Detections)
 
 
+# ─── Coherencia de parámetros entre detect() y detect_sv() ──────────────────
+# Ambos métodos deben usar el mismo umbral de confianza y verbose=False.
+# Un valor distinto causaría que el pipeline de tracking detecte más/menos
+# personas que el fallback de la fase 3.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_detect_sv_passes_correct_kwargs(detector, blank_frame):
     """detect_sv() uses the same confidence/classes as detect()."""
     mock_result = MagicMock()
@@ -109,6 +140,11 @@ def test_detect_sv_passes_correct_kwargs(detector, blank_frame):
 # annotate()
 # ---------------------------------------------------------------------------
 
+# ─── Inmutabilidad del frame original ────────────────────────────────────────
+# annotate() trabaja sobre frame.copy() internamente. Si modificara el array
+# original (in-place), el frame almacenado en RTSPStream._frame se corrompería
+# en cada ciclo de detección, causando artefactos visuales acumulativos.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_annotate_does_not_mutate_original(detector, blank_frame):
     """annotate() must return a copy without modifying the input frame."""
     original = blank_frame.copy()
@@ -118,6 +154,11 @@ def test_annotate_does_not_mutate_original(detector, blank_frame):
     assert annotated is not blank_frame
 
 
+# ─── Verificación visual: el box se dibuja ───────────────────────────────────
+# annotate() llama a cv2.rectangle con color verde (0,255,0).
+# Un frame negro de entrada debe tener al menos un píxel no nulo
+# tras la anotación, lo que confirma que el dibujo se ejecutó.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_annotate_draws_non_black_pixels(detector, blank_frame):
     """annotate() paints green pixels where the bounding box is drawn."""
     det = Detection(x1=50, y1=50, x2=200, y2=200, confidence=0.75)
@@ -125,12 +166,20 @@ def test_annotate_draws_non_black_pixels(detector, blank_frame):
     assert annotated.max() > 0
 
 
+# ─── Sin detecciones: copia pixel-perfect ────────────────────────────────────
+# Con lista de detecciones vacía, annotate() no debe modificar ningún píxel.
+# El frame de salida debe ser idéntico al de entrada (pero objeto distinto).
+# ─────────────────────────────────────────────────────────────────────────────
 def test_annotate_empty_detections_returns_equal_copy(detector, blank_frame):
     """annotate() with no detections returns an unchanged copy."""
     annotated = detector.annotate(blank_frame, [])
     np.testing.assert_array_equal(annotated, blank_frame)
 
 
+# ─── Preservación de dimensiones del frame ───────────────────────────────────
+# annotate() no debe redimensionar ni recortar el frame.
+# Cambiar shape rompería el encoder MJPEG y el VideoWriter del grabador.
+# ─────────────────────────────────────────────────────────────────────────────
 def test_annotate_preserves_frame_shape(detector, blank_frame):
     """annotate() preserves input dimensions."""
     det = Detection(x1=0, y1=0, x2=100, y2=100, confidence=0.5)
