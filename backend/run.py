@@ -6,19 +6,33 @@ from backend.config import get_settings
 from backend.ssl_utils import ensure_self_signed_cert
 
 
-class _SuppressWin10054(logging.Filter):
-    """Filter out the benign WinError 10054 noise from asyncio ProactorEventLoop."""
-    def filter(self, record: logging.LogRecord) -> bool:
-        return "WinError 10054" not in (record.getMessage())
+def _patch_asyncio_win10054() -> None:
+    """Suppress the benign WinError 10054 from ProactorEventLoop on Windows.
 
+    These come from loop.call_exception_handler(), not logging, so a
+    logging.Filter cannot intercept them. We install a custom exception
+    handler that drops the specific error and forwards everything else.
+    """
+    import asyncio, sys
+    if sys.platform != "win32":
+        return
+    loop = asyncio.get_event_loop()
+    default_handler = loop.get_exception_handler()
 
-def _patch_asyncio_logger() -> None:
-    for name in ("asyncio", "uvicorn.error"):
-        logging.getLogger(name).addFilter(_SuppressWin10054())
+    def _handler(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, ConnectionResetError) and getattr(exc, "winerror", None) == 10054:
+            return
+        if default_handler:
+            default_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_handler)
 
 
 def main() -> None:
-    _patch_asyncio_logger()
+    _patch_asyncio_win10054()
     s = get_settings()
     ssl_kwargs: dict = {}
     if s.ssl_certfile and s.ssl_keyfile:
