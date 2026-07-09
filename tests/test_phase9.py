@@ -648,6 +648,84 @@ def TEST_105_reverify_unknown_face_does_not_register(tmp_path):
     assert r.get_cached(1) == (pid_a, None)    # identidad intacta
 
 
+# ---------------------------------------------------------------------------
+# PersonRecognizer — gating para el worker, poda y retención (MEJORAS.md 10, 12, 15)
+# ---------------------------------------------------------------------------
+
+# ─── Punto 10: should_attempt aplica el intervalo y marca el intento ──────────
+# El hilo de captura usa should_attempt como gate barato antes de encolar el
+# crop para el worker. Un True consume el intento: la siguiente llamada dentro
+# del intervalo devuelve False. Tracks identificados esperan REVERIFY_INTERVAL
+# en lugar de RECOG_INTERVAL.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_106_should_attempt_gates_and_marks(tmp_path):
+    """should_attempt is True once per interval; identified tracks wait longer."""
+    r = _recog(tmp_path)
+    assert r.should_attempt(1, 100) is True
+    assert r.should_attempt(1, 101) is False
+    assert r.should_attempt(1, 100 + r.RECOG_INTERVAL) is True
+
+    r._cache[2] = (1, None)  # track ya identificado
+    assert r.should_attempt(2, 0) is True
+    assert r.should_attempt(2, r.RECOG_INTERVAL + 1) is False
+    assert r.should_attempt(2, r.REVERIFY_INTERVAL) is True
+
+
+# ─── Punto 12: prune elimina estado de tracks inactivos ──────────────────────
+# Los tracker_id de ByteTrack crecen de forma monótona: sin poda, los dicts
+# por track (_cache, _last_attempt, _pending, _votes) crecen sin límite en un
+# proceso 24/7. prune debe borrar los ids ausentes y conservar los activos.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_107_prune_drops_inactive_track_state(tmp_path):
+    """prune removes per-track dicts for ids not in the active set."""
+    from collections import deque as _deque
+    r = _recog(tmp_path)
+    r._cache[1] = (1, None)
+    r._cache[2] = (2, None)
+    r._last_attempt[1] = 10
+    r._last_attempt[2] = 20
+    r._pending[2] = [np.zeros(128)]
+    r._votes[2] = _deque([2], maxlen=r.VOTE_WINDOW)
+
+    r.prune({1})
+
+    assert r._cache == {1: (1, None)}
+    assert r._last_attempt == {1: 10}
+    assert r._pending == {}
+    assert r._votes == {}
+
+
+# ─── Punto 15: purge_unnamed borra anónimos de paso, respeta el resto ─────────
+# Personas sin nombre con visit_count == 1 y last_seen antiguo son transeúntes
+# que degradan el matching si se acumulan. La purga debe borrarlas (fila +
+# embeddings + listas en memoria + cache), y no tocar nunca personas con
+# nombre ni anónimos recientes.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_108_purge_unnamed_removes_stale_single_visit(tmp_path):
+    """Stale unnamed one-visit persons are purged; named/recent ones survive."""
+    r = _recog(tmp_path)
+    with r._lock:
+        pid_old = r._register(_enc_at_distance(0.30))
+        pid_named = r._register(_enc_at_distance(0.50))
+        pid_recent = r._register(_enc_at_distance(0.70))
+    r._conn.execute(
+        "UPDATE persons SET last_seen=datetime('now','-40 days') WHERE id IN (?,?)",
+        (pid_old, pid_named),
+    )
+    r._conn.execute("UPDATE persons SET name='Eve' WHERE id=?", (pid_named,))
+    r._conn.commit()
+    r._cache[5] = (pid_old, None)
+
+    assert r.purge_unnamed(30) == 1
+
+    ids = {p["id"] for p in r.list_persons()}
+    assert ids == {pid_named, pid_recent}
+    assert pid_old not in r._person_ids
+    assert 5 not in r._cache
+    # días <= 0 desactiva la purga
+    assert r.purge_unnamed(0) == 0
+
+
 # ─── Sin librería face_recognition: devuelve None inmediatamente ─────────────
 # En sistemas donde dlib/face_recognition no está instalado, PersonRecognizer.
 # _available es False. enroll_named_face debe devolver None sin intentar

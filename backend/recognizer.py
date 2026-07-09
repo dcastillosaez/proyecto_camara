@@ -89,6 +89,25 @@ class PersonRecognizer:
         """Return (person_id, name) if this tracker_id is already identified."""
         return self._cache.get(tracker_id)
 
+    def should_attempt(self, tracker_id: int, frame_number: int) -> bool:
+        """
+        Cheap gate for the capture thread (MEJORAS.md punto 10): return True
+        when a recognition attempt is due for this track — RECOG_INTERVAL
+        frames for unidentified tracks, REVERIFY_INTERVAL for identified
+        ones. A True result marks the attempt, so the caller is expected to
+        follow through (enqueue the crop for the recognition worker).
+        """
+        if not self._available:
+            return False
+        with self._lock:
+            cached = self._cache.get(tracker_id)
+            interval = self.REVERIFY_INTERVAL if cached is not None else self.RECOG_INTERVAL
+            last = self._last_attempt.get(tracker_id, -(interval + 1))
+            if frame_number - last < interval:
+                return False
+            self._last_attempt[tracker_id] = frame_number
+            return True
+
     def identify_or_register(
         self,
         frame_bgr: np.ndarray,
@@ -98,6 +117,26 @@ class PersonRecognizer:
     ) -> tuple[int | None, str | None, bool]:
         """
         Attempt face recognition for the person in *bbox*.
+
+        Convenience wrapper: gating (``should_attempt``) + crop + heavy work
+        (``process_crop``). The live pipeline calls the two halves from
+        different threads instead — the capture thread gates and enqueues,
+        a dedicated worker runs ``process_crop`` (MEJORAS.md punto 10).
+        """
+        if not self.should_attempt(tracker_id, frame_number):
+            return None, None, False
+        x1, y1, x2, y2 = bbox
+        crop = frame_bgr[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
+        if crop.size == 0:
+            return None, None, False
+        return self.process_crop(crop, tracker_id)
+
+    def process_crop(
+        self, crop_bgr: np.ndarray, tracker_id: int
+    ) -> tuple[int | None, str | None, bool]:
+        """
+        Run face detection + matching on a person crop (the expensive dlib
+        path, 100-500 ms on CPU). Safe to call from a worker thread.
 
         Returns (person_id, name, is_new):
           - person_id=None  → no usable face yet (none detected, failed a
@@ -118,20 +157,9 @@ class PersonRecognizer:
         no longer sticks to the track forever. Callers get the corrected
         identity through the normal return value.
         """
-        if not self._available:
+        if not self._available or crop_bgr.size == 0:
             return None, None, False
-
-        cached = self._cache.get(tracker_id)
-        interval = self.REVERIFY_INTERVAL if cached is not None else self.RECOG_INTERVAL
-        last = self._last_attempt.get(tracker_id, -(interval + 1))
-        if frame_number - last < interval:
-            return None, None, False
-        self._last_attempt[tracker_id] = frame_number
-
-        x1, y1, x2, y2 = bbox
-        crop = frame_bgr[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
-        if crop.size == 0:
-            return None, None, False
+        crop = crop_bgr
 
         rgb = np.ascontiguousarray(crop[:, :, ::-1])
         locs = fr.face_locations(rgb, model="hog")
@@ -161,6 +189,7 @@ class PersonRecognizer:
         enc = encodings[0]
 
         with self._lock:
+            cached = self._cache.get(tracker_id)
             pid, name, ambiguous = self._best_match(enc)
             if pid is not None:
                 # Majority vote over the last VOTE_WINDOW decisive matches:
@@ -297,6 +326,59 @@ class PersonRecognizer:
                 }
                 for r in cur.fetchall()
             ]
+
+    def prune(self, active_tracker_ids: set[int]) -> None:
+        """
+        Drop per-track state for tracker_ids no longer active (MEJORAS.md
+        punto 12). ByteTrack ids grow monotonically, so without pruning
+        ``_cache``, ``_last_attempt``, ``_pending`` and ``_votes`` leak
+        slowly on a 24/7 process.
+        """
+        with self._lock:
+            for d in (self._cache, self._last_attempt, self._pending, self._votes):
+                for tid in list(d):
+                    if tid not in active_tracker_ids:
+                        del d[tid]
+
+    def purge_unnamed(self, days: int) -> int:
+        """
+        Delete anonymous one-off passers-by not seen for *days* days
+        (MEJORAS.md punto 15): rows with no name and visit_count == 1.
+        Named persons are never touched. Returns the number of persons
+        removed. Safe to call from any thread.
+        """
+        if not self._available or days <= 0:
+            return 0
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id FROM persons WHERE name IS NULL AND visit_count = 1 "
+                "AND last_seen < datetime('now', ?)",
+                (f"-{days} days",),
+            )
+            gone = {r[0] for r in cur.fetchall()}
+            if not gone:
+                return 0
+            marks = ",".join("?" * len(gone))
+            ids = list(gone)
+            self._conn.execute(
+                f"DELETE FROM face_encodings WHERE person_id IN ({marks})", ids
+            )
+            self._conn.execute(f"DELETE FROM persons WHERE id IN ({marks})", ids)
+            self._conn.commit()
+
+            kept = [
+                (p, n, e)
+                for p, n, e in zip(self._person_ids, self._person_names, self._encodings)
+                if p not in gone
+            ]
+            self._person_ids = [p for p, _, _ in kept]
+            self._person_names = [n for _, n, _ in kept]
+            self._encodings = [e for _, _, e in kept]
+            for tid, (pid, _) in list(self._cache.items()):
+                if pid in gone:
+                    del self._cache[tid]
+            logger.info("PersonRecognizer: purged %d unnamed stale persons", len(gone))
+            return len(gone)
 
     # ------------------------------------------------------------------
     # Internal

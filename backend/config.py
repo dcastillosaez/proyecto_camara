@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     yolo_classes: list[int] = [0]
     # Label shown in bounding-box overlay.
     detection_label: str = "person"
+    # YOLO inference size (imgsz). Fixed value = predictable CPU cost.
+    yolo_imgsz: int = 640
+    # Run YOLO on 1 of every N frames (1 = every frame). On skipped frames
+    # the last tracked boxes are re-used — on CPU, 2 roughly doubles FPS.
+    detect_every: int = 2
+    # Approximate real pipeline FPS, passed to ByteTrack so its lost-track
+    # buffer is measured in real seconds (its default assumes 30 FPS).
+    tracker_frame_rate: int = 15
 
     db_path: str = "data/events.db"
     host: str = "0.0.0.0"
@@ -110,6 +118,9 @@ class Settings(BaseSettings):
     # Phase 16 — data retention (0 = disabled)
     events_retention_days: int = 30
     recordings_retention_days: int = 30
+    # Personas anónimas de paso (sin nombre, 1 sola visita): días hasta
+    # borrarlas de persons.db. Las personas con nombre nunca se tocan.
+    persons_retention_days: int = 30
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

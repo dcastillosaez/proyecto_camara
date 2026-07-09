@@ -258,3 +258,37 @@ async def TEST_077_app_creates_rtsp_stream_on_startup():
 
         instance.start.assert_called_once()
         instance.stop.assert_called_once()
+
+
+# ─── Punto 10 (MEJORAS.md): el worker de reconocimiento publica en la cache ──
+# El hilo de captura encola (crop, tracker_id) y sigue capturando; el worker
+# consume la cola, ejecuta process_crop (el paso dlib caro) y publica el
+# resultado en _person_cache. Si el worker no publicara, las etiquetas del
+# overlay y los nombres de los eventos nunca aparecerían.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_109_recognition_worker_publishes_cache():
+    """The recognition worker consumes the queue and fills _person_cache."""
+    import threading
+
+    recognizer = MagicMock()
+    recognizer.available = True
+    recognizer.process_crop.return_value = (7, "Alice", False)
+
+    stream = RTSPStream("rtsp://fake", recognizer=recognizer)
+    stream._try_save_capture = MagicMock()  # no tocar data/gallery real
+    stream._running = True
+    worker = threading.Thread(target=stream._recognition_worker, daemon=True)
+    worker.start()
+
+    crop = np.zeros((50, 50, 3), dtype=np.uint8)
+    stream._recog_queue.put((crop, 3))
+
+    deadline = time.time() + 2.0
+    while time.time() < deadline and 3 not in stream._person_cache:
+        time.sleep(0.01)
+    stream._running = False
+    worker.join(timeout=1.0)
+
+    assert stream._person_cache.get(3) == (7, "Alice")
+    recognizer.process_crop.assert_called_once()
+    stream._try_save_capture.assert_called_once_with(crop, 7)

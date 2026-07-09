@@ -26,15 +26,20 @@ class PersonDetector:
         confidence: float = 0.45,
         classes: list[int] | None = None,
         label: str = "person",
+        imgsz: int = 640,
     ) -> None:
         self._model = YOLO(model_path)
         self._confidence = confidence
         self._classes = classes if classes is not None else [0]
         self._label = label
+        self._imgsz = imgsz
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         """Return bounding boxes for objects detected in *frame*."""
-        results = self._model(frame, classes=self._classes, conf=self._confidence, verbose=False)
+        results = self._model(
+            frame, classes=self._classes, conf=self._confidence,
+            imgsz=self._imgsz, verbose=False,
+        )
         detections: list[Detection] = []
         for r in results:
             for box in r.boxes:
@@ -45,7 +50,10 @@ class PersonDetector:
 
     def detect_sv(self, frame: np.ndarray) -> sv.Detections:
         """Run inference and return a supervision ``Detections`` object."""
-        results = self._model(frame, classes=self._classes, conf=self._confidence, verbose=False)
+        results = self._model(
+            frame, classes=self._classes, conf=self._confidence,
+            imgsz=self._imgsz, verbose=False,
+        )
         return sv.Detections.from_ultralytics(results[0])
 
     def annotate(self, frame: np.ndarray, detections: list[Detection]) -> np.ndarray:

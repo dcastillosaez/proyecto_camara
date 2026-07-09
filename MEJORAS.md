@@ -67,15 +67,15 @@ HOG solo detecta caras frontales y relativamente grandes. En cámara de techo/es
 
 ## Medias (rendimiento y robustez)
 
-### 10. dlib bloquea el hilo de captura RTSP
+### 10. ✅ RESUELTO (2026-07-09) — dlib bloquea el hilo de captura RTSP
 `stream.py:238` — `identify_or_register` (detección HOG + encoding dlib, 100–500 ms en CPU) corre en el hilo de captura. Cada intento congela la captura: se pierden frames, el MJPEG da tirones y ByteTrack pierde tracks (lo que a su vez dispara más intentos de reconocimiento — círculo vicioso).
 
 **Arreglo:** cola de trabajos + hilo worker dedicado. El hilo de captura encola `(crop.copy(), tid, frame_num)` y sigue; el worker publica resultados en `_person_cache`. Es el cambio con mejor ratio impacto/esfuerzo de toda la lista.
 
-### 11. YOLO en cada frame
+### 11. ✅ RESUELTO (2026-07-09) — YOLO en cada frame
 `stream.py:213` — inferencia en todos los frames. En CPU, detectar cada 2-3 frames y dejar que ByteTrack interpole mantiene los tracks estables y duplica el FPS efectivo. Alternativa complementaria: fijar `imgsz=640` (o 480) explícito en la llamada al modelo.
 
-### 12. Fugas de memoria lentas (proceso 24/7)
+### 12. ✅ RESUELTO (2026-07-09) — Fugas de memoria lentas (proceso 24/7)
 Crecen sin límite con los `tracker_id` (monótonos crecientes):
 - `recognizer._cache` y `recognizer._last_attempt` (`recognizer.py:48-50`)
 - `stream._person_cache`
@@ -83,13 +83,13 @@ Crecen sin límite con los `tracker_id` (monótonos crecientes):
 
 **Arreglo:** poda periódica — eliminar entradas cuyo `tracker_id` ya no esté en los tracks activos de ByteTrack (con margen de `lost_track_buffer`), o simple límite LRU.
 
-### 13. Commits SQLite en el hilo de captura
+### 13. ✅ RESUELTO (2026-07-09) — Commits SQLite en el hilo de captura
 `_touch` y `_register` hacen `commit()` síncrono dentro del flujo por frame. Con WAL es rápido, pero sigue siendo I/O en el hilo caliente. Se resuelve gratis al mover el reconocimiento al worker (punto 10).
 
-### 14. `frame_rate` de ByteTrack no coincide con el real
+### 14. ✅ RESUELTO (2026-07-09) — `frame_rate` de ByteTrack no coincide con el real
 `tracker.py:21` — `ByteTrack(lost_track_buffer=60)` asume `frame_rate=30`. El stream real (substream Tapo + detección) va a bastante menos; el buffer efectivo en segundos es el doble del esperado. Pasar el FPS medido (ya existe `_fps_times` en stream.py) al construir el tracker.
 
-### 15. Personas "fantasma" sin limpieza
+### 15. ✅ RESUELTO (2026-07-09) — Personas "fantasma" sin limpieza
 Cada transeúnte registra una fila + embedding para siempre. En una cámara a la calle, la BD crece indefinidamente y todo matching se degrada (más candidatos → más falsos positivos).
 
 **Arreglo:** tarea de retención — borrar personas sin nombre con `visit_count == 1` y `last_seen` > 30 días. Las personas nombradas nunca se tocan.

@@ -21,8 +21,12 @@ class PersonTracker:
     # confirmar el cruce — filtra cruces falsos por jitter de la bbox.
     CROSSING_THRESHOLD = 2
 
-    def __init__(self, start: sv.Point, end: sv.Point) -> None:
-        self._byte_tracker = sv.ByteTrack(lost_track_buffer=60)
+    def __init__(self, start: sv.Point, end: sv.Point, frame_rate: int = 15) -> None:
+        # frame_rate debe ser el FPS real del pipeline (MEJORAS.md punto 14):
+        # ByteTrack calcula max_time_lost = frame_rate/30 * lost_track_buffer,
+        # así que con el default (30) y un stream real a ~15 FPS el buffer
+        # efectivo en segundos era el doble del esperado.
+        self._byte_tracker = sv.ByteTrack(lost_track_buffer=60, frame_rate=frame_rate)
         self._line_zone = sv.LineZone(
             start=start,
             end=end,

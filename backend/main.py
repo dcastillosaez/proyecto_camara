@@ -131,6 +131,20 @@ async def _purge_loop() -> None:
                 n = await purge_old_recordings(settings.recordings_retention_days)
                 if n:
                     logger.info("Purged %d recordings older than %d days", n, settings.recordings_retention_days)
+            if (
+                settings.persons_retention_days > 0
+                and rtsp_stream is not None
+                and rtsp_stream._recognizer is not None
+            ):
+                n = await asyncio.to_thread(
+                    rtsp_stream._recognizer.purge_unnamed,
+                    settings.persons_retention_days,
+                )
+                if n:
+                    logger.info(
+                        "Purged %d unnamed persons older than %d days",
+                        n, settings.persons_retention_days,
+                    )
         except Exception as exc:
             logger.error("Purge loop error: %s", exc)
 
@@ -151,6 +165,7 @@ async def lifespan(app: FastAPI):
         confidence=settings.yolo_confidence,
         classes=settings.yolo_classes,
         label=settings.detection_label,
+        imgsz=settings.yolo_imgsz,
     )
     tracker = PersonTracker(
         start=sv.Point(
@@ -161,6 +176,7 @@ async def lifespan(app: FastAPI):
             int(settings.line_end_x_frac * settings.process_width),
             int(settings.line_end_y_frac * settings.process_height),
         ),
+        frame_rate=settings.tracker_frame_rate,
     )
     recognizer = PersonRecognizer(db_path=settings.db_path.replace("events.db", "persons.db"))
     rtsp_stream = RTSPStream(
