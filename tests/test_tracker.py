@@ -88,6 +88,9 @@ def TEST_081_counts_in_plus_out_independent(tracker):
         det = _make_tracked(1, [tid])
         with (
             patch.object(tracker._byte_tracker, "update_with_detections", return_value=det),
+            # passthrough: el smoother real conserva tracks de frames previos
+            # en su ventana y desalinearía el trigger mockeado de tamaño fijo
+            patch.object(tracker._smoother, "update_with_detections", side_effect=lambda d: d),
             patch.object(tracker._line_zone, "trigger",
                          return_value=(np.array([crossed_in]), np.array([crossed_out]))),
         ):

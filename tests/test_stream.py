@@ -292,3 +292,75 @@ def TEST_109_recognition_worker_publishes_cache():
     assert stream._person_cache.get(3) == (7, "Alice")
     recognizer.process_crop.assert_called_once()
     stream._try_save_capture.assert_called_once_with(crop, 7)
+
+
+# ─── Bajas (MEJORAS.md): PolygonZone cuenta presencia y entradas por zona ────
+# Las zonas dejan de ser decorativas: sv.PolygonZone.trigger cuenta quién
+# está dentro (current) y acumula entradas de tracks nuevos (entries).
+# Zona = mitad izquierda del frame. Track 1 dentro, track 2 fuera; luego el
+# track 2 entra: current pasa de 1 a 2 y entries acumula 2.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_110_polygon_zone_counts_presence_and_entries():
+    """PolygonZone-backed zones report live occupancy and cumulative entries."""
+    import json
+    import supervision as sv
+
+    stream = RTSPStream("rtsp://fake")
+    stream.set_zones([{
+        "id": "z1", "name": "Puerta", "enabled": True,
+        "polygon_json": json.dumps([[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]]),
+    }])
+
+    def _tracked(xyxy, tids):
+        return sv.Detections(
+            xyxy=np.array(xyxy, dtype=float),
+            tracker_id=np.array(tids),
+            confidence=np.ones(len(tids)),
+            class_id=np.zeros(len(tids), dtype=int),
+        )
+
+    shape = (720, 1280, 3)
+    # frame 1: track 1 dentro (pies en x=320), track 2 fuera (x=960)
+    stream._update_zones_and_heat(
+        _tracked([[300, 100, 340, 400], [940, 100, 980, 400]], [1, 2]), shape
+    )
+    stats = stream.get_zone_stats()
+    assert stats == [{"id": "z1", "name": "Puerta", "current": 1, "entries": 1}]
+
+    # frame 2: el track 2 entra en la zona
+    stream._update_zones_and_heat(
+        _tracked([[300, 100, 340, 400], [400, 100, 440, 400]], [1, 2]), shape
+    )
+    stats = stream.get_zone_stats()
+    assert stats == [{"id": "z1", "name": "Puerta", "current": 2, "entries": 2}]
+
+
+# ─── Bajas (MEJORAS.md): el heatmap acumula actividad y se compone bajo demanda
+# _update_zones_and_heat acumula un círculo de calor en los pies de cada
+# track; get_heatmap compone la máscara (blur + colormap) sobre el último
+# frame. Sin actividad devuelve None; con actividad, una imagen BGR del
+# mismo tamaño que el frame.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_111_heatmap_accumulates_and_renders():
+    """Heat mask accumulates at BOTTOM_CENTER; get_heatmap composes on demand."""
+    import supervision as sv
+
+    stream = RTSPStream("rtsp://fake")
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    stream._frame = frame
+
+    assert stream.get_heatmap() is None  # sin actividad todavía
+
+    tracked = sv.Detections(
+        xyxy=np.array([[600, 100, 680, 400]], dtype=float),
+        tracker_id=np.array([1]),
+        confidence=np.ones(1),
+        class_id=np.zeros(1, dtype=int),
+    )
+    stream._update_zones_and_heat(tracked, frame.shape)
+
+    heat = stream.get_heatmap()
+    assert heat is not None
+    assert heat.shape == frame.shape
+    # hay calor alrededor de los pies (640, 400) — píxeles modificados
+    assert heat[380:420, 620:660].any()

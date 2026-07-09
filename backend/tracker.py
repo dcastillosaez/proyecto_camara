@@ -27,15 +27,23 @@ class PersonTracker:
         # así que con el default (30) y un stream real a ~15 FPS el buffer
         # efectivo en segundos era el doble del esperado.
         self._byte_tracker = sv.ByteTrack(lost_track_buffer=60, frame_rate=frame_rate)
+        # Suaviza las bboxes entre frames (MEJORAS.md Bajas): menos jitter
+        # visual y menos cruces falsos — complementa minimum_crossing_threshold.
+        self._smoother = sv.DetectionsSmoother(length=5)
+        # BOTTOM_CENTER (los pies) cruza la línea de forma más fiable que el
+        # centro de la caja, que oscila con los brazos/postura (MEJORAS.md Bajas).
         self._line_zone = sv.LineZone(
             start=start,
             end=end,
-            triggering_anchors=[sv.Position.CENTER],
+            triggering_anchors=[sv.Position.BOTTOM_CENTER],
             minimum_crossing_threshold=self.CROSSING_THRESHOLD,
         )
 
         self._box_annotator = sv.BoxAnnotator(thickness=1)
         self._label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
+        # Estela del recorrido de cada track — depuración visual de la línea
+        # de conteo (MEJORAS.md Bajas).
+        self._trace_annotator = sv.TraceAnnotator(trace_length=30, thickness=1)
 
         self._in_count = 0
         self._out_count = 0
@@ -63,6 +71,8 @@ class PersonTracker:
         and must never gate the directional counters.
         """
         tracked = self._byte_tracker.update_with_detections(detections)
+        if tracked.tracker_id is not None:
+            tracked = self._smoother.update_with_detections(tracked)
         crossed_in, crossed_out = self._line_zone.trigger(tracked)
         ids = tracked.tracker_id if tracked.tracker_id is not None else []
         crossings: list[dict[str, Any]] = []
@@ -98,6 +108,9 @@ class PersonTracker:
                 )
             ]
         out = self._box_annotator.annotate(frame.copy(), tracked)
+        # TraceAnnotator exige tracker_id — con detecciones vacías es None
+        if tracked.tracker_id is not None:
+            out = self._trace_annotator.annotate(out, tracked)
         out = self._label_annotator.annotate(out, tracked, labels=labels)
         return out
 
@@ -116,6 +129,6 @@ class PersonTracker:
             self._line_zone = sv.LineZone(
                 start=start,
                 end=end,
-                triggering_anchors=[sv.Position.CENTER],
+                triggering_anchors=[sv.Position.BOTTOM_CENTER],
                 minimum_crossing_threshold=self.CROSSING_THRESHOLD,
             )

@@ -56,12 +56,12 @@ Las listas planas hacen que una persona con 20 muestras tenga 20 "boletos" en el
 
 **Arreglo:** re-verificar cada N segundos mientras el track siga vivo; mantener votación por mayoría de los últimos M intentos y corregir la cache si cambia el ganador.
 
-### 9. Detector HOG limita el sistema en escenario CCTV
+### 9. ⚠️ PARCIAL (2026-07-09) — Detector HOG limita el sistema en escenario CCTV
 HOG solo detecta caras frontales y relativamente grandes. En cámara de techo/esquina con ángulos picados falla la mayoría de las veces, y todo lo demás (re-ID, nombres, capturas) depende de ese primer paso.
 
 **Opciones (de menor a mayor esfuerzo):**
-1. `fr.face_locations(rgb, model="hog", number_of_times_to_upsample=2)` cuando el crop sea pequeño — más detecciones a cambio de CPU.
-2. Sustituir la pila `face_recognition`/dlib por **InsightFace** (`buffalo_s`: detector SCRFD + embeddings ArcFace 512-d, ONNX Runtime CPU). Salto grande de precisión en ángulos/iluminación difíciles y ~igual de rápido en CPU. Requiere migración de embeddings (128-d float64 → 512-d float32) — la tabla `face_encodings` ya lo soporta con una columna de versión de modelo.
+1. ✅ RESUELTO (2026-07-09) — `fr.face_locations(rgb, model="hog", number_of_times_to_upsample=2)` cuando el crop sea pequeño (< 240 px de lado) — más detecciones a cambio de CPU, que ahora absorbe el worker de reconocimiento.
+2. PENDIENTE (solo si tras los filtros de calidad siguen los fallos de reconocimiento) — Sustituir la pila `face_recognition`/dlib por **InsightFace** (`buffalo_s`: detector SCRFD + embeddings ArcFace 512-d, ONNX Runtime CPU). Salto grande de precisión en ángulos/iluminación difíciles y ~igual de rápido en CPU. Requiere migración de embeddings (128-d float64 → 512-d float32) — la tabla `face_encodings` ya lo soporta con una columna de versión de modelo.
 
 ---
 
@@ -96,16 +96,16 @@ Cada transeúnte registra una fila + embedding para siempre. En una cámara a la
 
 ---
 
-## Bajas (oportunidades con supervision — repo en `third_party/supervision/`)
+## Bajas (oportunidades con supervision — repo en `third_party/supervision/`) — ✅ RESUELTAS (2026-07-09)
 
-| Mejora | API | Qué aporta |
-|---|---|---|
-| Zonas activas de verdad | `sv.PolygonZone` + `PolygonZoneAnnotator` | Las zonas de interés hoy solo se dibujan (`stream.py:254-274`); con `PolygonZone.trigger(tracked)` pueden contar presencia/entradas por zona y disparar la lógica de intrusión por zona, no solo por horario |
-| Cajas estables | `sv.DetectionsSmoother` | Suaviza bboxes entre frames; menos jitter visual y menos cruces falsos (complementa el punto 2) |
-| Estelas de trayectoria | `sv.TraceAnnotator` | Dibuja el recorrido de cada track — depuración visual de la línea de conteo casi gratis |
-| Mapa de calor | `sv.HeatMapAnnotator` | Vista de actividad acumulada, encaja con el histograma del dashboard |
-| FPS del pipeline | `sv.FPSMonitor` | Sustituye el cálculo manual con `_fps_times` |
-| Anchor de cruce | `Position.BOTTOM_CENTER` | Para conteo de personas, los pies cruzan la línea de forma más fiable que el centro de la caja (el centro oscila con los brazos/postura) |
+| Mejora | API | Qué aporta | Estado |
+|---|---|---|---|
+| Zonas activas de verdad | `sv.PolygonZone` | Con `PolygonZone.trigger(tracked)` las zonas cuentan presencia y entradas, no solo se dibujan | ✅ `_update_zones_and_heat` + `GET /api/zones/stats`; el overlay muestra la ocupación en vivo |
+| Cajas estables | `sv.DetectionsSmoother` | Suaviza bboxes entre frames; menos jitter visual y menos cruces falsos (complementa el punto 2) | ✅ en `PersonTracker.update` |
+| Estelas de trayectoria | `sv.TraceAnnotator` | Dibuja el recorrido de cada track — depuración visual de la línea de conteo casi gratis | ✅ en `PersonTracker.annotate` |
+| Mapa de calor | `sv.HeatMapAnnotator` | Vista de actividad acumulada | ✅ acumulación propia por frame (mismo algoritmo, sin blur/colormap por frame) + `GET /api/heatmap` |
+| FPS del pipeline | `sv.FPSMonitor` | Sustituye el cálculo manual con `_fps_times` | ✅ en `stream.py` |
+| Anchor de cruce | `Position.BOTTOM_CENTER` | Los pies cruzan la línea de forma más fiable que el centro de la caja (el centro oscila con los brazos/postura) | ✅ LineZone y heatmap usan BOTTOM_CENTER |
 
 Fuente para consulta: `third_party/supervision/src/supervision/detection/line_zone.py`, `.../detection/tools/polygon_zone.py`, `.../detection/tools/smoother.py`, `.../tracker/byte_tracker/core.py`.
 

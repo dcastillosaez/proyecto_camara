@@ -647,6 +647,28 @@ async def api_delete_zone(zone_id: str):
     return {"zones": zones}
 
 
+@app.get("/api/zones/stats")
+async def api_zone_stats():
+    """Live per-zone presence: current occupants and cumulative entries."""
+    if rtsp_stream is None:
+        return {"zones": []}
+    return {"zones": rtsp_stream.get_zone_stats()}
+
+
+@app.get("/api/heatmap")
+async def api_heatmap():
+    """Accumulated activity heat map composed over the latest frame (JPEG)."""
+    if rtsp_stream is None:
+        raise HTTPException(status_code=503, detail="Stream not running")
+    img = await asyncio.to_thread(rtsp_stream.get_heatmap)
+    if img is None:
+        raise HTTPException(status_code=404, detail="No activity recorded yet")
+    ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        raise HTTPException(status_code=500, detail="JPEG encoding failed")
+    return Response(content=jpeg.tobytes(), media_type="image/jpeg")
+
+
 # ---------------------------------------------------------------------------
 # Phase 13: Gallery captures
 # ---------------------------------------------------------------------------

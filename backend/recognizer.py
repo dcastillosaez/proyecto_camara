@@ -53,6 +53,10 @@ class PersonRecognizer:
     BLUR_THRESHOLD = 60.0       # min Laplacian variance of the face crop
     NEW_PERSON_CONSENSUS = 3    # consistent samples required to register a new person
     CONSENSUS_TOLERANCE = 0.40  # max distance between samples in the pending buffer
+    # MEJORAS.md punto 9.1: below this crop side (px), HOG runs with an extra
+    # upsample pass — more detections on small/distant persons, at CPU cost
+    # paid only for small crops (the recognition worker absorbs it).
+    SMALL_CROP_PX = 240
 
     def __init__(self, db_path: str = "data/persons.db") -> None:
         self._available = _AVAILABLE
@@ -162,7 +166,10 @@ class PersonRecognizer:
         crop = crop_bgr
 
         rgb = np.ascontiguousarray(crop[:, :, ::-1])
-        locs = fr.face_locations(rgb, model="hog")
+        upsample = 2 if min(crop.shape[:2]) < self.SMALL_CROP_PX else 1
+        locs = fr.face_locations(
+            rgb, number_of_times_to_upsample=upsample, model="hog"
+        )
         if not locs:
             return None, None, False
 
