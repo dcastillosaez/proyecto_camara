@@ -31,6 +31,9 @@ ENV/
 # Database
 data/*.db
 
+# Referencias externas
+third_party/
+
 # OS
 .DS_Store
 Thumbs.db

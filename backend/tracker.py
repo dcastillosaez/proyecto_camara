@@ -17,12 +17,17 @@ class PersonTracker:
     capture thread while ``get_counts`` is read from an async endpoint.
     """
 
+    # Frames que el objeto debe permanecer al otro lado de la línea antes de
+    # confirmar el cruce — filtra cruces falsos por jitter de la bbox.
+    CROSSING_THRESHOLD = 2
+
     def __init__(self, start: sv.Point, end: sv.Point) -> None:
         self._byte_tracker = sv.ByteTrack(lost_track_buffer=60)
         self._line_zone = sv.LineZone(
             start=start,
             end=end,
             triggering_anchors=[sv.Position.CENTER],
+            minimum_crossing_threshold=self.CROSSING_THRESHOLD,
         )
 
         self._box_annotator = sv.BoxAnnotator(thickness=1)
@@ -45,6 +50,13 @@ class PersonTracker:
         Returns ``(tracked_detections, crossings)`` where *crossings* is a
         list of ``{"direction": "in"|"out", "timestamp": datetime}`` dicts
         for each new crossing in this frame — ready to persist to the DB.
+
+        LineZone already deduplicates per tracker_id (it keeps crossing state
+        per track and only fires on real state changes), so every True in
+        crossed_in/crossed_out is a genuine new crossing: a person entering
+        and later leaving produces one "in" AND one "out" event.
+        ``_crossed_ids`` only tracks distinct persons for the "total" count
+        and must never gate the directional counters.
         """
         tracked = self._byte_tracker.update_with_detections(detections)
         crossed_in, crossed_out = self._line_zone.trigger(tracked)
@@ -53,11 +65,11 @@ class PersonTracker:
         now = datetime.datetime.now()
         with self._lock:
             for i, tid in enumerate(ids):
-                if crossed_in[i] and tid not in self._crossed_ids:
+                if crossed_in[i]:
                     self._in_count += 1
                     self._crossed_ids.add(int(tid))
                     crossings.append({"direction": "in", "timestamp": now, "tracker_id": int(tid)})
-                elif crossed_out[i] and tid not in self._crossed_ids:
+                elif crossed_out[i]:
                     self._out_count += 1
                     self._crossed_ids.add(int(tid))
                     crossings.append({"direction": "out", "timestamp": now, "tracker_id": int(tid)})
@@ -101,4 +113,5 @@ class PersonTracker:
                 start=start,
                 end=end,
                 triggering_anchors=[sv.Position.CENTER],
+                minimum_crossing_threshold=self.CROSSING_THRESHOLD,
             )

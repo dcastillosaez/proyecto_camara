@@ -232,15 +232,20 @@ class RTSPStream:
                         tid = int(tid)
                         conf = float(tracked.confidence[i]) if tracked.confidence is not None else 0.0
 
-                        # Run recognizer if available and person not yet cached
-                        if self._recognizer is not None and tid not in self._person_cache:
+                        # Run recognizer — it gates itself internally
+                        # (RECOG_INTERVAL for new tracks, REVERIFY_INTERVAL
+                        # for identified ones) and may return a corrected
+                        # identity after a majority-vote re-verification.
+                        if self._recognizer is not None:
                             x1, y1, x2, y2 = map(int, tracked.xyxy[i])
                             pid, name, _ = self._recognizer.identify_or_register(
                                 frame, (x1, y1, x2, y2), tid, self._frame_num
                             )
                             if pid is not None:
+                                first_time = tid not in self._person_cache
                                 self._person_cache[tid] = (pid, name)
-                                self._try_save_capture(frame, (x1, y1, x2, y2), pid)
+                                if first_time:
+                                    self._try_save_capture(frame, (x1, y1, x2, y2), pid)
 
                         if tid in self._person_cache:
                             pid, name = self._person_cache[tid]

@@ -116,6 +116,58 @@ def TEST_082_total_counts_unique_ids_not_events(tracker):
     assert tracker.get_counts()["total"] == 1
 
 
+# ─── Ida y vuelta del mismo ID: ambas direcciones cuentan ────────────────────
+# Regresión del punto 1 de MEJORAS.md: el mismo tracker_id que entra (in) y
+# después sale (out) debe registrar AMBOS cruces. LineZone ya deduplica por
+# track internamente; _crossed_ids no debe bloquear los contadores
+# direccionales, solo alimentar el total de personas distintas.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_091_same_id_in_then_out_counts_both(tracker):
+    """Same tracker_id crossing in then out increments both counters."""
+    det = _make_tracked(1, [7])
+    for crossed_in, crossed_out in [(True, False), (False, True)]:
+        with (
+            patch.object(tracker._byte_tracker, "update_with_detections", return_value=det),
+            patch.object(tracker._line_zone, "trigger",
+                         return_value=(np.array([crossed_in]), np.array([crossed_out]))),
+        ):
+            _, crossings = tracker.update(sv.Detections.empty())
+        assert len(crossings) == 1
+
+    counts = tracker.get_counts()
+    assert counts["in"] == 1
+    assert counts["out"] == 1
+    assert counts["total"] == 1  # una sola persona distinta
+
+
+# ─── Jitter sobre la línea no genera cruces ──────────────────────────────────
+# Regresión del punto 2 de MEJORAS.md: minimum_crossing_threshold=2 exige que
+# el objeto permanezca 2 frames al otro lado antes de confirmar el cruce.
+# Una bbox cuyo centro oscila alrededor de la línea (355↔365 con línea en 360)
+# nunca cumple esa condición y no debe producir ningún evento.
+# Se usa el LineZone REAL; solo se mockea ByteTrack para fijar el tracker_id.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_092_line_jitter_does_not_count(tracker):
+    """Bbox jitter around the line never confirms a crossing."""
+    def det_at(y: int) -> sv.Detections:
+        det = sv.Detections(
+            xyxy=np.array([[600, y - 100, 700, y + 100]], dtype=np.float32),
+            confidence=np.array([0.9], dtype=np.float32),
+            class_id=np.array([0]),
+        )
+        det.tracker_id = np.array([3])
+        return det
+
+    events = []
+    for y in [340, 355, 365, 355, 365, 355, 365, 355]:
+        with patch.object(tracker._byte_tracker, "update_with_detections", return_value=det_at(y)):
+            _, crossings = tracker.update(sv.Detections.empty())
+        events += crossings
+
+    assert events == []
+    assert tracker.get_counts() == {"in": 0, "out": 0, "total": 0}
+
+
 # ---------------------------------------------------------------------------
 # update() — return value
 # ---------------------------------------------------------------------------

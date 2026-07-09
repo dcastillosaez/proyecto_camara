@@ -5,8 +5,10 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+from collections import Counter, deque
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -38,8 +40,19 @@ class PersonRecognizer:
     """
 
     TOLERANCE = 0.55        # euclidean distance threshold (lower = stricter)
+    MATCH_MARGIN = 0.10     # min distance gap over the runner-up person (ratio test)
     RECOG_INTERVAL = 30     # frames between attempts for unidentified tracker IDs
+    REVERIFY_INTERVAL = 300  # frames between identity re-checks for identified tracks
+    VOTE_WINDOW = 5         # majority vote over the last N decisive matches per track
     MAX_EMBEDDINGS_PER_PERSON = 20  # cap to keep matching fast
+    VISIT_GAP_MINUTES = 5   # min gap since last_seen for a match to count as a new visit
+
+    # Quality gates for automatic registration (identify_or_register only —
+    # manual enrollment via enroll_named_face bypasses them on purpose):
+    MIN_FACE_SIZE = 60          # px — embeddings from smaller faces are unreliable
+    BLUR_THRESHOLD = 60.0       # min Laplacian variance of the face crop
+    NEW_PERSON_CONSENSUS = 3    # consistent samples required to register a new person
+    CONSENSUS_TOLERANCE = 0.40  # max distance between samples in the pending buffer
 
     def __init__(self, db_path: str = "data/persons.db") -> None:
         self._available = _AVAILABLE
@@ -48,6 +61,10 @@ class PersonRecognizer:
         self._cache: dict[int, tuple[int, str | None]] = {}
         # tracker_id → last frame number where recognition was attempted
         self._last_attempt: dict[int, int] = {}
+        # tracker_id → embeddings pending consensus before registering a new person
+        self._pending: dict[int, list[np.ndarray]] = {}
+        # tracker_id → last VOTE_WINDOW matched person_ids (identity majority vote)
+        self._votes: dict[int, deque[int]] = {}
 
         if not self._available:
             return
@@ -83,18 +100,31 @@ class PersonRecognizer:
         Attempt face recognition for the person in *bbox*.
 
         Returns (person_id, name, is_new):
-          - person_id=None  → no face detected, try again later
-          - is_new=True     → first-ever sighting, just registered
+          - person_id=None  → no usable face yet (none detected, failed a
+                              quality gate, or still gathering consensus
+                              samples) — try again later
+          - is_new=True     → consensus reached, person just registered
           - is_new=False    → recognised an existing person
+
+        Quality gates (MEJORAS.md punto 4): faces smaller than MIN_FACE_SIZE
+        or blurrier than BLUR_THRESHOLD are discarded, and a NEW person is
+        only registered after NEW_PERSON_CONSENSUS mutually-consistent
+        samples from distinct frames of the same track. Matching against
+        already-known persons needs a single good sample, as before.
+
+        Identified tracks are re-verified every REVERIFY_INTERVAL frames
+        (MEJORAS.md punto 8): each decisive match casts a vote, and the
+        majority of the last VOTE_WINDOW votes wins — a wrong first match
+        no longer sticks to the track forever. Callers get the corrected
+        identity through the normal return value.
         """
         if not self._available:
             return None, None, False
 
-        if tracker_id in self._cache:
-            return None, None, False
-
-        last = self._last_attempt.get(tracker_id, -(self.RECOG_INTERVAL + 1))
-        if frame_number - last < self.RECOG_INTERVAL:
+        cached = self._cache.get(tracker_id)
+        interval = self.REVERIFY_INTERVAL if cached is not None else self.RECOG_INTERVAL
+        last = self._last_attempt.get(tracker_id, -(interval + 1))
+        if frame_number - last < interval:
             return None, None, False
         self._last_attempt[tracker_id] = frame_number
 
@@ -108,23 +138,77 @@ class PersonRecognizer:
         if not locs:
             return None, None, False
 
-        encodings = fr.face_encodings(rgb, known_face_locations=locs)
+        # Gate 1 — minimum face size
+        locs = [
+            loc for loc in locs
+            if (loc[2] - loc[0]) >= self.MIN_FACE_SIZE
+            and (loc[1] - loc[3]) >= self.MIN_FACE_SIZE
+        ]
+        if not locs:
+            return None, None, False
+        top, right, bottom, left = self._select_face(locs, crop.shape[0])
+
+        # Gate 2 — blur filter on the face region
+        gray = cv2.cvtColor(rgb[top:bottom, left:right], cv2.COLOR_RGB2GRAY)
+        if cv2.Laplacian(gray, cv2.CV_64F).var() < self.BLUR_THRESHOLD:
+            return None, None, False
+
+        encodings = fr.face_encodings(
+            rgb, known_face_locations=[(top, right, bottom, left)]
+        )
         if not encodings:
             return None, None, False
         enc = encodings[0]
 
         with self._lock:
-            if self._encodings:
-                dists = fr.face_distance(self._encodings, enc)
-                best = int(np.argmin(dists))
-                if dists[best] <= self.TOLERANCE:
-                    pid = self._person_ids[best]
-                    name = self._person_names[best]
-                    self._touch(pid)
-                    self._cache[tracker_id] = (pid, name)
-                    return pid, name, False
+            pid, name, ambiguous = self._best_match(enc)
+            if pid is not None:
+                # Majority vote over the last VOTE_WINDOW decisive matches:
+                # the winner — not necessarily this sample — is the identity.
+                votes = self._votes.setdefault(
+                    tracker_id, deque(maxlen=self.VOTE_WINDOW)
+                )
+                votes.append(pid)
+                winner = Counter(votes).most_common(1)[0][0]
+                winner_name = name if winner == pid else self._name_of(winner)
+                if cached is not None and cached[0] != winner:
+                    logger.info(
+                        "PersonRecognizer: re-verify corrected tracker %d: "
+                        "person %d → %d", tracker_id, cached[0], winner,
+                    )
+                self._touch(winner)
+                self._cache[tracker_id] = (winner, winner_name)
+                self._pending.pop(tracker_id, None)
+                return winner, winner_name, False
+            if ambiguous or cached is not None:
+                # Ambiguous: deciding now risks a wrong identity, and
+                # buffering risks registering a duplicate of a known person.
+                # Cached: the track already has an identity — an unknown face
+                # during re-verify must never seed a NEW person.
+                # Either way, skip the sample and wait for a better frame.
+                return None, None, False
 
-            pid = self._register(enc)
+            # Gate 3 — consensus buffer before registering a new person.
+            # An inconsistent sample resets the buffer: it was either an
+            # outlier or the earlier samples were junk.
+            buf = self._pending.setdefault(tracker_id, [])
+            if buf and float(np.max(fr.face_distance(buf, enc))) > self.CONSENSUS_TOLERANCE:
+                buf.clear()
+            buf.append(enc)
+            if len(buf) < self.NEW_PERSON_CONSENSUS:
+                return None, None, False
+
+            pid = self._register(buf[0])
+            for extra in buf[1:]:
+                self._conn.execute(
+                    "INSERT INTO face_encodings (person_id, encoding) VALUES (?, ?)",
+                    (pid, extra.tobytes()),
+                )
+                self._person_ids.append(pid)
+                self._person_names.append(None)
+                self._encodings.append(extra)
+            self._conn.commit()
+            del self._pending[tracker_id]
             self._cache[tracker_id] = (pid, None)
             return pid, None, True
 
@@ -134,6 +218,10 @@ class PersonRecognizer:
         If the face matches an existing person, adds the embedding as an
         additional sample (improving future recognition) and updates the name.
         If no match, registers as a new person.
+
+        Uses plain nearest-neighbour matching on purpose (no ratio test):
+        enrollment is user-driven, and rejecting an ambiguous match here
+        would create a duplicate of the very person being named.
 
         Returns the person_id, or None if no face detected.
         """
@@ -213,6 +301,70 @@ class PersonRecognizer:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _select_face(
+        locs: list[tuple[int, int, int, int]], crop_height: int
+    ) -> tuple[int, int, int, int]:
+        """
+        Pick the face belonging to the tracked person (MEJORAS.md punto 7).
+
+        A person bbox has the head in its upper half; faces of OTHER people
+        overlapping the crop (someone walking behind) sit lower. Prefer the
+        largest face whose center lies in the upper half of the crop; only
+        if none qualifies, fall back to the largest face overall.
+        """
+        def area(loc: tuple[int, int, int, int]) -> int:
+            top, right, bottom, left = loc
+            return (bottom - top) * (right - left)
+
+        upper = [
+            loc for loc in locs if (loc[0] + loc[2]) / 2 < crop_height / 2
+        ]
+        return max(upper or locs, key=area)
+
+    def _name_of(self, person_id: int) -> str | None:
+        """Name of *person_id*, or None. Must be called with ``_lock`` held."""
+        for pid, name in zip(self._person_ids, self._person_names):
+            if pid == person_id:
+                return name
+        return None
+
+    def _best_match(self, enc: np.ndarray) -> tuple[int | None, str | None, bool]:
+        """
+        Match *enc* against known persons. Must be called with ``_lock`` held.
+
+        Returns ``(person_id, name, ambiguous)``:
+          - person_id set   → decisive match
+          - ambiguous=True  → a candidate exists within TOLERANCE but the
+                              runner-up person is closer than MATCH_MARGIN —
+                              too risky to decide either way
+          - both falsy      → genuinely unknown face
+
+        Distances are grouped per person (MEJORAS.md punto 6): a person's
+        score is the minimum distance among their embeddings, so a person
+        with many samples gets no extra nearest-neighbour "tickets" and the
+        ratio test (punto 5) compares *persons*, never two samples of the
+        same person.
+        """
+        if not self._encodings:
+            return None, None, False
+        dists = fr.face_distance(self._encodings, enc)
+        best_per_person: dict[int, float] = {}
+        for pid, d in zip(self._person_ids, dists):
+            d = float(d)
+            if d < best_per_person.get(pid, float("inf")):
+                best_per_person[pid] = d
+        ranked = sorted(best_per_person.items(), key=lambda kv: kv[1])
+        best_pid, best_d = ranked[0]
+        if best_d > self.TOLERANCE:
+            return None, None, False
+        if len(ranked) > 1 and ranked[1][1] - best_d < self.MATCH_MARGIN:
+            return None, None, True
+        name = next(
+            n for p, n in zip(self._person_ids, self._person_names) if p == best_pid
+        )
+        return best_pid, name, False
 
     def _init_db(self) -> None:
         self._conn.executescript("""
@@ -297,9 +449,14 @@ class PersonRecognizer:
         return pid
 
     def _touch(self, person_id: int) -> None:
+        # visit_count only increments when the previous sighting is older than
+        # VISIT_GAP_MINUTES — re-matches within the same stay (e.g. ByteTrack
+        # losing and re-acquiring the track) do not inflate the visit count.
         self._conn.execute(
-            "UPDATE persons SET last_seen=datetime('now'), visit_count=visit_count+1 "
+            "UPDATE persons SET "
+            "visit_count = visit_count + (last_seen < datetime('now', ?)), "
+            "last_seen = datetime('now') "
             "WHERE id=?",
-            (person_id,),
+            (f"-{self.VISIT_GAP_MINUTES} minutes", person_id),
         )
         self._conn.commit()

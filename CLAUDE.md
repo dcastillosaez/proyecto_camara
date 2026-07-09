@@ -212,6 +212,9 @@ Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta
 - Cuenta cruces en ambas direcciones (in/out)
 - Soporta conteo por clase desde v0.27
 - Evita el error clásico de contar la misma persona múltiples veces
+
+### Repo fuente de supervision
+Clonado (shallow, no versionado — ver `.gitignore`) en `third_party/supervision/` para consultar código fuente y ejemplos: https://github.com/roboflow/supervision
 ### Por qué pydantic-settings y no python-dotenv
 ### Patrón correcto para MJPEG en FastAPI
 ### Notas sobre OpenCV con cámaras Tapo
