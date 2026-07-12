@@ -7,10 +7,11 @@ Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta
 - **Stream RTSP en vivo** — Conexión directa a Tapo C220 vía RTSP, retransmisión MJPEG al navegador
 - **Detección de personas** — YOLO26n (38.9 ms en CPU, 31% más rápido que YOLOv8n)
 - **Conteo por línea virtual** — ByteTrack + LineZone, sin dobles conteos
-- **Reconocimiento facial** — Embeddings 128-dim (face-recognition/dlib), enrolamiento vía API
+- **Reconocimiento facial** — Embeddings 128-dim (face-recognition/dlib) en hilo worker dedicado: no bloquea la captura RTSP. Filtros de calidad (tamaño mínimo, desenfoque, consenso de 3 muestras), ratio test por persona y re-verificación periódica con voto por mayoría
 - **Grabación automática** — Clips .mp4 al detectar actividad, fin 5 s tras última detección
 - **Subida a Google Drive** — Upload automático con reintentos exponenciales
-- **Zonas de interés** — Polígonos configurables con overlay en el stream
+- **Zonas de interés** — Polígonos configurables con overlay en el stream; conteo de ocupación en vivo y entradas acumuladas (`PolygonZone`)
+- **Mapa de calor** — Acumulación de actividad por los pies de cada track, exportable como imagen
 - **Detección de intrusión** — Eventos marcados como intrusión fuera del horario definido
 - **Galería por persona** — Capturas automáticas, navegables por individuo
 - **Alertas y notificaciones** — Webhook HTTP y Telegram al detectar desconocido/intrusión
@@ -118,6 +119,8 @@ El navegador mostrará aviso de certificado autofirmado — click en «Avanzado�
 | GET | `/api/zones` | Zonas de interés configuradas |
 | POST | `/api/zones` | Crear / actualizar zona |
 | DELETE | `/api/zones/{id}` | Eliminar zona |
+| GET | `/api/zones/stats` | Ocupación actual y entradas acumuladas por zona |
+| GET | `/api/heatmap` | Mapa de calor de actividad (imagen) |
 | GET | `/api/alerts/config` | Configuración de alertas activa |
 | POST | `/api/alerts/test` | Enviar alerta de prueba a todos los canales |
 | GET | `/persons` | Personas enroladas con historial |
@@ -137,6 +140,9 @@ CAMERA_DRIVER=tapo
 # Detección
 YOLO_MODEL_PATH=yolo26n.pt
 YOLO_CONFIDENCE=0.45
+YOLO_IMGSZ=640
+DETECT_EVERY=2
+TRACKER_FRAME_RATE=15
 
 # Base de datos
 DB_PATH=data/events.db
@@ -171,6 +177,7 @@ SCHEDULE_END=22:00
 # Retención de datos
 EVENTS_RETENTION_DAYS=30
 RECORDINGS_RETENTION_DAYS=30
+PERSONS_RETENTION_DAYS=30
 
 # Seguridad
 DASHBOARD_USER=
@@ -194,10 +201,11 @@ pytest tests/test_phase9.py -v
 ```
 Cámara RTSP
   └─► stream.py (hilo de captura)
-        ├─► /video_feed (MJPEG + overlays)
-        ├─► detector.py (YOLO26n)
-        │     └─► tracker.py (ByteTrack + LineZone)
-        │           ├─► recognizer.py (embeddings 128-dim)
+        ├─► /video_feed (MJPEG + overlays: trazas, zonas, ocupación)
+        ├─► detector.py (YOLO26n, 1 de cada N frames + DetectionsSmoother)
+        │     └─► tracker.py (ByteTrack + LineZone + PolygonZone + heatmap)
+        │           ├─► cola crops ─► _recognition_worker (hilo dedicado)
+        │           │                    └─► recognizer.py (embeddings 128-dim)
         │           ├─► database.py — events (SQLite async)
         │           │     └─► WebSocket → dashboard
         │           └─► notifier.py — alertas (webhook + Telegram)
@@ -209,9 +217,10 @@ Cámara RTSP
 FastAPI
   ├─► /api/health      — CPU / RAM / FPS / uptime
   ├─► /api/events      — filtros + CSV export
-  ├─► /api/zones       — CRUD zonas de interés
+  ├─► /api/zones       — CRUD zonas + /api/zones/stats (ocupación)
+  ├─► /api/heatmap     — mapa de calor de actividad
   ├─► /api/alerts/*    — configuración y test de alertas
-  └─► _purge_loop      — rotación diaria de datos (>30 días)
+  └─► _purge_loop      — rotación diaria de datos (eventos, clips y personas anónimas >30 días)
 ```
 
 ## Decisiones de diseño
@@ -219,6 +228,8 @@ FastAPI
 - **YOLO26n en lugar de YOLOv8n**: 31% más rápido en CPU, misma API `ultralytics`
 - **MJPEG en lugar de WebRTC**: Sin STUN/TURN, latencia aceptable en LAN
 - **face-recognition/dlib HOG**: Más ligero que CNNs para LAN sin GPU
+- **Worker de reconocimiento dedicado**: dlib (100–500 ms) fuera del hilo de captura — sin frames perdidos ni tirones MJPEG durante la identificación
+- **Detección 1 de cada N frames**: ByteTrack interpola en los frames saltados; en CPU duplica el FPS efectivo sin perder tracks
 - **mp4v fourcc en VideoWriter**: Más fiable que H.264/avc1 en Windows sin codecs externos
 - **asyncio.run_coroutine_threadsafe**: Bridge correcto entre hilos daemon y event loop async de FastAPI
 - **Línea virtual de conteo**: Evita contar personas múltiples veces mientras permanecen en escena

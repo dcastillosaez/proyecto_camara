@@ -3,6 +3,8 @@
 > Auditoría de `backend/detector.py`, `backend/tracker.py`, `backend/recognizer.py` y su integración en `backend/stream.py`.
 > Fecha: 2026-07-09 · supervision instalado: 0.27.0 · repo fuente clonado en `third_party/supervision/` (0.30.0.dev)
 
+> **Estado (2026-07-09):** 15/15 hallazgos Críticos/Altos/Medios resueltos + las 6 mejoras Bajas de supervision. Único pendiente: **9.2** (migración a InsightFace), opcional y solo si tras los filtros de calidad persisten fallos de reconocimiento. Suite de tests en verde: 112/112.
+
 ## Resumen
 
 El pipeline funciona, pero tiene un bug real de conteo, varias fugas de memoria lentas y un cuello de botella de latencia: el reconocimiento facial (dlib) corre dentro del hilo de captura RTSP y congela el vídeo cada vez que se intenta identificar a alguien. La precisión del reconocimiento también sufre porque se registra una persona nueva con una sola muestra de cara, sin ningún filtro de calidad.
