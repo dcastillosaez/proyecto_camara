@@ -264,7 +264,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 
 ### Bloque A — Robustez
 
-- [ ] **Phase 17: Frame Broker y Capture Worker** — Fan-out latest-frame; la captura nunca espera a la IA
+- [x] **Phase 17: Frame Broker y Capture Worker** — Fan-out latest-frame; la captura nunca espera a la IA (completed 2026-08-07)
 - [ ] **Phase 18: Workers desacoplados e inferencia adaptativa** — Detección, streaming y grabación como workers con FPS objetivo propios
 - [ ] **Phase 19: Event Engine, Rule Engine y esquema de datos v2** — Eventos tipados + reglas YAML + separación detections/events
 - [ ] **Phase 20: Grabación con pre/post-buffer y metadatos** — Ningún clip empieza después del evento
@@ -309,11 +309,11 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
   4. El stream MJPEG mantiene la fluidez de v1.2 (verificación visual A/B)
   5. `GET /api/v2/cameras/{id}/health` devuelve fps, connected, reconnects y last_frame_age_s
 **Spec**: SPEC_v2.md §5.1, §5.2
-**Plans:** 1/2 plans complete — `.planning/phases/17-frame-broker-y-capture-worker/`
+**Plans:** 2/2 plans complete — `.planning/phases/17-frame-broker-y-capture-worker/`
 
 Plans:
 - [x] 17-01-PLAN.md — FrameBroker: fan-out latest-frame con slot por suscriptor
-- [ ] 17-02-PLAN.md — CaptureWorker puro, flag PIPELINE_V2, endpoints de salud (Tasks 1-4 ✓; Task 5 checkpoint A/B con camara real pendiente)
+- [x] 17-02-PLAN.md — CaptureWorker puro, flag PIPELINE_V2, endpoints de salud (comparativa A/B + soak de 30 min contra camara real: ver 17-02-SUMMARY.md)
 
 ### Phase 18: Workers desacoplados e inferencia adaptativa
 **Goal**: Detección, tracking, streaming y grabación corren como workers independientes con FPS objetivo propios

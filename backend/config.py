@@ -43,8 +43,10 @@ class Settings(BaseSettings):
         return v
     # --- Pipeline v2 (Fase 17) ---
     # Activa el FrameBroker + CaptureWorker desacoplados (SPEC_v2.md ADR-01).
-    # Con False (default), RTSPStream captura directamente como en v1.2.
-    pipeline_v2: bool = False
+    # Validado contra la camara real: 30 min sin crecimiento de latencia,
+    # 0 reconnects, FPS estable (17-02-SUMMARY.md). Default True desde
+    # 2026-08-07. Con False, RTSPStream captura directamente como en v1.2.
+    pipeline_v2: bool = True
 
     yolo_confidence: float = 0.45
     # COCO class IDs to detect. Default [0] = person.

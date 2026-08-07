@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Fase 17: 17-01 completo, 17-02 Tasks 1-4 completas — Task 5 (checkpoint A/B con camara real) bloqueada, camara no accesible desde este entorno"
+stopped_at: "Fase 17 COMPLETA (comparativa A/B + soak 30 min contra camara real, pipeline_v2=True por defecto). Siguiente: Fase 18."
 last_updated: "2026-08-07"
 last_activity: 2026-08-07
 progress:
   total_phases: 22
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
-  percent: 2
+  completed_plans: 2
+  percent: 5
 previous_milestone:
   name: v1.2
   status: complete
@@ -31,32 +31,31 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 17 (Frame Broker y Capture Worker) — EN CURSO
-Status: 17-01 completo (FrameBroker, 10/10 tests). 17-02 Tasks 1-4 completas
-  (CaptureWorker, CameraManager, flag PIPELINE_V2, RTSPStream como
-  despachador del broker, endpoints /api/v2/cameras). Task 5 (checkpoint
-  A/B de 30 min con la camara real) BLOQUEADA: la camara Tapo
-  (192.168.1.132:554) no respondio desde este entorno al intentarlo.
+Phase: 17 (Frame Broker y Capture Worker) — COMPLETA
+Status: 17-01 y 17-02 completos. Comparativa A/B + soak de 30 min contra
+  la camara real (192.168.1.132) sin crecimiento de latencia, 0 reconnects,
+  FPS estable ~15. pipeline_v2=True por defecto desde 2026-08-07. Grabacion
+  de clips verificada end-to-end en pipeline v2 (upload a Drive pendiente
+  de renovar token OAuth — no relacionado con esta fase).
 Last activity: 2026-08-07
 
-Progress v2.0: [░░░░░░░░░░] ~2% (17-01 de 2 planes de la Fase 17 completo)
+Progress v2.0: [░░░░░░░░░░] ~5% (Fase 17/22 completa)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
 
-## Accion requerida del usuario
+## Siguiente paso
 
-Fase 17 no puede darse por completa hasta ejecutar la Task 5 de
-17-02-PLAN.md con la camara real accesible:
-
-```bash
-PIPELINE_V2=false .venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
-# observar 5 min, luego:
-PIPELINE_V2=true .venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
-# observar 5 min + dejar corriendo 30 min sin crecimiento de latencia
+```
+/gsd:execute-phase 18
 ```
 
-Ver `.planning/phases/17-frame-broker-y-capture-worker/17-02-SUMMARY.md`
-§"Task 5 — PENDIENTE" para el detalle completo de que verificar y como
-invertir el flag `pipeline_v2` a `True` por defecto si todo sale bien.
+Fase 18 (Workers desacoplados e inferencia adaptativa) depende de 17-02,
+ya cerrada. No requiere camara real para 18-01 (AdaptiveRate se testea con
+reloj simulado); 18-02 Task 6 si es un checkpoint con hardware real.
+
+## Pendiente sin relacion con v2.0
+
+- Token OAuth de Google Drive caducado (`data/token.json`, `invalid_grant`).
+  Requiere rehacer el flujo de autorizacion manualmente.
 
 ## Documentos del milestone v2.0
 

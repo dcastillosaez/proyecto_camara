@@ -1,6 +1,6 @@
 # 17-02 Summary — CaptureWorker y RTSPStream como consumidor del broker
 
-**Plan:** 17-02-PLAN.md · **Wave:** 2 · **Estado:** Tasks 1-4 completas, Task 5 (checkpoint) pendiente
+**Plan:** 17-02-PLAN.md · **Wave:** 2 · **Estado:** COMPLETO (Tasks 1-5)
 
 ## Qué se construyó
 
@@ -21,36 +21,35 @@ Con `pipeline_v2=True`, `lifespan` crea `CameraManager`, añade `"cam1"` con el 
 - Test de arquitectura: `capture.py` no contiene `yolo|detector|recogn|zone|heatmap|tracker`.
 - Verificación manual (cámara mockeada, sin hardware real): con `pipeline_v2=True`, el `lifespan` arranca `CameraManager`, el `CaptureWorker` publica en el broker, y `RTSPStream._consume_loop` → `_process_frame` recibe los frames, ejecuta detección/tracking y actualiza `get_frame()` con normalidad. Apagado limpio confirmado.
 
-## Task 5 — PENDIENTE (requiere hardware real, no automatizable)
+## Task 5 — COMPLETA (2026-08-07, cámara real 192.168.1.132)
 
-No se pudo completar: la cámara Tapo (`192.168.1.132:554`) no responde desde este entorno (conexión rechazada en el puerto RTSP) al momento de ejecutar este plan. Esta tarea es un checkpoint (`autonomous: false`) que requiere:
+La cámara Tapo, inaccesible al principio de la sesión, se encendió a mitad de sesión. Tras habilitar RTSP de terceros en la app Tapo (Ajustes → Avanzado → Cuenta de cámara), la comparativa A/B se ejecutó contra hardware real:
 
-1. Arrancar con `PIPELINE_V2=false`, observar el dashboard 5 min (FPS, fluidez, latencia, detecciones, conteo, reconocimiento).
-2. Arrancar con `PIPELINE_V2=true`, repetir la observación.
-3. Comparar — el vídeo con el flag activo debe ser indistinguible o mejor. `broker_stats.dropped` creciente en el suscriptor `"processing"` es **esperado y correcto**.
-4. Dejar corriendo 30 min y comprobar que la latencia no crece progresivamente.
-5. Si todo es correcto: cambiar `pipeline_v2` a `True` por defecto en `backend/config.py` y `.env.example`.
-6. Si hay regresión: NO invertir el flag, documentar el síntoma.
+**Control (v1, `PIPELINE_V2=false`, default de entonces):** dashboard funcional — vídeo, contadores, reconocimiento facial ("David" identificado), eventos IN/OUT en tiempo real. `GET /api/v2/cameras/cam1/health` → 503 (correcto, pipeline v2 inactivo). `GET /api/health` → `fps: 7.3`.
 
-**El flag sigue en `False` por defecto** — el sistema en producción se comporta exactamente como v1.2 hasta que esta verificación se complete y se decida activar el default.
+**Pipeline v2 (`PIPELINE_V2=true`):** mismo comportamiento visible en el dashboard (vídeo, reconocimiento, eventos — indistinguible del control). `GET /api/v2/cameras/cam1/health` confirmó el pipeline activo: `connected: true`, captura a ~15 FPS (nativo de `stream2`), `broker_stats.processing.dropped` creciendo junto con `delivered` — la prueba directa de que la captura nunca espera al procesamiento.
 
-## Cómo retomar
+**Grabación de clips en pipeline v2:** verificada end-to-end con una persona real delante de la cámara — inicio de grabación al detectar, `.mp4` escrito en `data/clips/`, cierre tras 5 s de tail, inserción en BD (`recordings.id=3`). El upload a Google Drive falló por `invalid_grant` (token OAuth caducado en `data/token.json`) — no relacionado con esta fase, `ClipRecorder` no se tocó en el refactor.
 
-Cuando la cámara esté accesible:
-```bash
-# Modo v1 (control)
-PIPELINE_V2=false .venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
-# Modo v2 (a comparar)
-PIPELINE_V2=true .venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
-# Salud del pipeline v2 durante la prueba:
-curl http://localhost:8000/api/v2/cameras/cam1/health
-```
+**Soak test de 30 minutos** (script propio sondeando `/api/v2/cameras/cam1/health` cada 15 s, 106 muestras, `soak_results.csv`):
+
+| Métrica | Resultado |
+|---|---|
+| FPS captura | 14.54–15.64, media 15.04 — estable todo el test |
+| `last_frame_age_s` | media primeros 10 min: 0.038 s · media últimos 10 min: 0.036 s — **sin crecimiento de latencia** |
+| `reconnects` | 0 durante los 30 min |
+| `connected` | `True` ininterrumpido |
+| `dropped` / `delivered` | 845→7408 / 429→20706 — crecimiento sano de ambos, `dropped` se estabiliza (no explota) |
+
+Ningún síntoma de acumulación de buffer. Los cinco criterios de éxito de la fase se cumplen.
+
+**Flag invertido:** `pipeline_v2` pasa a `True` por defecto en `backend/config.py` y `.env.example`. La línea temporal `PIPELINE_V2=true` añadida a `.env` durante la verificación se retira (ya redundante con el nuevo default).
 
 ## Desviaciones del plan
 
 - `time.perf_counter()` en vez de derivar `fps`/`last_frame_age_s` de `captured_at` (ver Task 1-2 arriba). No afecta al contrato del broker.
-- Task 5 no ejecutada por falta de acceso a la cámara real en este entorno — no es una desviación de diseño, es un bloqueo externo documentado.
+- La comparativa A/B se apoyó en métricas objetivas del health endpoint (FPS, `last_frame_age_s`, `reconnects`, `dropped`/`delivered`) más que en "fluidez subjetiva" — más rigurosa que la observación visual que pedía el plan original, y reproducible.
 
 ## Habilita
 
-Con Task 5 pendiente, la Fase 18 (workers desacoplados) puede empezar a planificarse pero no debería darse por buena la Fase 17 hasta cerrar la comparativa A/B con hardware real.
+Fase 17 completa. Fase 18 (workers desacoplados e inferencia adaptativa) puede ejecutarse — depende de 17-02, ya cerrada.
