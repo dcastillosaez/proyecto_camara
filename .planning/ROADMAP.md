@@ -242,3 +242,417 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 *Roadmap created: 2026-04-16*
 *Last updated: 2026-05-01*
 *Status snapshot: 16/16 phases complete — proyecto finalizado.*
+
+---
+
+# Milestone v2.0 — Plataforma de Video Analytics
+
+**Planificado:** 2026-08-07
+**Origen:** `propuesta_mejora/mejoras_inmediatas.md` (25 puntos) + `propuesta_mejora/vulnerabilidades.md`
+**Especificación técnica de referencia:** `propuesta_mejora/SPEC_v2.md`
+**Fases:** 17 a 38 (22 fases, 4 bloques)
+
+## Overview v2.0
+
+La v1.2 resolvió el pipeline funcional completo (RTSP → YOLO → ByteTrack → LineZone → reconocimiento → eventos → SQLite → grabación → Drive → dashboard). La v2.0 ataca el siguiente cuello de botella: **acoplamiento**. Todo el procesamiento vive hoy dentro de `RTSPStream` (534 LOC, 8 responsabilidades) y toda la interfaz dentro de `index.html` (1843 LOC).
+
+El orden de construcción va de dentro hacia fuera: primero se desacopla el pipeline y se introduce el motor de eventos (Fase A), sobre esa base se mejora la percepción con ArcFace, ReID y análisis de comportamiento (Fase B), después se construye la interfaz de operaciones que expone todo eso (Fase C), y por último se prepara la escalabilidad multi-cámara (Fase D).
+
+**Invariante del milestone:** cada fase deja el sistema operativo. Los cambios estructurales entran tras un flag con default = comportamiento v1, que se invierte al cerrar la fase.
+
+## Phases v2.0
+
+### Bloque A — Robustez
+
+- [ ] **Phase 17: Frame Broker y Capture Worker** — Fan-out latest-frame; la captura nunca espera a la IA
+- [ ] **Phase 18: Workers desacoplados e inferencia adaptativa** — Detección, streaming y grabación como workers con FPS objetivo propios
+- [ ] **Phase 19: Event Engine, Rule Engine y esquema de datos v2** — Eventos tipados + reglas YAML + separación detections/events
+- [ ] **Phase 20: Grabación con pre/post-buffer y metadatos** — Ningún clip empieza después del evento
+- [ ] **Phase 21: Observabilidad y latencia end-to-end** — Métricas Prometheus, frames descartados, latencia real
+- [ ] **Phase 22: Deuda de seguridad y gestión de memoria** — Eliminar pickle, validar model path, operación 24/7 estable
+
+### Bloque B — Inteligencia artificial
+
+- [ ] **Phase 23: Migración a InsightFace/ArcFace con quality gating** — Embeddings 512D + filtro de calidad de rostro
+- [ ] **Phase 24: Identidad temporal — votación y máquina de estados** — UNKNOWN → CANDIDATE → CONFIRMED → TEMPORARILY_LOST
+- [ ] **Phase 25: Re-identificación de personas (ReID)** — Continuidad de identidad sin cara visible
+- [ ] **Phase 26: Análisis de comportamiento** — Merodeo, carrera, inmovilidad, aglomeración, zonas
+- [ ] **Phase 27: Multi-clase y contexto de escena** — Objetos abandonados/retirados + estado agregado de la escena
+
+### Bloque C — Producto
+
+- [ ] **Phase 28: Refactor del frontend a módulos ES** — index.html deja de contener lógica
+- [ ] **Phase 29: Vista de operaciones** — Centro de operaciones que responde en 3 segundos
+- [ ] **Phase 30: Event Timeline y centro de alertas** — Línea temporal accionable con miniaturas
+- [ ] **Phase 31: Vista de analítica** — Ocupación, heatmap, ranking de personas, tendencias
+- [ ] **Phase 32: Vista de cámara y configuración visual** — Operar y configurar sin tocar .env
+- [ ] **Phase 33: Editores visuales de zonas, líneas y reglas** — Dibujar sobre el vídeo, componer reglas por formulario
+- [ ] **Phase 34: Tests E2E e integración del pipeline** — Playwright + pipeline completo con fuente sintética
+
+### Bloque D — Escalabilidad
+
+- [ ] **Phase 35: CameraManager y camera_id transversal** — El código deja de asumir una única cámara
+- [ ] **Phase 36: Multi-cámara en runtime y UI** — Añadir cámaras sin reiniciar; vista mosaico
+- [ ] **Phase 37: Backends opcionales — PostgreSQL y Redis** — Repositorios intercambiables, SQLite sigue siendo default
+- [ ] **Phase 38: Worker de inferencia en GPU (opcional)** — Aprovechar GPU si existe, fallback limpio a CPU
+
+## Phase Details v2.0
+
+### Phase 17: Frame Broker y Capture Worker
+**Goal**: La captura RTSP produce frames a ritmo nativo y nunca espera a ningún consumidor
+**Depends on**: Nothing (primera fase v2.0)
+**Requirements**: PIPE-01, PIPE-02, PIPE-03
+**Success Criteria**:
+  1. `FrameBroker.publish()` nunca bloquea, demostrado con un suscriptor que duerme 1 s por frame
+  2. Con 3 suscriptores de velocidad distinta, solo el lento acumula frames descartados
+  3. `CaptureWorker` contiene únicamente captura, reescalado y publicación (cero referencias a YOLO, reconocimiento, zonas o heatmap)
+  4. El stream MJPEG mantiene la fluidez de v1.2 (verificación visual A/B)
+  5. `GET /api/v2/cameras/{id}/health` devuelve fps, connected, reconnects y last_frame_age_s
+**Spec**: SPEC_v2.md §5.1, §5.2
+**Plans:** 1/2 plans complete — `.planning/phases/17-frame-broker-y-capture-worker/`
+
+Plans:
+- [x] 17-01-PLAN.md — FrameBroker: fan-out latest-frame con slot por suscriptor
+- [ ] 17-02-PLAN.md — CaptureWorker puro, flag PIPELINE_V2, endpoints de salud (Tasks 1-4 ✓; Task 5 checkpoint A/B con camara real pendiente)
+
+### Phase 18: Workers desacoplados e inferencia adaptativa
+**Goal**: Detección, tracking, streaming y grabación corren como workers independientes con FPS objetivo propios
+**Depends on**: Phase 17
+**Requirements**: PIPE-04, PIPE-05, PIPE-06, DET-05
+**Success Criteria**:
+  1. DetectionWorker, StreamingWorker y RecordingWorker arrancan y fallan de forma independiente; el supervisor reinicia el caído y emite DEGRADED_MODE
+  2. Con cámara a 20 FPS y objetivo de detección 8 FPS, el vídeo se sirve a ~20 FPS y la detección corre a 8±1
+  3. `AdaptiveRate` baja el FPS de detección cuando la latencia de inferencia supera el presupuesto
+  4. El uso de CPU en escena con una persona baja respecto a v1.2, con medición documentada antes/después
+  5. Ningún hilo hace await y ninguna corrutina hace inferencia (verificado por test de arquitectura)
+**Spec**: SPEC_v2.md §5.3
+**Plans:** 0/2 plans complete — `.planning/phases/18-workers-desacoplados-e-inferencia-adaptativa/`
+
+Plans:
+- [ ] 18-01-PLAN.md — AdaptiveRate, TrackRegistry y DetectionWorker
+- [ ] 18-02-PLAN.md — Streaming/Recording/Recognition workers, supervisor y retirada de RTSPStream
+
+### Phase 19: Event Engine, Rule Engine y esquema de datos v2
+**Goal**: El sistema deja de razonar en detecciones y pasa a emitir eventos tipados evaluados contra reglas
+**Depends on**: Phase 18
+**Requirements**: EVT-01..EVT-05, RULE-01..RULE-04, DB-10..DB-14
+**Success Criteria**:
+  1. El catálogo de 22 EventType existe y `Event` valida con Pydantic
+  2. El EventBus entrega el mismo objeto Event a persistencia, WebSocket y RuleEngine
+  3. Las 3 reglas de ejemplo de rules.yaml cargan, validan y disparan sus acciones en test de integración
+  4. Una regla mal formada se desactiva con log de error legible sin tumbar el servidor
+  5. `debounce_secs` reduce 10 eventos idénticos en 5 s a 1 sola acción
+  6. Las detecciones no se persisten fila a fila: `detection_stats` tiene 1 fila por minuto
+  7. La migración de `crossing_events` a `events` conserva todas las filas y es idempotente
+**Spec**: SPEC_v2.md §6, §7
+**Plans:** 0/2 plans complete — `.planning/phases/19-event-engine-y-esquema-de-datos-v2/`
+
+Plans:
+- [ ] 19-01-PLAN.md — Catalogo de eventos, EventBus, esquema v2 y migraciones
+- [ ] 19-02-PLAN.md — EventEngine, RuleEngine, acciones e integracion
+
+### Phase 20: Grabación con pre/post-buffer y metadatos
+**Goal**: Ningún clip empieza después del evento y cada clip es auditable
+**Depends on**: Phase 19
+**Requirements**: CLIP-01..CLIP-07
+**Success Criteria**:
+  1. Con pre_buffer_secs=10, el clip contiene imagen desde 10 s antes del evento (verificado con timestamp quemado)
+  2. El post-buffer añade el margen configurado tras la última detección
+  3. Cada recording tiene sha256, duration_s, size_bytes, thumbnail_path, trigger_event_id, reason y upload_state
+  4. La miniatura se sirve por `/api/v2/recordings/{id}/thumbnail`
+  5. El pre-buffer se mantiene por debajo de 40 MB de RAM con la configuración por defecto
+  6. Retención local 7 días y subida a Drive solo de eventos con severity != info
+  7. Tres fallos consecutivos de Drive no bloquean el pipeline y el cuarto intento tiene éxito
+**Spec**: SPEC_v2.md ADR-07
+**Plans:** 0/2 plans complete — `.planning/phases/20-grabacion-con-pre-post-buffer/`
+
+Plans:
+- [ ] 20-01-PLAN.md — RingFrameBuffer y RecordingWorker con pre/post-buffer
+- [ ] 20-02-PLAN.md — Metadatos, miniaturas, cola de subida y retencion
+
+### Phase 21: Observabilidad y latencia end-to-end
+**Goal**: El sistema es diagnosticable sin adjuntar un depurador
+**Depends on**: Phase 20
+**Requirements**: OBS-01..OBS-06
+**Success Criteria**:
+  1. `/metrics` expone el catálogo completo en formato Prometheus
+  2. `/api/v2/metrics` devuelve el mismo snapshot en JSON y el dashboard lo pinta
+  3. `frames_dropped_total` se incrementa de forma demostrable al ralentizar el detector
+  4. `e2e_latency_seconds` se calcula desde captured_at hasta el envío por WebSocket, con tres tramos desglosados
+  5. Una latencia inyectada de 2 s se refleja en el percentil 95
+  6. La instrumentación añade menos del 2% de CPU
+**Spec**: SPEC_v2.md §8.4
+**Plans:** 0/1 plans complete — `.planning/phases/21-observabilidad-y-latencia-e2e/`
+
+Plans:
+- [ ] 21-01-PLAN.md — Registro de metricas, LatencyTracker, instrumentacion y endpoints
+
+### Phase 22: Deuda de seguridad y gestión de memoria
+**Goal**: Cerrar los puntos de seguridad pendientes y garantizar operación 24/7 sin crecimiento de memoria
+**Depends on**: Phase 21
+**Requirements**: SEC-15, SEC-16, PIPE-07
+**Success Criteria**:
+  1. `grep -rn "pickle" backend/` no devuelve resultados en código de producción
+  2. `yolo_model_path` valida extensión y contención dentro del proyecto; un path externo aborta el arranque con mensaje claro
+  3. Todos los endpoints v2 tienen rate limiting y cotas de paginación
+  4. Prueba de 8 h con RSS estable dentro de ±10% tras la primera hora
+  5. Toda estructura con crecimiento potencial tiene política de expiración verificada por test
+  6. `queue_depth` permanece acotado durante la prueba de resistencia
+**Spec**: SPEC_v2.md §1.3
+**Plans:** 0/1 plans complete — `.planning/phases/22-seguridad-y-gestion-de-memoria/`
+
+Plans:
+- [ ] 22-01-PLAN.md — Erradicar pickle, validar model path, cotas de memoria y soak test
+
+### Phase 23: Migración a InsightFace/ArcFace con quality gating
+**Goal**: El reconocimiento facial usa embeddings ArcFace 512D y descarta caras que no valen la pena procesar
+**Depends on**: Phase 22
+**Requirements**: FACE-01..FACE-06
+**Success Criteria**:
+  1. Puerta de entrada superada: `insightface` + `onnxruntime` instalan y ejecutan una inferencia real en el entorno Windows del proyecto (o plan B ONNX puro activado)
+  2. FaceEngine produce embeddings 512D L2-normalizados con buffalo_s
+  3. FaceQualityAssessor rechaza y etiqueta el motivo para caras pequeñas, borrosas y de pose extrema
+  4. IdentityIndex resuelve una búsqueda sobre 1.000 identidades en menos de 5 ms
+  5. `scripts/reenroll.py` reconstruye las identidades desde data/gallery/ y reporta migradas vs no migradas
+  6. La tasa de aciertos sobre un set de validación de 50+ recortes reales es igual o mejor que dlib, documentada en el SUMMARY
+  7. `dlib` y `face-recognition` desaparecen de requirements.txt
+**Spec**: SPEC_v2.md ADR-02, ADR-03, §5.4
+
+### Phase 24: Identidad temporal — votación y máquina de estados
+**Goal**: Una persona es identificada tras evidencia coherente, no tras un frame afortunado
+**Depends on**: Phase 23
+**Requirements**: FACE-07..FACE-11
+**Success Criteria**:
+  1. Los 4 estados (UNKNOWN, CANDIDATE, CONFIRMED, TEMPORARILY_LOST) y sus transiciones están testeados uno a uno
+  2. Una secuencia de 200 frames de una persona conocida emite exactamente un PERSON_RECOGNIZED
+  3. Con embeddings ruidosos alternando dos identidades, el track permanece en CANDIDATE y no confirma ninguna
+  4. Cero identidades duplicadas tras pérdida y recuperación de track
+  5. La revalidación tras 120 s funciona y tres fallos consecutivos emiten IDENTITY_LOST
+  6. Las inferencias faciales por minuto con una persona estática bajan al menos un 70% respecto a la Phase 23
+**Spec**: SPEC_v2.md §5.5
+
+### Phase 25: Re-identificación de personas (ReID)
+**Goal**: El sistema mantiene la identidad cuando la cara no es visible
+**Depends on**: Phase 24
+**Requirements**: REID-01..REID-04
+**Success Criteria**:
+  1. ReIDEngine produce embeddings 512D con osnet_x0_25 ONNX en menos de 20 ms por crop en CPU
+  2. TrackGallery hereda identidad de un track cerrado hace menos de 15 s con similitud > 0.7, y no la hereda si hay conflicto con un track activo
+  3. Una persona identificada que se gira de espaldas 10 s y vuelve conserva su person_id sin UNKNOWN_PERSON intermedio
+  4. Dos personas distintas con ropa similar no se fusionan; tasa de falsos positivos documentada
+  5. ReID corre como máximo 1 vez cada 2 s por track
+**Spec**: SPEC_v2.md ADR-04, §5.6
+
+### Phase 26: Análisis de comportamiento
+**Goal**: El sistema responde a qué está ocurriendo, no solo a si hay alguien
+**Depends on**: Phase 25
+**Requirements**: BEH-01..BEH-05
+**Success Criteria**:
+  1. Se emiten LOITERING, RUNNING, IMMOBILE, CROWD_DETECTED, ZONE_ENTERED y ZONE_EXITED con umbrales configurables
+  2. Seis trayectorias sintéticas producen exactamente el evento esperado y ninguno más
+  3. Cada evento incluye en payload las magnitudes que lo justifican
+  4. El historial por track está acotado y no crece con el tiempo de sesión
+  5. Los eventos de comportamiento son usables como `when.event` en rules.yaml sin cambios en el RuleEngine
+**Spec**: SPEC_v2.md §5.7
+
+### Phase 27: Multi-clase y contexto de escena
+**Goal**: Capa semántica: además de personas, el sistema entiende objetos y describe el estado de la escena
+**Depends on**: Phase 26
+**Requirements**: BEH-06..BEH-09
+**Success Criteria**:
+  1. Las clases detectadas (persona, bicicleta, coche, moto, mochila, maleta) son configurables desde la UI
+  2. OBJECT_LEFT se emite tras 60 s de objeto inmóvil sin persona asociada cerca
+  3. OBJECT_REMOVED se emite cuando un objeto estable desaparece con una persona cerca
+  4. `/api/v2/analytics/context` devuelve el estado agregado con nivel de actividad calculado contra la media móvil de 7 días
+  5. Escena con mochila abandonada emite un único OBJECT_LEFT; con la persona presente no lo emite
+  6. Activar 6 clases no incrementa la latencia de inferencia más de un 15%
+**Spec**: SPEC_v2.md Phase 27
+
+### Phase 28: Refactor del frontend a módulos ES
+**Goal**: index.html deja de contener lógica y el frontend pasa a ser mantenible
+**Depends on**: Phase 21
+**Requirements**: OPS-01, OPS-02, OPS-03
+**Success Criteria**:
+  1. La estructura css/ + js/{views,components} existe e index.html baja de 1843 a menos de 300 líneas
+  2. `frontend/js/app.js` es el punto de entrada real, no un placeholder
+  3. Ningún módulo supera las 300 líneas y cada uno declara su responsabilidad
+  4. Paridad funcional total con v1.2, con checklist manual firmada en el SUMMARY
+  5. FastAPI sirve /static y el SRI de Chart.js se mantiene
+  6. La carga inicial no supera 1 s en LAN
+**Spec**: SPEC_v2.md ADR-08, §8.2
+
+### Phase 29: Vista de operaciones
+**Goal**: La pantalla principal responde en 3 segundos a las tres preguntas del operador
+**Depends on**: Phase 28
+**Requirements**: OPS-04, OPS-05, OPS-06
+**Success Criteria**:
+  1. El layout de operaciones es responsive hasta 1366×768 sin scroll
+  2. La barra superior refleja el estado real del pipeline (online / degradado / offline)
+  3. El panel "Personas ahora" lista identidades activas con su estado de confirmación
+  4. El overlay de tracks se dibuja sobre canvas alimentado por WebSocket a 2 Hz, sin re-renderizar el MJPEG
+  5. El WebSocket reconecta automáticamente con backoff y la UI lo indica sin recargar
+  6. Un observador no familiarizado identifica si hay alerta activa en menos de 3 s
+**Spec**: SPEC_v2.md §8.3
+
+### Phase 30: Event Timeline y centro de alertas
+**Goal**: Sustituir la tabla plana de eventos por una línea temporal accionable
+**Depends on**: Phase 29
+**Requirements**: OPS-07..OPS-11
+**Success Criteria**:
+  1. Cada entrada muestra hora, severidad, descripción legible, zona, miniatura y acciones
+  2. Los filtros combinables se resuelven en servidor con paginación por cursor
+  3. 10.000 eventos son navegables con scroll infinito sin degradación perceptible
+  4. Un evento nuevo aparece en menos de 1 s sin recargar
+  5. "Marcar como persona" precarga el crop y actualiza retroactivamente los eventos del track
+  6. El centro de alertas agrupa, permite silenciar por regla y muestra qué regla disparó
+**Spec**: SPEC_v2.md §8.1
+
+### Phase 31: Vista de analítica
+**Goal**: Convertir el histórico en información operativa
+**Depends on**: Phase 30
+**Requirements**: OPS-12..OPS-15
+**Success Criteria**:
+  1. La vista muestra personas por hora, ocupación por zona, heatmap, ranking de personas y tendencias con % de variación
+  2. El selector de rango cubre hoy, 7 días, 30 días y personalizado
+  3. Las agregaciones se calculan en SQL: el payload de 30 días es menor de 100 KB
+  4. Las consultas sobre 100.000 eventos responden en menos de 500 ms
+  5. Exportación CSV/JSON del rango visible
+**Spec**: SPEC_v2.md Phase 31
+
+### Phase 32: Vista de cámara y configuración visual
+**Goal**: Operar y configurar el sistema sin tocar .env
+**Depends on**: Phase 31
+**Requirements**: OPS-16..OPS-20, SET-01..SET-04
+**Success Criteria**:
+  1. La vista Cámara muestra live view, FPS, latencia e2e, CPU, RAM, FPS de detector y estado RTSP
+  2. El árbol de configuración completo (Cámara, Detección, Tracking, Reconocimiento, Zonas, Reglas, Alertas, Almacenamiento) está implementado
+  3. Los cambios se persisten en app_config y se aplican en caliente cuando el parámetro lo permite
+  4. Un valor fuera de rango devuelve 422 con mensaje legible mostrado junto al campo
+  5. Existe "Restaurar valores por defecto" por sección
+  6. Cada cambio genera un evento CONFIG_CHANGED con el diff
+  7. La precedencia app_config > .env > default está documentada y testeada
+**Spec**: SPEC_v2.md Phase 32
+
+### Phase 33: Editores visuales de zonas, líneas y reglas
+**Goal**: Dibujar zonas y componer reglas sin escribir YAML ni fracciones de coordenadas
+**Depends on**: Phase 32
+**Requirements**: OPS-21..OPS-24, RULE-05
+**Success Criteria**:
+  1. Se pueden dibujar, mover, editar vértices y borrar polígonos sobre el frame de vídeo con coordenadas normalizadas
+  2. Lo mismo para líneas de conteo, con indicador visual de dirección
+  3. Las zonas soportan tipo (counting, restricted, exclusion) y horario propio
+  4. El editor de reglas compone el esquema completo por formularios y valida en servidor antes de guardar
+  5. `POST /api/v2/rules/{id}/test` evalúa la regla contra los últimos 500 eventos y reporta cuántos habrían disparado
+  6. Cambiar una zona recarga el pipeline en menos de 1 s sin reiniciar
+  7. Zonas dibujadas a 720p siguen siendo correctas al cambiar a 1080p
+**Spec**: SPEC_v2.md §6.4
+
+### Phase 34: Tests E2E e integración del pipeline
+**Goal**: Una red de seguridad que cubra el camino completo, no solo unidades aisladas
+**Depends on**: Phase 33
+**Requirements**: TEST-01..TEST-05
+**Success Criteria**:
+  1. Test de integración FakeRTSP → Detector mock → Tracker → EventEngine → RuleEngine → BD → WebSocket, ejecutable en CI sin cámara real
+  2. Playwright cubre los 10 escenarios de frontend definidos en la spec
+  3. La suite completa corre en menos de 5 minutos
+  4. GitHub Actions ejecuta unit + integración en cada push y E2E en cada PR
+  5. Cobertura superior al 80% en backend/events/, backend/pipeline/ y backend/perception/
+  6. Los endpoints /api/* v1 quedan formalmente marcados como deprecados
+**Spec**: SPEC_v2.md Phase 34
+
+### Phase 35: CameraManager y camera_id transversal
+**Goal**: El código deja de asumir una única cámara, aunque solo haya una
+**Depends on**: Phase 34
+**Requirements**: SCALE-01..SCALE-04
+**Success Criteria**:
+  1. CameraPipeline encapsula el pipeline de una cámara y CameraManager gestiona N con arranque/parada independientes
+  2. camera_id es NOT NULL en events, tracks, detection_stats, recordings, zones, lines y system_metrics
+  3. Todos los endpoints v2 aceptan camera_id con default a la única cámara existente
+  4. Dos pipelines contra la misma URL RTSP producen eventos con camera_id distintos
+  5. Parar una cámara no afecta a la otra ni al servidor
+  6. Regresión cero en un despliegue de una sola cámara
+**Spec**: SPEC_v2.md Phase 35
+
+### Phase 36: Multi-cámara en runtime y UI
+**Goal**: Añadir, configurar y visualizar varias cámaras desde la interfaz
+**Depends on**: Phase 35
+**Requirements**: SCALE-05..SCALE-08
+**Success Criteria**:
+  1. El CRUD de cámaras desde la UI arranca la cámara nueva sin reiniciar el servidor
+  2. Existe selector de cámara y vista mosaico con N streams
+  3. Cada cámara tiene zonas, líneas y reglas propias; las reglas admiten camera "*"
+  4. La UI muestra el coste estimado de CPU por cámara y advierte al superar el umbral
+  5. La analítica agrega por cámara y en total
+  6. Con 2 cámaras durante 1 h, el FPS no baja del 80% del valor mono-cámara o la degradación queda documentada
+**Spec**: SPEC_v2.md Phase 36
+
+### Phase 37: Backends opcionales — PostgreSQL y Redis
+**Goal**: Permitir escalar almacenamiento y bus sin reescribir el código
+**Depends on**: Phase 36
+**Requirements**: SCALE-09, SCALE-10
+**Success Criteria**:
+  1. Todo el acceso a datos pasa por storage/repositories.py, verificado por grep
+  2. Cambiar DATABASE_URL a postgresql+asyncpg funciona sin cambios de código y la suite de repositorio pasa contra ambos motores
+  3. EventBus tiene implementaciones InProcessBus y RedisBus intercambiables; sin Redis el sistema arranca en modo in-process
+  4. SQLite sigue siendo el default y la ruta soportada de primera clase
+  5. Está documentado cuándo merece la pena migrar
+**Spec**: SPEC_v2.md ADR-06
+
+### Phase 38: Worker de inferencia en GPU (opcional)
+**Goal**: Aprovechar GPU si existe, sin degradar la ruta CPU
+**Depends on**: Phase 37
+**Requirements**: SCALE-11, SCALE-12
+**Success Criteria**:
+  1. La GPU disponible (CUDA / DirectML) se detecta automáticamente con log claro del dispositivo elegido
+  2. YOLO, ArcFace y OSNet usan el proveedor adecuado, seleccionable por configuración
+  3. Con GPU, el FPS de detección sostenible sube al menos 3× respecto a CPU, medido y documentado
+  4. Sin GPU, el comportamiento es idéntico al de la Phase 37
+  5. Un fallo de inicialización de GPU cae a CPU automáticamente y emite DEGRADED_MODE
+  6. El batching multi-cámara en GPU es opcional y desactivable
+**Spec**: SPEC_v2.md Phase 38
+
+## Execution Order v2.0
+
+```
+A: 17 → 18 → 19 → 20 → 21 → 22
+                      ↓
+B:                   23 → 24 → 25 → 26 → 27
+                      ↓
+C:        28 (tras 21) → 29 → 30 → 31 → 32 → 33 → 34
+                                                   ↓
+D:                                                35 → 36 → 37 → 38
+```
+
+La Phase 28 solo depende de la 21, por lo que el bloque C puede solaparse con el bloque B si se trabaja en paralelo. Las fases 29-33 asumen que B está completa para mostrar identidad, comportamiento y contexto en la interfaz.
+
+## Progress Tracking v2.0
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 17. Frame Broker y Capture Worker | 0/2 | Not started | — |
+| 18. Workers desacoplados e inferencia adaptativa | 0/2 | Not started | — |
+| 19. Event Engine, Rule Engine y esquema de datos v2 | 0/2 | Not started | — |
+| 20. Grabación con pre/post-buffer y metadatos | 0/2 | Not started | — |
+| 21. Observabilidad y latencia end-to-end | 0/1 | Not started | — |
+| 22. Deuda de seguridad y gestión de memoria | 0/1 | Not started | — |
+| 23. Migración a InsightFace/ArcFace con quality gating | 0/? | Not started | — |
+| 24. Identidad temporal — votación y máquina de estados | 0/? | Not started | — |
+| 25. Re-identificación de personas (ReID) | 0/? | Not started | — |
+| 26. Análisis de comportamiento | 0/? | Not started | — |
+| 27. Multi-clase y contexto de escena | 0/? | Not started | — |
+| 28. Refactor del frontend a módulos ES | 0/? | Not started | — |
+| 29. Vista de operaciones | 0/? | Not started | — |
+| 30. Event Timeline y centro de alertas | 0/? | Not started | — |
+| 31. Vista de analítica | 0/? | Not started | — |
+| 32. Vista de cámara y configuración visual | 0/? | Not started | — |
+| 33. Editores visuales de zonas, líneas y reglas | 0/? | Not started | — |
+| 34. Tests E2E e integración del pipeline | 0/? | Not started | — |
+| 35. CameraManager y camera_id transversal | 0/? | Not started | — |
+| 36. Multi-cámara en runtime y UI | 0/? | Not started | — |
+| 37. Backends opcionales — PostgreSQL y Redis | 0/? | Not started | — |
+| 38. Worker de inferencia en GPU (opcional) | 0/? | Not started | — |
+
+---
+*Milestone v2.0 planificado: 2026-08-07*
+*Especificación de referencia: propuesta_mejora/SPEC_v2.md*
+*Status snapshot: 0/22 fases v2.0 completas.*

@@ -1,17 +1,22 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: milestone
-status: complete
-stopped_at: "Phase 16 complete — proyecto finalizado (16/16 fases)"
-last_updated: "2026-05-01"
-last_activity: 2026-05-01
+milestone: v2.0
+milestone_name: Plataforma de Video Analytics
+status: in_progress
+stopped_at: "Fase 17: 17-01 completo, 17-02 Tasks 1-4 completas — Task 5 (checkpoint A/B con camara real) bloqueada, camara no accesible desde este entorno"
+last_updated: "2026-08-07"
+last_activity: 2026-08-07
 progress:
-  total_phases: 16
-  completed_phases: 16
-  total_plans: 4
-  completed_plans: 4
-  percent: 100
+  total_phases: 22
+  completed_phases: 0
+  total_plans: 2
+  completed_plans: 1
+  percent: 2
+previous_milestone:
+  name: v1.2
+  status: complete
+  phases: 16/16
+  completed: 2026-05-01
 ---
 
 # Project State
@@ -21,15 +26,76 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** v1.2 — COMPLETO. Todas las fases implementadas.
+**Current focus:** v2.0 — PLANIFICADA. Desacoplar el pipeline, motor de eventos, percepción avanzada (ArcFace + ReID + comportamiento), centro de operaciones y preparación multi-cámara.
 
 ## Current Position
 
-Phase: 16 (operaciones) — COMPLETE
-Status: v1.2 finalizado
-Last activity: 2026-05-01
+Milestone: v2.0 — Plataforma de Video Analytics
+Phase: 17 (Frame Broker y Capture Worker) — EN CURSO
+Status: 17-01 completo (FrameBroker, 10/10 tests). 17-02 Tasks 1-4 completas
+  (CaptureWorker, CameraManager, flag PIPELINE_V2, RTSPStream como
+  despachador del broker, endpoints /api/v2/cameras). Task 5 (checkpoint
+  A/B de 30 min con la camara real) BLOQUEADA: la camara Tapo
+  (192.168.1.132:554) no respondio desde este entorno al intentarlo.
+Last activity: 2026-08-07
 
-Progress: [██████████] 100% (16/16 fases)
+Progress v2.0: [░░░░░░░░░░] ~2% (17-01 de 2 planes de la Fase 17 completo)
+Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
+
+## Accion requerida del usuario
+
+Fase 17 no puede darse por completa hasta ejecutar la Task 5 de
+17-02-PLAN.md con la camara real accesible:
+
+```bash
+PIPELINE_V2=false .venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+# observar 5 min, luego:
+PIPELINE_V2=true .venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+# observar 5 min + dejar corriendo 30 min sin crecimiento de latencia
+```
+
+Ver `.planning/phases/17-frame-broker-y-capture-worker/17-02-SUMMARY.md`
+§"Task 5 — PENDIENTE" para el detalle completo de que verificar y como
+invertir el flag `pipeline_v2` a `True` por defecto si todo sale bien.
+
+## Documentos del milestone v2.0
+
+| Documento | Contenido |
+|-----------|-----------|
+| `propuesta_mejora/SPEC_v2.md` | Especificación técnica: arquitectura objetivo, 10 ADRs, contratos de módulo, modelo de datos, catálogo de eventos, detalle ejecutable de las 22 fases, trazabilidad de los 25 puntos, riesgos y criterios de aceptación |
+| `.planning/ROADMAP.md` § v2.0 | Fases 17-38 con goal, dependencias, requisitos y criterios de éxito |
+| `.planning/REQUIREMENTS.md` § v2 | 107 requisitos (PIPE, DET, EVT, RULE, DB, CLIP, OBS, SEC, FACE, REID, BEH, OPS, SET, TEST, SCALE) |
+| `propuesta_mejora/mejoras_inmediatas.md` | Propuesta original (25 puntos) |
+| `propuesta_mejora/vulnerabilidades.md` | Análisis de seguridad (12/14 ya corregidas en v1.2) |
+
+## Planes listos para ejecutar
+
+El bloque A (fases 17-22) ya tiene CONTEXT y PLAN escritos. **No hace falta `/gsd:plan-phase`** para estas fases: se puede ir directo a `/gsd:execute-phase`.
+
+| Fase | Planes | Checkpoints manuales |
+|------|--------|----------------------|
+| 17 — Frame Broker y Capture Worker | 17-01, 17-02 | Comparativa A/B del MJPEG con cámara real |
+| 18 — Workers desacoplados | 18-01, 18-02 | Medición CPU antes/después + crash de worker en vivo |
+| 19 — Event Engine y esquema v2 | 19-01, 19-02 | Migración de la BD real + validación de reglas en vivo |
+| 20 — Pre/post-buffer | 20-01, 20-02 | Verificación visual del pre-buffer + prueba sin red |
+| 21 — Observabilidad | 21-01 | Coste de instrumentación + línea base de 30 min |
+| 22 — Seguridad y memoria | 22-01 | Prueba de resistencia de 8 h |
+
+## Siguiente paso
+
+```
+/gsd:execute-phase 17
+```
+
+Fase 17 no tiene dependencias y su criterio principal es "no cambiar nada visible": el stream MJPEG debe comportarse igual que en v1.2 mientras la captura pasa a ejecutarse tras el FrameBroker.
+
+Las fases 23-38 (bloques B, C y D) tienen su detalle ejecutable en `SPEC_v2.md` §9 pero aún no tienen PLAN. Generarlos con `/gsd:plan-phase 23` cuando llegue el momento, o pedirlos en Cowork como se hizo con el bloque A.
+
+## Notas de ejecución
+
+- **Puerta bloqueante en la Fase 23:** verificar que `insightface` + `onnxruntime` instalan en el entorno Windows del proyecto antes de comprometer el bloque B. Plan B documentado en `SPEC_v2.md` ADR-02.
+- **Migración de embeddings:** ArcFace 512D no es compatible con dlib 128D. La Fase 23 exige re-enrolamiento desde `data/gallery/`.
+- **Fase 28 (frontend) solo depende de la 21**, así que el bloque C puede solaparse con el B si interesa.
 
 ## Phases Summary
 
