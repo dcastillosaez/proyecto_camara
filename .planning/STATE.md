@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Fase 17 COMPLETA (comparativa A/B + soak 30 min contra camara real, pipeline_v2=True por defecto). Siguiente: Fase 18."
+stopped_at: "Fase 17 completa. Fase 18: 18-01 completo (AdaptiveRate, TrackRegistry, DetectionWorker) — 18-02 pendiente (StreamingWorker, RecordingWorker, RecognitionWorker, WorkerSupervisor, retirada de RTSPStream; su Task 6 es checkpoint con camara real)."
 last_updated: "2026-08-07"
 last_activity: 2026-08-07
 progress:
   total_phases: 22
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
-  percent: 5
+  total_plans: 4
+  completed_plans: 3
+  percent: 7
 previous_milestone:
   name: v1.2
   status: complete
@@ -31,26 +31,38 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 17 (Frame Broker y Capture Worker) — COMPLETA
-Status: 17-01 y 17-02 completos. Comparativa A/B + soak de 30 min contra
-  la camara real (192.168.1.132) sin crecimiento de latencia, 0 reconnects,
-  FPS estable ~15. pipeline_v2=True por defecto desde 2026-08-07. Grabacion
-  de clips verificada end-to-end en pipeline v2 (upload a Drive pendiente
-  de renovar token OAuth — no relacionado con esta fase).
+Phase: 17 COMPLETA. Phase 18 (Workers desacoplados) — EN CURSO
+Status: Fase 17: comparativa A/B + soak de 30 min contra la camara real
+  (192.168.1.132) sin crecimiento de latencia, 0 reconnects, FPS estable
+  ~15. pipeline_v2=True por defecto desde 2026-08-07. Grabacion de clips
+  verificada end-to-end (upload a Drive pendiente de renovar token OAuth —
+  no relacionado con v2.0).
+  Fase 18-01 completa: AdaptiveRate (escalones + histeresis por rachas),
+  TrackRegistry (estado compartido thread-safe, historial acotado) y
+  DetectionWorker (deteccion desacoplada con ritmo adaptativo, zonas y
+  heatmap portados). PersonTracker gano set_frame_rate() para sincronizar
+  ByteTrack sin perder tracks. 155/155 tests.
+  DetectionWorker todavia NO esta cableado en main.py — el dashboard en
+  produccion sigue usando RTSPStream (pipeline v2 de la Fase 17) sin
+  cambios visibles. Eso ocurre en 18-02 Task 5.
 Last activity: 2026-08-07
 
-Progress v2.0: [░░░░░░░░░░] ~5% (Fase 17/22 completa)
+Progress v2.0: [░░░░░░░░░░] ~7% (Fase 17 completa + 18-01/2 de la Fase 18)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
 
 ## Siguiente paso
 
 ```
-/gsd:execute-phase 18
+/gsd:execute-phase 18 --wave 2
 ```
 
-Fase 18 (Workers desacoplados e inferencia adaptativa) depende de 17-02,
-ya cerrada. No requiere camara real para 18-01 (AdaptiveRate se testea con
-reloj simulado); 18-02 Task 6 si es un checkpoint con hardware real.
+18-02-PLAN.md construye StreamingWorker, RecordingWorker,
+RecognitionWorker y WorkerSupervisor, y en su Task 5 retira RTSPStream
+sustituyendolo en backend/main.py — es el cambio de mayor riesgo del
+milestone hasta ahora (toca el camino de ejecucion en produccion). Su
+Task 6 es un checkpoint con camara real (medicion de CPU antes/despues,
+prueba de crash de worker en vivo, 1h sin crecimiento de latencia) y
+requiere confirmacion del usuario antes de arrancar dado el alcance.
 
 ## Pendiente sin relacion con v2.0
 
