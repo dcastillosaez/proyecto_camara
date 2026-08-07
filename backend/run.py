@@ -16,7 +16,8 @@ def _patch_asyncio_win10054() -> None:
     import asyncio, sys
     if sys.platform != "win32":
         return
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     default_handler = loop.get_exception_handler()
 
     def _handler(loop, context):

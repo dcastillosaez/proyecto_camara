@@ -85,17 +85,27 @@ Sin `credentials.json` el sistema funciona con normalidad pero no sube clips a D
 ### Producción (watchdog + HTTPS)
 
 ```bash
-.venv\Scripts\python.exe backend/run.py
+.venv\Scripts\python.exe -m backend.run
 ```
 
-Dashboard disponible en `https://<IP-local>:8000`. Obtén tu IP con `ipconfig`.  
-El navegador mostrará aviso de certificado autofirmado — click en «Avanzado» → «Continuar».
+> Ejecutar como módulo (`-m backend.run`), no como script (`backend/run.py`) — si no, falla con `ModuleNotFoundError: No module named 'backend'`.
+
+**Abrir en el navegador:** `https://<IP-de-tu-PC>:8000`
+
+1. Averigua la IP de tu PC (no la de la cámara) con `ipconfig` → busca `Dirección IPv4` de tu adaptador de red. Ejemplo: `192.168.1.184`.
+2. Navega a `https://192.168.1.184:8000` (sustituye por tu IP).
+3. El navegador mostrará aviso de certificado autofirmado — click en «Avanzado» → «Continuar a [IP] (no seguro)».
+4. Si configuraste `DASHBOARD_USER`/`DASHBOARD_PASS` en `.env`, introduce esas credenciales cuando lo pida.
+
+`0.0.0.0` que aparece en los logs de arranque no es una IP navegable — significa "escucha en todas las interfaces". La IP de la cámara (`CAMERA_URL` en `.env`, por defecto `192.168.1.132`) es distinta de la IP del PC que sirve el dashboard; nunca abras la IP de la cámara en el navegador.
 
 ### Desarrollo (recarga automática, HTTP)
 
 ```bash
 .venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+Abrir en el navegador: `http://<IP-de-tu-PC>:8000` (sin `https`, sin certificado ni aviso de seguridad).
 
 ### Diagnóstico
 
