@@ -45,6 +45,7 @@ from backend.database import (
 from backend.detector import PersonDetector
 from backend.gdrive import DriveUploader
 from backend.notifier import Notifier
+from backend.pipeline import CameraManager
 from backend.recognizer import PersonRecognizer
 from backend.recorder import ClipRecorder
 from backend.stream import RTSPStream
@@ -55,6 +56,7 @@ FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 logger = logging.getLogger(__name__)
 
 rtsp_stream: RTSPStream | None = None
+camera_manager: CameraManager | None = None
 notifier: Notifier | None = None
 _ws_clients: set[WebSocket] = set()
 _start_time: float = time.time()
@@ -151,7 +153,7 @@ async def _purge_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global rtsp_stream
+    global rtsp_stream, camera_manager
     settings = get_settings()
 
     await init_db()
@@ -159,6 +161,25 @@ async def lifespan(app: FastAPI):
     event_queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
     drain_task = asyncio.create_task(_drain_events(event_queue))
+
+    # Pipeline v2 (Fase 17): si esta activo, un CaptureWorker independiente
+    # captura y publica en un FrameBroker; RTSPStream consume de ahi en vez
+    # de abrir su propio VideoCapture. Con el flag apagado, broker es None
+    # y RTSPStream captura tal cual lo hacia en v1.2.
+    broker = None
+    if settings.pipeline_v2:
+        camera_manager = CameraManager()
+        process_size = (
+            (settings.process_width, settings.process_height)
+            if settings.process_width > 0
+            else None
+        )
+        cam_pipeline = camera_manager.add(
+            "cam1", build_rtsp_url(settings), process_size=process_size
+        )
+        cam_pipeline.start()
+        broker = cam_pipeline.broker
+        logger.info("Pipeline v2 activo — CaptureWorker cam1 iniciado")
 
     detector = PersonDetector(
         model_path=settings.yolo_model_path,
@@ -186,6 +207,7 @@ async def lifespan(app: FastAPI):
         recognizer=recognizer,
         event_loop=loop,
         event_queue=event_queue,
+        broker=broker,
     )
     if settings.camera_driver == "tapo":
         from backend.camera import set_refs as camera_set_refs
@@ -295,6 +317,8 @@ async def lifespan(app: FastAPI):
     recorder.stop()
     uploader.stop()
     rtsp_stream.stop()
+    if camera_manager is not None:
+        camera_manager.stop_all()
     drain_task.cancel()
     logger.info("RTSP stream stopped")
 
@@ -667,6 +691,32 @@ async def api_heatmap():
     if not ok:
         raise HTTPException(status_code=500, detail="JPEG encoding failed")
     return Response(content=jpeg.tobytes(), media_type="image/jpeg")
+
+
+# ---------------------------------------------------------------------------
+# Phase 17: Pipeline v2 — FrameBroker + CaptureWorker health
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v2/cameras")
+async def api_v2_cameras():
+    """List cameras managed by pipeline v2, with their capture health."""
+    if camera_manager is None:
+        raise HTTPException(status_code=503, detail="Pipeline v2 no activo")
+    return {"cameras": [asdict(p.health) for p in camera_manager.all()]}
+
+
+@app.get("/api/v2/cameras/{camera_id}/health")
+async def api_v2_camera_health(camera_id: str):
+    """CaptureWorker health for one camera, plus FrameBroker subscriber stats."""
+    if camera_manager is None:
+        raise HTTPException(status_code=503, detail="Pipeline v2 no activo")
+    pipeline = camera_manager.get(camera_id)
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    return {
+        **asdict(pipeline.health),
+        "broker_stats": pipeline.broker.stats(),
+    }
 
 
 # ---------------------------------------------------------------------------
