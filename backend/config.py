@@ -55,12 +55,21 @@ class Settings(BaseSettings):
     detection_label: str = "person"
     # YOLO inference size (imgsz). Fixed value = predictable CPU cost.
     yolo_imgsz: int = 640
-    # Run YOLO on 1 of every N frames (1 = every frame). On skipped frames
-    # the last tracked boxes are re-used — on CPU, 2 roughly doubles FPS.
+    # DEPRECATED (Fase 18) — sustituido por detection_target_fps/AdaptiveRate,
+    # que reacciona a la latencia real en vez de contar frames a ciegas.
+    # Solo lo sigue leyendo el RTSPStream legacy (pipeline_v2=False).
     detect_every: int = 2
     # Approximate real pipeline FPS, passed to ByteTrack so its lost-track
     # buffer is measured in real seconds (its default assumes 30 FPS).
     tracker_frame_rate: int = 15
+
+    # --- Inferencia adaptativa (Fase 18) ---
+    # DetectionWorker/RecognitionWorker ajustan su ritmo con AdaptiveRate
+    # segun la latencia real, entre estos limites.
+    detection_target_fps: float = 8.0
+    detection_min_fps: float = 3.0
+    detection_max_fps: float = 12.0
+    recognition_target_fps: float = 2.0
 
     db_path: str = "data/events.db"
     host: str = "0.0.0.0"
