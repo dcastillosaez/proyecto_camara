@@ -41,6 +41,11 @@ class Settings(BaseSettings):
         except ValueError:
             raise ValueError("yolo_model_path must be inside the project directory")
         return v
+    # --- Pipeline v2 (Fase 17) ---
+    # Activa el FrameBroker + CaptureWorker desacoplados (SPEC_v2.md ADR-01).
+    # Con False (default), RTSPStream captura directamente como en v1.2.
+    pipeline_v2: bool = False
+
     yolo_confidence: float = 0.45
     # COCO class IDs to detect. Default [0] = person.
     yolo_classes: list[int] = [0]

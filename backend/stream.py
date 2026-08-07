@@ -19,6 +19,7 @@ from backend.config import get_settings
 
 if TYPE_CHECKING:
     from backend.detector import Detection, PersonDetector
+    from backend.pipeline.broker import FrameBroker
     from backend.recognizer import PersonRecognizer
     from backend.tracker import PersonTracker
 
@@ -62,6 +63,7 @@ class RTSPStream:
         recognizer: PersonRecognizer | None = None,
         event_loop: asyncio.AbstractEventLoop | None = None,
         event_queue: asyncio.Queue[dict[str, Any]] | None = None,
+        broker: FrameBroker | None = None,
     ) -> None:
         self._url = url
         self._detector = detector
@@ -69,6 +71,11 @@ class RTSPStream:
         self._recognizer = recognizer
         self._event_loop = event_loop
         self._event_queue = event_queue
+        # Pipeline v2 (Fase 17): si se pasa un broker, _capture_loop deja de
+        # capturar RTSP directamente y consume frames ya publicados por un
+        # CaptureWorker externo (ver _consume_loop). Sin broker, el
+        # comportamiento es identico a v1.2 (_legacy_capture_loop).
+        self._broker = broker
         self._frame: np.ndarray | None = None
         self._detections: list[Detection] = []
         self._live_count: int = 0
@@ -263,6 +270,29 @@ class RTSPStream:
             _asyncio.run_coroutine_threadsafe(_ic(person_id, ts, image_path), self._event_loop)
 
     def _capture_loop(self) -> None:
+        """Dispatch to the v1 capture loop or the v2 broker consumer."""
+        if self._broker is not None:
+            self._consume_loop()
+        else:
+            self._legacy_capture_loop()
+
+    def _consume_loop(self) -> None:
+        """Pipeline v2: consume frames already captured by a CaptureWorker.
+
+        The broker's CaptureWorker already applies the process-size resize,
+        so the frame arrives ready for _process_frame as-is.
+        """
+        sub = self._broker.subscribe("processing")
+        try:
+            while self._running:
+                frame = sub.get(timeout=1.0)
+                if frame is None:
+                    continue
+                self._process_frame(frame.image)
+        finally:
+            sub.close()
+
+    def _legacy_capture_loop(self) -> None:
         """Read frames in a tight loop, keeping only the newest."""
         self._cap = self._create_capture()
         _diag_counter = 0
@@ -281,121 +311,130 @@ class RTSPStream:
             if proc_size is not None:
                 frame = cv2.resize(frame, proc_size)
 
-            if self._detector is not None and self._tracker is not None:
-                # Full pipeline: YOLO → ByteTrack → LineZone → recognition worker
-                self._frame_num += 1
-                run_detection = (
-                    self._detect_every == 1
-                    or self._frame_num % self._detect_every == 1
-                    or self._last_tracked is None
-                )
-                if run_detection:
-                    sv_dets = self._detector.detect_sv(frame)
-                    tracked, crossings = self._tracker.update(sv_dets)
-                    self._last_tracked = tracked
-                else:
-                    # Skipped frame (MEJORAS.md punto 11): re-use the last
-                    # tracked boxes for the overlay. The tracker and line
-                    # zone only advance on detection frames, so counts
-                    # never double-fire from stale boxes.
-                    tracked = self._last_tracked
-                    crossings = []
+            self._process_frame(frame)
 
-                if run_detection:
-                    self._update_zones_and_heat(tracked, frame.shape)
+    def _process_frame(self, frame: np.ndarray) -> None:
+        """Run detection, tracking, recognition dispatch and annotation on *frame*.
 
-                # Snapshot once per frame — the recognition worker mutates
-                # _person_cache concurrently.
-                with self._lock:
-                    cache_snap = dict(self._person_cache)
+        Shared by both the v1 legacy capture loop and the v2 broker
+        consumer — this is the part of the pipeline that is NOT captura
+        pura, so it stays inside RTSPStream regardless of which loop feeds it.
+        """
+        if self._detector is not None and self._tracker is not None:
+            # Full pipeline: YOLO → ByteTrack → LineZone → recognition worker
+            self._frame_num += 1
+            run_detection = (
+                self._detect_every == 1
+                or self._frame_num % self._detect_every == 1
+                or self._last_tracked is None
+            )
+            if run_detection:
+                sv_dets = self._detector.detect_sv(frame)
+                tracked, crossings = self._tracker.update(sv_dets)
+                self._last_tracked = tracked
+            else:
+                # Skipped frame (MEJORAS.md punto 11): re-use the last
+                # tracked boxes for the overlay. The tracker and line
+                # zone only advance on detection frames, so counts
+                # never double-fire from stale boxes.
+                tracked = self._last_tracked
+                crossings = []
 
-                if crossings and self._event_loop and self._event_queue:
-                    is_intrusion = not self._is_in_schedule()
-                    for c in crossings:
-                        tid_c = c.get("tracker_id")
-                        person_name = None
-                        if tid_c is not None and tid_c in cache_snap:
-                            pid_c, name_c = cache_snap[tid_c]
-                            person_name = name_c if name_c else f"P{pid_c}"
-                        self._event_loop.call_soon_threadsafe(
-                            self._event_queue.put_nowait,
-                            {**c, "person_name": person_name, "is_intrusion": is_intrusion},
-                        )
+            if run_detection:
+                self._update_zones_and_heat(tracked, frame.shape)
 
-                # Face recognition (MEJORAS.md punto 10): the capture thread
-                # only gates and enqueues crops; the dlib pass runs in
-                # _recognition_worker and publishes into _person_cache.
-                labels: list[str] = []
-                if tracked.tracker_id is not None:
-                    for i, tid in enumerate(tracked.tracker_id):
-                        tid = int(tid)
-                        conf = float(tracked.confidence[i]) if tracked.confidence is not None else 0.0
-                        self._tid_last_seen[tid] = self._frame_num
+            # Snapshot once per frame — the recognition worker mutates
+            # _person_cache concurrently.
+            with self._lock:
+                cache_snap = dict(self._person_cache)
 
-                        if (
-                            run_detection
-                            and self._recognizer is not None
-                            and self._recognizer.should_attempt(tid, self._frame_num)
-                        ):
-                            x1, y1, x2, y2 = map(int, tracked.xyxy[i])
-                            p = self.CROP_PAD
-                            fh, fw = frame.shape[:2]
-                            crop = frame[
-                                max(0, y1 - p):min(fh, y2 + p),
-                                max(0, x1 - p):min(fw, x2 + p),
-                            ].copy()
-                            if crop.size:
-                                try:
-                                    self._recog_queue.put_nowait((crop, tid))
-                                except queue.Full:
-                                    # Worker saturated — drop; the gating in
-                                    # should_attempt retries next interval.
-                                    pass
-
-                        if tid in cache_snap:
-                            pid, name = cache_snap[tid]
-                            label = name if name else f"P{pid}"
-                            labels.append(f"{label} {conf:.2f}")
-                        else:
-                            labels.append(f"#{tid} {conf:.2f}")
-
-                if self._frame_num % self.PRUNE_EVERY == 0:
-                    self._prune_caches()
-
-                frame = self._tracker.annotate(frame, tracked, labels=labels or None)
-
-                # Draw interest zones overlay (with live occupancy count)
-                with self._lock:
-                    zone_snap = [
-                        (st["polygon"], f'{st["name"]} ({st["current"]})')
-                        for st in self._zone_states
-                    ]
-                for pts, text in zone_snap:
-                    pts32 = pts.astype(np.int32)
-                    cv2.polylines(frame, [pts32], isClosed=True, color=(0, 200, 255), thickness=2)
-                    cv2.putText(
-                        frame, text, tuple(pts32[0]),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1,
+            if crossings and self._event_loop and self._event_queue:
+                is_intrusion = not self._is_in_schedule()
+                for c in crossings:
+                    tid_c = c.get("tracker_id")
+                    person_name = None
+                    if tid_c is not None and tid_c in cache_snap:
+                        pid_c, name_c = cache_snap[tid_c]
+                        person_name = name_c if name_c else f"P{pid_c}"
+                    self._event_loop.call_soon_threadsafe(
+                        self._event_queue.put_nowait,
+                        {**c, "person_name": person_name, "is_intrusion": is_intrusion},
                     )
 
-                detections = []
-                live = len(tracked.xyxy) if tracked.xyxy is not None else 0
+            # Face recognition (MEJORAS.md punto 10): the capture thread
+            # only gates and enqueues crops; the dlib pass runs in
+            # _recognition_worker and publishes into _person_cache.
+            labels: list[str] = []
+            if tracked.tracker_id is not None:
+                for i, tid in enumerate(tracked.tracker_id):
+                    tid = int(tid)
+                    conf = float(tracked.confidence[i]) if tracked.confidence is not None else 0.0
+                    self._tid_last_seen[tid] = self._frame_num
 
-            elif self._detector is not None:
-                # Phase-3 fallback: plain YOLO boxes, no tracking
-                detections = self._detector.detect(frame)
-                frame = self._detector.annotate(frame, detections)
-                live = len(detections)
-            else:
-                detections = []
-                live = 0
+                    if (
+                        run_detection
+                        and self._recognizer is not None
+                        and self._recognizer.should_attempt(tid, self._frame_num)
+                    ):
+                        x1, y1, x2, y2 = map(int, tracked.xyxy[i])
+                        p = self.CROP_PAD
+                        fh, fw = frame.shape[:2]
+                        crop = frame[
+                            max(0, y1 - p):min(fh, y2 + p),
+                            max(0, x1 - p):min(fw, x2 + p),
+                        ].copy()
+                        if crop.size:
+                            try:
+                                self._recog_queue.put_nowait((crop, tid))
+                            except queue.Full:
+                                # Worker saturated — drop; the gating in
+                                # should_attempt retries next interval.
+                                pass
 
-            self._fps_monitor.tick()
+                    if tid in cache_snap:
+                        pid, name = cache_snap[tid]
+                        label = name if name else f"P{pid}"
+                        labels.append(f"{label} {conf:.2f}")
+                    else:
+                        labels.append(f"#{tid} {conf:.2f}")
+
+            if self._frame_num % self.PRUNE_EVERY == 0:
+                self._prune_caches()
+
+            frame = self._tracker.annotate(frame, tracked, labels=labels or None)
+
+            # Draw interest zones overlay (with live occupancy count)
             with self._lock:
-                self._frame = frame
-                self._detections = detections
-                self._live_count = live
-                self._fps = float(self._fps_monitor.fps)
+                zone_snap = [
+                    (st["polygon"], f'{st["name"]} ({st["current"]})')
+                    for st in self._zone_states
+                ]
+            for pts, text in zone_snap:
+                pts32 = pts.astype(np.int32)
+                cv2.polylines(frame, [pts32], isClosed=True, color=(0, 200, 255), thickness=2)
+                cv2.putText(
+                    frame, text, tuple(pts32[0]),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1,
+                )
+
+            detections = []
+            live = len(tracked.xyxy) if tracked.xyxy is not None else 0
+
+        elif self._detector is not None:
+            # Phase-3 fallback: plain YOLO boxes, no tracking
+            detections = self._detector.detect(frame)
+            frame = self._detector.annotate(frame, detections)
+            live = len(detections)
+        else:
+            detections = []
+            live = 0
+
+        self._fps_monitor.tick()
+        with self._lock:
+            self._frame = frame
+            self._detections = detections
+            self._live_count = live
+            self._fps = float(self._fps_monitor.fps)
 
     def _recognition_worker(self) -> None:
         """Consume person crops and run face recognition off the capture thread.
