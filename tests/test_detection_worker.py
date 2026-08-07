@@ -109,9 +109,10 @@ def test_slow_detector_does_not_block_broker(broker):
     pub.start(interval=0.01)  # ~100 FPS de publicacion, mucho mas rapido que el detector
     time.sleep(1.0)
     pub.stop()
+    dropped = broker.stats()["detector"]["dropped"]  # antes de stop(): cierra la suscripcion
     worker.stop()
 
-    assert broker.stats()["detector"]["dropped"] > 0
+    assert dropped > 0
 
 
 # ─── El frame_rate del tracker sigue al FPS efectivo ─────────────────────────
