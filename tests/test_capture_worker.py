@@ -81,19 +81,28 @@ def test_no_resize_when_process_size_none(mock_video_capture, fake_frame):
 def test_reconnects_on_read_failure(mock_video_capture):
     good_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
     cap = mock_video_capture._mock_cap
-    cap.read.side_effect = [
-        (False, None),
-        (False, None),
-        (True, good_frame.copy()),
-    ] + [(True, good_frame.copy())] * 50
+    calls = {"n": 0}
+
+    def _read_side_effect():
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return (False, None)
+        return (True, good_frame.copy())
+
+    cap.read.side_effect = _read_side_effect
 
     broker = FrameBroker()
     sub = broker.subscribe("test")
     worker = CaptureWorker("cam1", "rtsp://fake", broker)
-    with patch("backend.pipeline.capture.time.sleep"):
-        worker.start()
-        time.sleep(0.3)
-        worker.stop()
+    # No parchear time.sleep aqui: parchear "backend.pipeline.capture.time.sleep"
+    # sustituye el atributo del modulo `time` compartido globalmente, lo que
+    # tambien volveria instantaneo el time.sleep() de ESTE test. El primer
+    # backoff es real (1s) — se espera con margen via polling.
+    worker.start()
+    deadline = time.time() + 5.0
+    while time.time() < deadline and worker.health.reconnects < 1:
+        time.sleep(0.05)
+    worker.stop()
 
     assert mock_video_capture.call_count >= 2
     assert worker.health.reconnects >= 1
