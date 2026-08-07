@@ -20,13 +20,16 @@ class PersonTracker:
     # Frames que el objeto debe permanecer al otro lado de la línea antes de
     # confirmar el cruce — filtra cruces falsos por jitter de la bbox.
     CROSSING_THRESHOLD = 2
+    LOST_TRACK_BUFFER = 60
 
     def __init__(self, start: sv.Point, end: sv.Point, frame_rate: int = 15) -> None:
         # frame_rate debe ser el FPS real del pipeline (MEJORAS.md punto 14):
         # ByteTrack calcula max_time_lost = frame_rate/30 * lost_track_buffer,
         # así que con el default (30) y un stream real a ~15 FPS el buffer
         # efectivo en segundos era el doble del esperado.
-        self._byte_tracker = sv.ByteTrack(lost_track_buffer=60, frame_rate=frame_rate)
+        self._byte_tracker = sv.ByteTrack(
+            lost_track_buffer=self.LOST_TRACK_BUFFER, frame_rate=frame_rate
+        )
         # Suaviza las bboxes entre frames (MEJORAS.md Bajas): menos jitter
         # visual y menos cruces falsos — complementa minimum_crossing_threshold.
         self._smoother = sv.DetectionsSmoother(length=5)
@@ -122,6 +125,21 @@ class PersonTracker:
                 "out": self._out_count,
                 "total": len(self._crossed_ids),
             }
+
+    def set_frame_rate(self, frame_rate: float) -> None:
+        """
+        Sync ByteTrack's lost-track window to a new effective frame rate
+        (Fase 18: AdaptiveRate cambia el ritmo de detección en caliente).
+
+        Muta ``max_time_lost`` directamente en vez de recrear el
+        ``ByteTrack`` — recrearlo perdería todos los tracks activos y sus
+        IDs. Es el mismo cálculo que hace ``ByteTrack.__init__``
+        internamente (``max_time_lost = frame_rate/30 * lost_track_buffer``).
+        """
+        with self._lock:
+            self._byte_tracker.max_time_lost = int(
+                frame_rate / 30.0 * self.LOST_TRACK_BUFFER
+            )
 
     def reconfigure_line(self, start: sv.Point, end: sv.Point) -> None:
         """Replace the LineZone with new pixel coordinates. Thread-safe."""

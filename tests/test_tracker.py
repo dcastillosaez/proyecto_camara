@@ -291,3 +291,20 @@ def TEST_090_reconfigure_line_tracker_still_works_after(tracker):
     ):
         tracked, crossings = tracker.update(sv.Detections.empty())
     assert crossings == []
+
+
+# ─── set_frame_rate sincroniza max_time_lost sin recrear el tracker ─────────
+# Fase 18: AdaptiveRate cambia el ritmo de deteccion en caliente. Recrear el
+# ByteTrack perderia todos los tracks activos; set_frame_rate debe mutar
+# max_time_lost in-place, preservando la identidad del objeto ByteTrack
+# (y por tanto sus tracks activos).
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_093_set_frame_rate_updates_max_time_lost_in_place(tracker):
+    """set_frame_rate mutates max_time_lost without replacing the ByteTrack instance."""
+    bt_before = tracker._byte_tracker
+    tracker.set_frame_rate(30)
+    assert tracker._byte_tracker is bt_before  # mismo objeto, tracks preservados
+    assert tracker._byte_tracker.max_time_lost == int(30 / 30.0 * tracker.LOST_TRACK_BUFFER)
+
+    tracker.set_frame_rate(8)
+    assert tracker._byte_tracker.max_time_lost == int(8 / 30.0 * tracker.LOST_TRACK_BUFFER)
