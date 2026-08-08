@@ -133,3 +133,191 @@
 ---
 *Requirements defined: 2026-04-16*
 *Last updated: 2026-04-19 — v1.0 completo, todas las fases implementadas*
+
+---
+
+## v2 Requirements — Milestone v2.0 (Plataforma de Video Analytics)
+
+**Definidos:** 2026-08-07
+**Origen:** `propuesta_mejora/mejoras_inmediatas.md` + `propuesta_mejora/vulnerabilidades.md`
+**Especificación:** `propuesta_mejora/SPEC_v2.md`
+**Nota de nomenclatura:** los prefijos `CLIP-`, `OPS-` y `SET-` sustituyen a `REC-`, `UI-` y `CFG-` en v2 para no colisionar con los IDs de v1, que permanecen inmutables.
+
+### Pipeline de vídeo (PIPE)
+
+- [ ] **PIPE-01**: La captura RTSP publica siempre el último frame disponible y nunca bloquea esperando a un consumidor
+- [ ] **PIPE-02**: Cada consumidor tiene su propio slot de frame; un consumidor lento solo se pierde frames a sí mismo
+- [ ] **PIPE-03**: El worker de captura contiene únicamente captura, reescalado y publicación — sin detección, reconocimiento, zonas ni heatmap
+- [ ] **PIPE-04**: Detección, streaming y grabación corren como workers independientes que fallan y se reinician de forma aislada
+- [ ] **PIPE-05**: El fallo de un worker emite `DEGRADED_MODE` y no detiene el resto del pipeline
+- [ ] **PIPE-06**: Ningún hilo ejecuta `await` y ninguna corrutina ejecuta inferencia
+- [ ] **PIPE-07**: Toda estructura con crecimiento potencial (tracks, votos, cachés, estados de zona) tiene política de expiración verificada
+
+### Detección adaptativa (DET, continúa v1)
+
+- [ ] **DET-05**: El FPS de inferencia es independiente del de captura y se reduce automáticamente cuando la latencia de inferencia supera el presupuesto configurado
+
+### Motor de eventos (EVT)
+
+- [ ] **EVT-01**: El sistema emite eventos tipados de un catálogo cerrado (personas, identidad, comportamiento, objetos, sistema)
+- [ ] **EVT-02**: Un único objeto `Event` viaja al bus, a la persistencia y al WebSocket — un contrato, tres consumidores
+- [ ] **EVT-03**: Las detecciones no se persisten fila a fila; se agregan por minuto en `detection_stats`
+- [ ] **EVT-04**: Todo evento persistido incluye `camera_id`, severidad y contexto suficiente para reconstruirlo sin el frame original
+- [ ] **EVT-05**: El WebSocket v2 multiplexa canales (`event`, `metrics`, `tracks`, `system`) sobre una única conexión
+
+### Motor de reglas (RULE)
+
+- [ ] **RULE-01**: Las reglas se definen en YAML validado por esquema, con condiciones de evento, zona, horario y umbrales
+- [ ] **RULE-02**: Las acciones soportadas son grabar, capturar, notificar, telegram, webhook, log, subir a Drive y marcar flag
+- [ ] **RULE-03**: Cada regla tiene debounce configurable por `(regla, cámara, identidad)`
+- [ ] **RULE-04**: Una regla inválida se desactiva con un error legible sin impedir el arranque del sistema
+- [ ] **RULE-05**: Una regla puede probarse contra el histórico reciente antes de activarse
+
+### Persistencia v2 (DB, continúa v1)
+
+- [ ] **DB-10**: El esquema separa `cameras`, `persons`, `face_embeddings`, `tracks`, `events`, `detection_stats`, `recordings`, `zones`, `lines`, `rules`, `app_config` y `system_metrics`
+- [ ] **DB-11**: Las migraciones son idempotentes, se ejecutan al arrancar y registran la versión de esquema
+- [ ] **DB-12**: Antes de cada migración destructiva se genera una copia de seguridad de la base de datos
+- [ ] **DB-13**: El histórico de `crossing_events` se conserva íntegro como eventos `LINE_CROSSED`
+- [ ] **DB-14**: Existen los índices necesarios para que las consultas de timeline y analítica sobre 100.000 eventos respondan en menos de 500 ms
+
+### Grabación de clips (CLIP)
+
+- [ ] **CLIP-01**: Cada clip incluye un pre-buffer configurable anterior al evento que lo dispara
+- [ ] **CLIP-02**: Cada clip incluye un post-buffer configurable posterior a la última detección
+- [ ] **CLIP-03**: El pre-buffer se mantiene en RAM dentro de un presupuesto configurado y medible
+- [ ] **CLIP-04**: Cada grabación registra duración, tamaño, checksum SHA-256, miniatura, motivo, evento origen, persona y zona
+- [ ] **CLIP-05**: La miniatura se genera en el momento del evento y se sirve por API
+- [ ] **CLIP-06**: La retención local y la subida a la nube son políticas independientes y configurables
+- [ ] **CLIP-07**: Los fallos de subida se reintentan con backoff desde una cola persistente sin bloquear el pipeline
+
+### Observabilidad (OBS)
+
+- [ ] **OBS-01**: El sistema expone métricas en formato Prometheus y en JSON para el dashboard
+- [ ] **OBS-02**: Se contabilizan frames descartados por suscriptor, reconexiones RTSP y antigüedad del último frame
+- [ ] **OBS-03**: Se miden los FPS reales de captura, detección, tracking, reconocimiento y ReID por separado
+- [ ] **OBS-04**: Se mide la latencia de inferencia por etapa como histograma
+- [ ] **OBS-05**: Se mide la latencia end-to-end desde la captura del frame hasta el envío del evento por WebSocket
+- [ ] **OBS-06**: Se monitorizan profundidad de colas, tracks activos, cola de subida, fallos de subida, tamaño de BD y espacio libre en disco
+
+### Seguridad v2 (SEC)
+
+- [ ] **SEC-15**: No existe uso de `pickle` en código de producción; la migración de embeddings legacy es un script explícito de un solo uso
+- [ ] **SEC-16**: La ruta del modelo YOLO se valida por extensión y contención dentro del directorio del proyecto; un valor inválido aborta el arranque con mensaje claro
+
+### Reconocimiento facial (FACE)
+
+- [ ] **FACE-01**: Los embeddings faciales se generan con ArcFace (512D, L2-normalizado) sobre ONNXRuntime
+- [ ] **FACE-02**: Las caras se alinean por landmarks antes de generar el embedding
+- [ ] **FACE-03**: Se descartan las caras que no superan los umbrales de tamaño, nitidez y pose, registrando el motivo del descarte
+- [ ] **FACE-04**: La búsqueda de identidad sobre 1.000 personas se resuelve en menos de 5 ms
+- [ ] **FACE-05**: Existe un procedimiento de re-enrolamiento masivo desde las imágenes de la galería que reporta identidades migradas y fallidas
+- [ ] **FACE-06**: `dlib` y `face-recognition` dejan de ser dependencias del proyecto
+- [ ] **FACE-07**: Una identidad solo se confirma tras N votos coherentes en una ventana deslizante
+- [ ] **FACE-08**: Cada track tiene un estado de identidad explícito: UNKNOWN, CANDIDATE, CONFIRMED o TEMPORARILY_LOST
+- [ ] **FACE-09**: Una visita de una persona conocida genera un único evento de reconocimiento, no uno por frame
+- [ ] **FACE-10**: La pérdida y recuperación de un track no crea identidades duplicadas
+- [ ] **FACE-11**: El reconocimiento se dispara por evento (track nuevo, confianza baja, revalidación vencida), no ciegamente cada N frames
+
+### Re-identificación (REID)
+
+- [ ] **REID-01**: Se genera un embedding de apariencia por track mediante OSNet en ONNX
+- [ ] **REID-02**: Un track nuevo puede heredar la identidad de un track cerrado recientemente si la similitud supera el umbral y no hay conflicto con un track activo
+- [ ] **REID-03**: Una persona identificada que deja de mostrar la cara conserva su identidad
+- [ ] **REID-04**: El coste de ReID está acotado a una inferencia por track cada N segundos
+
+### Comprensión de escena (BEH)
+
+- [ ] **BEH-01**: El sistema detecta merodeo con umbrales de tiempo y desplazamiento configurables
+- [ ] **BEH-02**: El sistema detecta carrera e inmovilidad prolongada
+- [ ] **BEH-03**: El sistema detecta aglomeración a partir de un número configurable de tracks simultáneos
+- [ ] **BEH-04**: El sistema emite entrada y salida de zona por track con tiempo de permanencia
+- [ ] **BEH-05**: Cada evento de comportamiento incluye las magnitudes que lo justifican
+- [ ] **BEH-06**: Las clases detectadas son configurables más allá de "persona" (bicicleta, coche, moto, mochila, maleta)
+- [ ] **BEH-07**: El sistema detecta objetos abandonados y objetos retirados
+- [ ] **BEH-08**: El sistema expone un resumen de contexto de escena: hora, zona, personas totales, conocidas, desconocidas y nivel de actividad
+- [ ] **BEH-09**: El nivel de actividad se calcula contra la media móvil histórica de esa franja horaria
+
+### Interfaz de operaciones (OPS)
+
+- [ ] **OPS-01**: La lógica del frontend vive en módulos ES separados por responsabilidad, no en `index.html`
+- [ ] **OPS-02**: Ningún módulo de frontend supera las 300 líneas
+- [ ] **OPS-03**: La modularización mantiene paridad funcional completa con v1.2 y no introduce build step
+- [ ] **OPS-04**: La pantalla principal responde sin scroll a: si el sistema está bien, qué ocurre ahora y si ha pasado algo importante
+- [ ] **OPS-05**: El overlay de detecciones se dibuja sobre canvas alimentado por WebSocket, sin re-renderizar el stream MJPEG
+- [ ] **OPS-06**: La reconexión del WebSocket es automática y visible sin recargar la página
+- [ ] **OPS-07**: Los eventos se presentan como línea temporal con hora, severidad, descripción, zona y miniatura
+- [ ] **OPS-08**: Cada evento ofrece acciones directas: ver vídeo, ver captura, marcar como persona y descartar
+- [ ] **OPS-09**: Los filtros de eventos se resuelven en servidor con paginación por cursor
+- [ ] **OPS-10**: Un evento nuevo aparece en la interfaz en menos de un segundo
+- [ ] **OPS-11**: El centro de alertas agrupa alertas activas, muestra qué regla las disparó y permite silenciarlas
+- [ ] **OPS-12**: Existe una vista de analítica con personas por hora, ocupación por zona y heatmap
+- [ ] **OPS-13**: La analítica muestra ranking de personas por visitas y tendencia frente al periodo anterior
+- [ ] **OPS-14**: Las agregaciones se calculan en base de datos, no en el navegador
+- [ ] **OPS-15**: La analítica es exportable a CSV y JSON en el rango visible
+- [ ] **OPS-16**: Existe una vista de cámara con live view y salud en tiempo real (FPS, latencia, CPU, RAM, estado RTSP)
+- [ ] **OPS-17**: Los ajustes rápidos de detección y grabación son accesibles desde la vista de cámara
+- [ ] **OPS-18**: La configuración se edita desde la interfaz mediante un árbol de secciones
+- [ ] **OPS-19**: Los parámetros que requieren reinicio están claramente señalizados frente a los que se aplican en caliente
+- [ ] **OPS-20**: Cada sección de configuración permite restaurar los valores por defecto
+- [ ] **OPS-21**: Las zonas se dibujan, editan y borran directamente sobre el vídeo con coordenadas independientes de la resolución
+- [ ] **OPS-22**: Las líneas de conteo se dibujan sobre el vídeo con indicación visual de dirección
+- [ ] **OPS-23**: Las zonas tienen tipo (conteo, restringida, exclusión) y horario propio
+- [ ] **OPS-24**: Las reglas se componen desde formularios en la interfaz, sin editar YAML
+
+### Configuración runtime (SET)
+
+- [ ] **SET-01**: La configuración operativa se persiste en base de datos y es editable en caliente
+- [ ] **SET-02**: La precedencia es configuración runtime > `.env` > valor por defecto del código, documentada y testeada
+- [ ] **SET-03**: Todo parámetro tiene rango validado en servidor con mensaje de error legible
+- [ ] **SET-04**: Todo cambio de configuración queda auditado como evento con su diff
+
+### Testing v2 (TEST)
+
+- [ ] **TEST-01**: Existe un test de integración del pipeline completo con fuente RTSP sintética, ejecutable en CI sin cámara real
+- [ ] **TEST-02**: Playwright cubre los escenarios críticos de frontend: vídeo, cámara offline, reconexión WS, evento nuevo, filtros, clips, modales, PTZ, alertas y editor de zonas
+- [ ] **TEST-03**: La suite completa se ejecuta en menos de 5 minutos
+- [ ] **TEST-04**: CI ejecuta unit e integración en cada push y E2E en cada pull request
+- [ ] **TEST-05**: La cobertura de los paquetes `events`, `pipeline` y `perception` supera el 80%
+
+### Escalabilidad (SCALE)
+
+- [ ] **SCALE-01**: El pipeline de una cámara está encapsulado en una clase instanciable N veces
+- [ ] **SCALE-02**: `camera_id` está presente y es obligatorio en todas las tablas con dimensión de cámara
+- [ ] **SCALE-03**: Todos los endpoints v2 aceptan `camera_id`, con valor por defecto cuando solo hay una cámara
+- [ ] **SCALE-04**: Parar o reiniciar una cámara no afecta a las demás ni al servidor
+- [ ] **SCALE-05**: Se pueden añadir y configurar cámaras desde la interfaz sin reiniciar el servidor
+- [ ] **SCALE-06**: Existe vista mosaico multi-cámara y selector de cámara en la vista de operaciones
+- [ ] **SCALE-07**: Zonas, líneas y reglas son propias de cada cámara, con posibilidad de reglas globales
+- [ ] **SCALE-08**: El presupuesto de CPU se reparte automáticamente entre cámaras y la interfaz advierte al superarlo
+- [ ] **SCALE-09**: Todo el acceso a datos pasa por repositorios, permitiendo cambiar de SQLite a PostgreSQL sin tocar la lógica
+- [ ] **SCALE-10**: El bus de eventos tiene implementación in-process por defecto y una alternativa distribuida opcional
+- [ ] **SCALE-11**: La GPU se detecta automáticamente y se usa si está disponible, con fallback limpio a CPU
+- [ ] **SCALE-12**: Sin GPU, el comportamiento del sistema es idéntico al de la ruta CPU
+
+### Fuera de alcance v2.0 (backlog v2.1)
+
+- Detección de caídas mediante estimación de pose
+- Reconocimiento de matrículas (ALPR)
+- Búsqueda semántica de eventos en lenguaje natural
+- PWA / app móvil offline
+- Federación multi-sitio
+- Índice vectorial `hnswlib` (solo si el número de identidades supera 20.000)
+
+### Cobertura v2
+
+| Bloque | Requisitos | Fases |
+|--------|-----------|-------|
+| A — Robustez | PIPE (7), DET-05, EVT (5), RULE (5), DB (5), CLIP (7), OBS (6), SEC (2) | 17-22 |
+| B — IA | FACE (11), REID (4), BEH (9) | 23-27 |
+| C — Producto | OPS (24), SET (4), TEST (5) | 28-34 |
+| D — Escalabilidad | SCALE (12) | 35-38 |
+
+- Requisitos v2 totales: **107**
+- Mapeados a fases: **107**
+- Sin mapear: **0**
+- Completados: **0/107**
+
+---
+*Requisitos v2 definidos: 2026-08-07*
+*Especificación de referencia: propuesta_mejora/SPEC_v2.md*

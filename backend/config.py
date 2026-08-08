@@ -41,13 +41,6 @@ class Settings(BaseSettings):
         except ValueError:
             raise ValueError("yolo_model_path must be inside the project directory")
         return v
-    # --- Pipeline v2 (Fase 17) ---
-    # Activa el FrameBroker + CaptureWorker desacoplados (SPEC_v2.md ADR-01).
-    # Validado contra la camara real: 30 min sin crecimiento de latencia,
-    # 0 reconnects, FPS estable (17-02-SUMMARY.md). Default True desde
-    # 2026-08-07. Con False, RTSPStream captura directamente como en v1.2.
-    pipeline_v2: bool = True
-
     yolo_confidence: float = 0.45
     # COCO class IDs to detect. Default [0] = person.
     yolo_classes: list[int] = [0]
@@ -55,12 +48,8 @@ class Settings(BaseSettings):
     detection_label: str = "person"
     # YOLO inference size (imgsz). Fixed value = predictable CPU cost.
     yolo_imgsz: int = 640
-    # DEPRECATED (Fase 18) — sustituido por detection_target_fps/AdaptiveRate,
-    # que reacciona a la latencia real en vez de contar frames a ciegas.
-    # Solo lo sigue leyendo el RTSPStream legacy (pipeline_v2=False).
-    detect_every: int = 2
-    # Approximate real pipeline FPS, passed to ByteTrack so its lost-track
-    # buffer is measured in real seconds (its default assumes 30 FPS).
+    # FPS inicial que se pasa a ByteTrack; DetectionWorker lo re-sincroniza
+    # en caliente con el FPS efectivo de AdaptiveRate (set_frame_rate).
     tracker_frame_rate: int = 15
 
     # --- Inferencia adaptativa (Fase 18) ---

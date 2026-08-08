@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Estilo de respuesta
+
+Respuestas **cortas y precisas**. El objetivo es ahorrar tokens:
+
+- Ir al grano: el resultado primero, sin preámbulo ni recapitulación de lo ya hecho.
+- No repetir en el chat lo que ya está en el código, el diff o el mensaje de commit.
+- Nada de resúmenes largos al terminar una tarea: 2-4 líneas bastan.
+- Al ejecutar tests, reportar el marcador (`176/176`), no volcar la salida.
+- Reservar la explicación extensa para decisiones de diseño no obvias, hallazgos inesperados o cuando el usuario la pida.
+- Los mensajes de commit y los documentos sí van completos — la brevedad es solo para el chat.
+
 ## Descripción del proyecto
 
 Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta personas en tiempo real con YOLO y muestra estadísticas de actividad (conteo acumulado, histograma por hora, últimos eventos).
@@ -49,33 +60,47 @@ python -c "import cv2; cap=cv2.VideoCapture('rtsp://192.168.1.132:554/stream1');
 ```
 backend/
   main.py        — FastAPI app, monta rutas y WebSocket
-  stream.py      — Hilo de captura RTSP; genera frames MJPEG y publica en cola
-  detector.py    — Wrapper de YOLOv8; recibe frame BGR, devuelve lista de detecciones
-  tracker.py     — Contador de cruces (línea virtual); evita dobles conteos
-  database.py    — Modelos SQLite: tabla `events` (timestamp, count_delta)
-  config.py      — Variables (URL cámara, umbral confianza, puerto, etc.)
+  pipeline/      — Pipeline de vídeo desacoplado (v2.0, fases 17-18)
+    broker.py      — FrameBroker: fan-out latest-frame, un slot por suscriptor
+    capture.py     — CaptureWorker: solo captura RTSP, reescalado y publicación
+    detection.py   — DetectionWorker: YOLO + ByteTrack + zonas + heatmap
+    streaming.py   — StreamingWorker: overlay + encode JPEG para MJPEG
+    recording.py   — RecordingWorker: alimenta al ClipRecorder desde el broker
+    recognition.py — RecognitionWorker: reconocimiento facial con ritmo propio
+    tracking.py    — TrackRegistry: estado compartido de tracks entre workers
+    rate.py        — AdaptiveRate: FPS por escalones según latencia real
+    supervisor.py  — WorkerSupervisor: reinicia workers caídos, modo degradado
+    manager.py     — CameraPipeline (fachada) + CameraManager (N cámaras)
+  detector.py    — Wrapper de YOLO; recibe frame BGR, devuelve detecciones
+  tracker.py     — ByteTrack + LineZone: IDs persistentes y conteo de cruces
+  recognizer.py  — Reconocimiento facial persistente (dlib/face_recognition)
+  recorder.py    — ClipRecorder: graba .mp4 mientras hay personas en escena
+  database.py    — Modelos SQLite (events, zones, captures, recordings)
+  config.py      — Variables (URL cámara, umbral confianza, FPS objetivo…)
 frontend/
   index.html     — Dashboard único: vídeo + métricas + gráficas
   app.js         — WebSocket listener, actualiza Chart.js y contadores DOM
 data/
   events.db      — SQLite generado en runtime
 tests/
-  test_detector.py
-  test_tracker.py
 ```
 
 ### Flujo de datos
 
+Invariante central: **la captura nunca espera a la IA**. Cada worker consume
+del broker a su propio ritmo y solo se pierde frames a sí mismo.
+
 ```
 Cámara RTSP
-  └─► stream.py (hilo) ─► cola de frames (asyncio.Queue)
+  └─► CaptureWorker (hilo) ─► FrameBroker (latest-frame, slot por suscriptor)
         │
-        ├─► /video_feed  (MJPEG, GET)  → <img> en el dashboard
-        │
-        └─► detector.py (YOLOv8) ─► tracker.py ─► database.py
-                                          │
-                                          └─► WebSocket broadcast
-                                                └─► app.js → Chart.js
+        ├─► StreamingWorker  ─► /video_feed (MJPEG) → <img> del dashboard
+        ├─► RecordingWorker  ─► ClipRecorder → .mp4 → Google Drive
+        ├─► RecognitionWorker ─► identidades → TrackRegistry
+        └─► DetectionWorker (YOLO → ByteTrack → LineZone)
+                 │                    │
+                 ├─► TrackRegistry ◄──┘  (estado compartido entre workers)
+                 └─► event_queue ─► database.py ─► WebSocket ─► app.js
 ```
 
 ### Endpoints principales
@@ -86,6 +111,7 @@ Cámara RTSP
 | GET | `/video_feed` | Stream MJPEG |
 | WS | `/ws` | Push de eventos en tiempo real (JSON) |
 | GET | `/api/stats` | Resumen: total hoy, por hora (últimas 24 h) |
+| GET | `/api/v2/cameras/{id}/health` | Salud del pipeline: `capture_fps` y `detection_fps` (distintos a propósito), estado de workers, `degraded`, stats del broker |
 
 ### Modelo de evento (WebSocket / API)
 
@@ -101,10 +127,12 @@ Cámara RTSP
 ## Decisiones de diseño
 
 - **MJPEG sobre HTTP** en lugar de WebRTC para simplicidad: no requiere STUN/TURN y funciona en LAN sin latencia perceptible.
-- **YOLOv8n** (nano) para mantener <30 ms de inferencia en CPU modesta. Si hay GPU disponible, subir a `yolov8s`.
+- **YOLO26n** (nano) para mantener la inferencia baja en CPU modesta. Si hay GPU disponible, subir de modelo.
 - **Línea virtual de conteo** en lugar de contar detecciones por frame: evita contar la misma persona varias veces mientras está en escena.
 - **SQLite** es suficiente para el volumen de datos (pocos eventos/hora); no se necesita PostgreSQL.
 - El frontend es HTML estático servido por FastAPI; no hay build step ni framework JS pesado.
+- **Perder frames antes que acumular latencia**: el broker entrega solo el último frame a cada suscriptor. `dropped` creciente en `/api/v2/.../health` es señal de buen funcionamiento, no de error.
+- **Ningún hilo hace `await`, ninguna corrutina hace inferencia**: invariante verificado por `tests/test_architecture.py` con análisis AST.
 
 ## Variables de entorno (`.env`)
 
@@ -263,8 +291,8 @@ Clonado (shallow, no versionado — ver `.gitignore`) en `third_party/supervisio
 ## Architecture
 
 - **Entorno**: Windows 11, Python 3.12 via `py -3.12`, venv en `.venv/` (Scripts/, no bin/)
-- **Estructura**: `backend/` (main, stream, detector, tracker, database, config), `frontend/` (index.html, app.js), `tests/`, `data/`
-- **Flujo de datos**: Camara RTSP → stream.py (hilo) → detector.py (YOLO26n) → tracker.py (ByteTrack+LineZone) → database.py (SQLite async) → WebSocket → frontend
+- **Estructura**: `backend/` (main, pipeline/, detector, tracker, recognizer, recorder, database, config), `frontend/` (index.html, app.js), `tests/`, `data/`
+- **Flujo de datos**: Camara RTSP → CaptureWorker → FrameBroker → {Detection, Streaming, Recording, Recognition} workers → TrackRegistry / event_queue → database.py (SQLite async) → WebSocket → frontend
 - **Streaming**: MJPEG sobre HTTP via FastAPI StreamingResponse
 - **DB**: SQLite WAL mode, aiosqlite + SQLAlchemy 2.0 async
 - **Frontend**: HTML+JS vanilla, Chart.js CDN, sin build step

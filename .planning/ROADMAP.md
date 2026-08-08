@@ -326,11 +326,11 @@ Plans:
   4. El uso de CPU en escena con una persona baja respecto a v1.2, con medición documentada antes/después
   5. Ningún hilo hace await y ninguna corrutina hace inferencia (verificado por test de arquitectura)
 **Spec**: SPEC_v2.md §5.3
-**Plans:** 1/2 plans complete — `.planning/phases/18-workers-desacoplados-e-inferencia-adaptativa/`
+**Plans:** 2/2 plans complete — `.planning/phases/18-workers-desacoplados-e-inferencia-adaptativa/`
 
 Plans:
 - [x] 18-01-PLAN.md — AdaptiveRate, TrackRegistry y DetectionWorker
-- [ ] 18-02-PLAN.md — Streaming/Recording/Recognition workers, supervisor y retirada de RTSPStream
+- [x] 18-02-PLAN.md — Streaming/Recording/Recognition workers, supervisor y retirada de RTSPStream (Tasks 1-5 ✓; Task 6 checkpoint con camara real pendiente)
 
 ### Phase 19: Event Engine, Rule Engine y esquema de datos v2
 **Goal**: El sistema deja de razonar en detecciones y pasa a emitir eventos tipados evaluados contra reglas
