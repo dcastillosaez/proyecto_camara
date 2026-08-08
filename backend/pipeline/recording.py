@@ -72,6 +72,10 @@ class RecordingWorker:
         self._thread.start()
         self._recorder.start()
 
+    def is_alive(self) -> bool:
+        """True si el hilo del worker sigue vivo (lo consulta WorkerSupervisor)."""
+        return self._thread is not None and self._thread.is_alive()
+
     def stop(self, timeout: float = 5.0) -> None:
         self._recorder.stop()
         self._running = False

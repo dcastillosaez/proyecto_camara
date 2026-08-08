@@ -88,6 +88,10 @@ class DetectionWorker:
         )
         self._thread.start()
 
+    def is_alive(self) -> bool:
+        """True si el hilo del worker sigue vivo (lo consulta WorkerSupervisor)."""
+        return self._thread is not None and self._thread.is_alive()
+
     def stop(self, timeout: float = 5.0) -> None:
         self._running = False
         if self._thread is not None:
