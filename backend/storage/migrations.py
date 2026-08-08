@@ -102,6 +102,10 @@ def _migrate_v1_to_v2(conn: Connection) -> None:
     # 3. Extend pre-existing v1 tables with the new columns (nullable, camera_id defaulted).
     if _table_exists(conn, "zones"):
         _add_missing_columns(conn, "zones", models.Zone)
+        # backend/database.py's legacy Zone ORM still owns zone CRUD and uses
+        # polygon_json (not the v2 `polygon` JSON column) — guarantee it exists
+        # even on a table create_all() just created fresh with only the v2 shape.
+        _ensure_columns(conn, "zones", {"polygon_json": "TEXT", "created_at": "DATETIME"})
     if _table_exists(conn, "recordings"):
         _add_missing_columns(conn, "recordings", models.Recording)
         # backend/database.py's legacy Recording ORM (gdrive_id/upload_status/duration_secs)

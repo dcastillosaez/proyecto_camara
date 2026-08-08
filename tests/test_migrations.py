@@ -188,6 +188,24 @@ def TEST_migration_on_empty_db(tmp_path):
     assert _schema_version(engine) == SCHEMA_VERSION
 
 
+def TEST_fresh_db_supports_legacy_zone_and_recording_columns(tmp_path):
+    """A brand-new DB (no prior v1 data) must still satisfy backend.database's
+    legacy Zone/Recording ORM columns (polygon_json, created_at, gdrive_id,
+    upload_status, duration_secs) — create_all() alone only produces the v2
+    shape, since there's no pre-existing v1 table to extend."""
+    db_path = tmp_path / "fresh.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+
+    with engine.connect() as conn:
+        zone_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(zones)"))}
+        recording_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(recordings)"))}
+
+    assert {"polygon_json", "created_at"}.issubset(zone_cols)
+    assert {"gdrive_id", "upload_status", "duration_secs", "created_at"}.issubset(recording_cols)
+
+
 def TEST_zones_and_recordings_preserved(tmp_path):
     db_path = tmp_path / "v1.db"
     make_v1_db(db_path, with_zone=True, with_recording=True)
