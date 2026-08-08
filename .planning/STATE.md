@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Fase 17 completa. Fase 18: 18-01 completo (AdaptiveRate, TrackRegistry, DetectionWorker) — 18-02 pendiente (StreamingWorker, RecordingWorker, RecognitionWorker, WorkerSupervisor, retirada de RTSPStream; su Task 6 es checkpoint con camara real)."
+stopped_at: "Fase 17 completa. Fase 18: 18-01 y 18-02 Tasks 1-5 completas (RTSPStream retirado, pipeline de 5 workers + supervisor). Task 6 (checkpoint CPU/crash/1h con camara real) pendiente."
 last_updated: "2026-08-07"
 last_activity: 2026-08-07
 progress:
   total_phases: 22
   completed_phases: 1
   total_plans: 4
-  completed_plans: 3
-  percent: 7
+  completed_plans: 4
+  percent: 9
 previous_milestone:
   name: v1.2
   status: complete
