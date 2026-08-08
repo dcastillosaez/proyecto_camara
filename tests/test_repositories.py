@@ -104,6 +104,39 @@ async def TEST_detection_stats_upsert(db):
     assert rows[0]["max_concurrent"] == 3
 
 
+async def TEST_count_since_and_hourly_counts(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 1, 9, 15)))
+    await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 1, 9, 45)))
+    await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 1, 14, 0)))
+    await repo.insert(make_event(type=EventType.INTRUSION, ts=datetime.datetime(2026, 1, 1, 9, 30)))
+
+    count = await repo.count_since(datetime.datetime(2026, 1, 1), type=EventType.LINE_CROSSED)
+    hourly = await repo.hourly_counts(datetime.datetime(2026, 1, 1), type=EventType.LINE_CROSSED)
+
+    assert count == 3
+    assert hourly == {"09": 2, "14": 1}
+
+
+async def TEST_delete_before_and_delete_range(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(ts=datetime.datetime(2026, 1, 1)))
+    await repo.insert(make_event(ts=datetime.datetime(2026, 2, 1)))
+    await repo.insert(make_event(ts=datetime.datetime(2026, 3, 1)))
+
+    deleted_before = await repo.delete_before(datetime.datetime(2026, 1, 15))
+    remaining, _ = await repo.query(limit=50)
+    assert deleted_before == 1
+    assert len(remaining) == 2
+
+    deleted_range = await repo.delete_range(datetime.datetime(2026, 2, 1), datetime.datetime(2026, 2, 28))
+    remaining, _ = await repo.query(limit=50)
+    assert deleted_range == 1
+    assert len(remaining) == 1
+
+
 async def TEST_indexes_exist(db):
     db_file, sf = db
     expected = {

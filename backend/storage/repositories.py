@@ -11,7 +11,7 @@ import datetime
 import json
 from typing import Any
 
-from sqlalchemy import and_, select, tuple_
+from sqlalchemy import and_, func, select, text, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.events.types import Event as EventDTO
@@ -130,6 +130,60 @@ class EventRepo:
         items = [self._to_dto(r) for r in rows]
         next_cursor = _encode_cursor(rows[-1].ts, rows[-1].id) if len(rows) == limit else None
         return items, next_cursor
+
+    async def count_since(self, ts_from: datetime.datetime, type: EventType | None = None) -> int:
+        conditions = [models.Event.ts >= ts_from]
+        if type is not None:
+            conditions.append(models.Event.type == type.value)
+        async with self._sf() as session:
+            result = await session.execute(
+                select(func.count()).select_from(models.Event).where(and_(*conditions))
+            )
+            return result.scalar() or 0
+
+    async def hourly_counts(
+        self, ts_from: datetime.datetime, type: EventType | None = None
+    ) -> dict[str, int]:
+        conditions = [models.Event.ts >= ts_from]
+        if type is not None:
+            conditions.append(models.Event.type == type.value)
+        async with self._sf() as session:
+            result = await session.execute(
+                select(
+                    func.strftime("%H", models.Event.ts).label("hour"),
+                    func.count().label("count"),
+                )
+                .where(and_(*conditions))
+                .group_by(text("hour"))
+                .order_by(text("hour"))
+            )
+            return {row.hour: row.count for row in result.all()}
+
+    async def delete_before(self, cutoff: datetime.datetime, type: EventType | None = None) -> int:
+        conditions = [models.Event.ts < cutoff]
+        if type is not None:
+            conditions.append(models.Event.type == type.value)
+        async with self._sf() as session:
+            async with session.begin():
+                result = await session.execute(select(models.Event).where(and_(*conditions)))
+                rows = result.scalars().all()
+                for row in rows:
+                    await session.delete(row)
+        return len(rows)
+
+    async def delete_range(
+        self, from_dt: datetime.datetime, to_dt: datetime.datetime, type: EventType | None = None
+    ) -> int:
+        conditions = [models.Event.ts >= from_dt, models.Event.ts <= to_dt]
+        if type is not None:
+            conditions.append(models.Event.type == type.value)
+        async with self._sf() as session:
+            async with session.begin():
+                result = await session.execute(select(models.Event).where(and_(*conditions)))
+                rows = result.scalars().all()
+                for row in rows:
+                    await session.delete(row)
+        return len(rows)
 
 
 class DetectionStatRepo:
