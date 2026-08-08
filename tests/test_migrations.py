@@ -53,7 +53,10 @@ def make_v1_db(path, n_crossings=3, with_zone=True, with_recording=True):
 def _schema_version(engine) -> int:
     with engine.connect() as conn:
         row = conn.execute(text("SELECT value FROM app_config WHERE key='schema_version'")).fetchone()
-        return json.loads(row[0]) if row else 0
+    if not row:
+        return 0
+    value = row[0]
+    return int(value) if isinstance(value, (int, float)) else json.loads(value)
 
 
 def TEST_migration_is_idempotent(tmp_path):
