@@ -140,6 +140,10 @@ class RuleEngine:
     def invalid_rules(self) -> list[tuple[str, str]]:
         return list(self._invalid)
 
+    @property
+    def rules(self) -> list[Rule]:
+        return list(self._rules)
+
     @staticmethod
     def _debounce_key(rule: Rule, event: Event) -> tuple[str, str, str]:
         who = event.person_id if event.person_id is not None else event.track_id

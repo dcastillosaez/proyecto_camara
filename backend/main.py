@@ -31,11 +31,11 @@ from backend.database import (
     get_events_filtered,
     get_recent_events,
     get_recent_recordings,
+    get_session_factory,
     get_stats_today,
     get_zones,
     init_db,
     insert_capture,
-    insert_event,
     insert_recording,
     purge_old_events,
     purge_old_recordings,
@@ -44,11 +44,17 @@ from backend.database import (
     delete_zone,
 )
 from backend.detector import PersonDetector
+from backend.events import actions as event_actions
+from backend.events.bus import EventBus
+from backend.events.engine import EventEngine
+from backend.events.rules import RuleEngine, load_rules
+from backend.events.types import Event, EventType
 from backend.gdrive import DriveUploader
 from backend.notifier import Notifier
 from backend.pipeline import CameraManager, CameraPipeline
 from backend.recognizer import PersonRecognizer
 from backend.recorder import ClipRecorder
+from backend.storage.repositories import DetectionStatRepo, EventRepo
 from backend.tracker import PersonTracker
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -60,12 +66,16 @@ logger = logging.getLogger(__name__)
 rtsp_stream: "CameraPipeline | None" = None
 camera_manager: CameraManager | None = None
 notifier: Notifier | None = None
+event_bus: EventBus | None = None
+event_engine: EventEngine | None = None
+rule_engine: RuleEngine | None = None
 _ws_clients: set[WebSocket] = set()
+_ws_v2_clients: set[WebSocket] = set()
 _start_time: float = time.time()
 
 
 async def _broadcast(message: dict) -> None:
-    """Send *message* to every connected WebSocket client, dropping dead ones."""
+    """Send *message* to every connected v1 WebSocket client, dropping dead ones."""
     dead: set[WebSocket] = set()
     payload = json.dumps(message)
     for ws in _ws_clients:
@@ -76,50 +86,66 @@ async def _broadcast(message: dict) -> None:
     _ws_clients.difference_update(dead)
 
 
-async def _drain_events(queue: asyncio.Queue) -> None:
-    """Consume crossing events from the stream thread, persist, and broadcast."""
-    while True:
-        event = await queue.get()
+async def _broadcast_v2(event: Event) -> None:
+    """Send the {"v": 2, "kind": "event", ...} envelope to every /api/v2/ws client."""
+    dead: set[WebSocket] = set()
+    payload = json.dumps({"v": 2, "kind": "event", "data": json.loads(event.model_dump_json())})
+    for ws in _ws_v2_clients:
         try:
-            is_intrusion = bool(event.get("is_intrusion", False))
-            await insert_event(
-                event["direction"],
-                event["timestamp"],
-                event.get("person_name"),
-                is_intrusion,
-            )
-            stats = await get_stats_today()
-            current_hour = datetime.datetime.now().strftime("%H")
-            await _broadcast({
-                "type": "detection",
-                "timestamp": event["timestamp"].isoformat(),
-                "direction": event["direction"],
-                "total_today": stats["total_today"],
-                "last_hour": stats["hourly"].get(current_hour, 0),
-                "person_name": event.get("person_name"),
-                "is_intrusion": is_intrusion,
-            })
-            if notifier:
-                await notifier.fire_event(event)
-                await notifier.fire_count_threshold(stats["total_today"])
-        except Exception as exc:
-            logger.error("DB insert / broadcast failed: %s", exc)
+            await ws.send_text(payload)
+        except Exception:
+            dead.add(ws)
+    _ws_v2_clients.difference_update(dead)
+
+
+async def _broadcast_v1_compat(event: Event) -> None:
+    """Bridge typed LINE_CROSSED events to the v1 /ws "detection" message format.
+
+    The v1 frontend depends on this shape; it's replaced wholesale in Fase 28.
+    """
+    if event.type != EventType.LINE_CROSSED:
+        return
+    stats = await get_stats_today()
+    current_hour = event.ts.strftime("%H")
+    await _broadcast({
+        "type": "detection",
+        "timestamp": event.ts.isoformat(),
+        "direction": event.payload.get("direction", "?"),
+        "total_today": stats["total_today"],
+        "last_hour": stats["hourly"].get(current_hour, 0),
+        "person_name": event.payload.get("person_name"),
+        "is_intrusion": bool(event.payload.get("is_intrusion", False)),
+    })
 
 
 async def _camera_watchdog(check_interval: float = 10.0) -> None:
-    """Periodically detect camera offline/online state and fire alerts."""
+    """Periodically detect camera offline/online state and emit CAMERA_OFFLINE/RECOVERED."""
     was_offline = False
     while True:
         await asyncio.sleep(check_interval)
-        if rtsp_stream is None or notifier is None:
+        if rtsp_stream is None or event_engine is None:
             continue
         health = rtsp_stream.health
         is_offline = not health.connected or health.last_frame_age_s > check_interval
+        now = datetime.datetime.now()
         if is_offline and not was_offline:
-            await notifier.fire_camera_offline()
+            event_engine.camera_offline(now)
         elif not is_offline and was_offline:
-            await notifier.fire_camera_online()
+            event_engine.camera_recovered(now)
         was_offline = is_offline
+
+
+async def _detection_stats_flush_loop(interval: float = 30.0) -> None:
+    """Periodically persist completed per-minute detection_stats buckets."""
+    while True:
+        await asyncio.sleep(interval)
+        if event_engine is None:
+            continue
+        try:
+            stat_repo = DetectionStatRepo(get_session_factory())
+            await event_engine.flush_stats(stat_repo, datetime.datetime.now())
+        except Exception:
+            logger.exception("detection_stats flush failed")
 
 
 async def _purge_loop() -> None:
@@ -156,14 +182,47 @@ async def _purge_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global rtsp_stream, camera_manager
+    global rtsp_stream, camera_manager, notifier, event_bus, event_engine, rule_engine
     settings = get_settings()
 
-    await init_db()
+    await init_db()  # idempotent: also runs the v1 -> v2 schema migration
 
-    event_queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
-    drain_task = asyncio.create_task(_drain_events(event_queue))
+    event_bus = EventBus(loop=loop)
+    event_engine = EventEngine(event_bus, camera_id="cam1")
+
+    rules_path = Path("config/rules.yaml")
+    if rules_path.exists():
+        loaded_rules, rule_errors = load_rules(str(rules_path))
+        for name, reason in rule_errors:
+            logger.error("Regla invalida %r: %s", name, reason)
+    else:
+        loaded_rules, rule_errors = [], []
+        logger.warning("%s no existe — arrancando sin reglas (ver scripts/generate_initial_rules.py)", rules_path)
+    rule_engine = RuleEngine(loaded_rules, registry=event_actions.ACTIONS, invalid=rule_errors)
+
+    event_repo = EventRepo(get_session_factory())
+
+    async def _persist_event(event: Event) -> None:
+        try:
+            await event_repo.insert(event)
+        except Exception:
+            logger.exception("Failed to persist event %s", event.id)
+
+    async def _apply_rules(event: Event) -> None:
+        try:
+            await rule_engine.evaluate(event)
+        except Exception:
+            logger.exception("RuleEngine evaluation failed for event %s", event.id)
+
+    # Cada suscriptor recibe el mismo objeto Event por referencia (EVT-02) y corre
+    # en su propia tarea — el orden de suscripcion no determina el de ejecucion,
+    # pero no importa aqui: el id del evento ya viene fijado (uuid4 client-side)
+    # antes de publicarse, no lo genera la persistencia.
+    event_bus.subscribe("persistence", _persist_event)
+    event_bus.subscribe("websocket_v1_compat", _broadcast_v1_compat)
+    event_bus.subscribe("websocket_v2", _broadcast_v2)
+    event_bus.subscribe("rules", _apply_rules)
 
     detector = PersonDetector(
         model_path=settings.yolo_model_path,
@@ -307,8 +366,7 @@ async def lifespan(app: FastAPI):
         detector=detector,
         tracker=tracker,
         recognizer=recognizer,
-        event_loop=loop,
-        event_queue=event_queue,
+        event_engine=event_engine,
         is_intrusion=lambda: not _is_in_schedule(),
         recorder_factory=_recorder_factory,
         on_identified=_save_gallery_capture,
@@ -334,26 +392,23 @@ async def lifespan(app: FastAPI):
     # Load persisted zones into the detection worker
     pipeline.set_zones(await get_zones())
 
-    global notifier
     notifier = Notifier(
         webhook_url=settings.alert_webhook_url,
         telegram_token=settings.alert_telegram_token,
         telegram_chat_id=settings.alert_telegram_chat_id,
-        alert_on_intrusion=settings.alert_on_intrusion,
-        alert_on_unknown=settings.alert_on_unknown,
-        alert_on_detection=settings.alert_on_detection,
-        cooldown_secs=settings.alert_cooldown_secs,
-        count_threshold=settings.alert_count_threshold,
     )
+    event_actions.configure(notifier=notifier, emit=event_bus.publish)
+
     watchdog_task = asyncio.create_task(_camera_watchdog())
     purge_task = asyncio.create_task(_purge_loop())
+    stats_flush_task = asyncio.create_task(_detection_stats_flush_loop())
 
     yield
+    stats_flush_task.cancel()
     purge_task.cancel()
     watchdog_task.cancel()
     camera_manager.stop_all()   # para los workers, incluido el recorder
     uploader.stop()
-    drain_task.cancel()
     logger.info("Pipeline detenido")
 
 
@@ -596,6 +651,72 @@ async def websocket_endpoint(ws: WebSocket, token: str | None = Query(default=No
         _ws_clients.discard(ws)
 
 
+# ---------------------------------------------------------------------------
+# Fase 19 — API v2: eventos tipados y motor de reglas
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/v2/events")
+async def api_v2_events(
+    type: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
+    person_id: int | None = Query(default=None),
+    zone_id: str | None = Query(default=None),
+    camera_id: str | None = Query(default=None),
+    from_dt: datetime.datetime | None = Query(default=None, alias="from"),
+    to_dt: datetime.datetime | None = Query(default=None, alias="to"),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """Typed events with filters and cursor pagination (EventRepo.query)."""
+    from backend.events.types import Severity
+
+    try:
+        event_type = EventType(type) if type else None
+        event_severity = Severity(severity) if severity else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    repo = EventRepo(get_session_factory())
+    items, next_cursor = await repo.query(
+        type=event_type, severity=event_severity, person_id=person_id,
+        zone_id=zone_id, camera_id=camera_id, ts_from=from_dt, ts_to=to_dt,
+        cursor=cursor, limit=limit,
+    )
+    return {
+        "events": [json.loads(e.model_dump_json()) for e in items],
+        "cursor": next_cursor,
+    }
+
+
+@app.get("/api/v2/rules")
+async def api_v2_rules():
+    """Loaded rules plus any that failed validation, with their reason."""
+    if rule_engine is None:
+        raise HTTPException(status_code=503, detail="rule engine not initialised")
+    return {
+        "rules": [json.loads(r.model_dump_json()) for r in rule_engine.rules],
+        "invalid": [{"name": name, "reason": reason} for name, reason in rule_engine.invalid_rules],
+    }
+
+
+@app.websocket("/api/v2/ws")
+async def websocket_v2_endpoint(ws: WebSocket, token: str | None = Query(default=None)):
+    """Unified v2 channel — currently emits {"kind": "event", ...}; metrics/tracks/system follow later phases."""
+    if not verify_ws_token(token):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    _ws_v2_clients.add(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _ws_v2_clients.discard(ws)
+
+
 @app.get("/persons")
 async def persons():
     """Return all known persons with visit history."""
@@ -803,10 +924,14 @@ async def api_alerts_test():
 
 @app.get("/api/alerts/status")
 async def api_alerts_status():
-    """Return notifier runtime status (last fired times, cooldown)."""
+    """Return notifier channels and loaded rules (decision logic now lives in rules.yaml)."""
     if not notifier:
         raise HTTPException(status_code=503, detail="notifier not initialised")
-    return notifier.status()
+    return {
+        "active_channels": notifier.active_channels,
+        "rules": [r.name for r in rule_engine.rules] if rule_engine else [],
+        "invalid_rules": rule_engine.invalid_rules if rule_engine else [],
+    }
 
 
 @app.get("/persons/{person_id}/captures")

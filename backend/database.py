@@ -94,6 +94,11 @@ def _event_repo() -> EventRepo:
     return EventRepo(_get_session_factory())
 
 
+def get_session_factory():
+    """Expose the async session factory for other repositories (main.py wiring)."""
+    return _get_session_factory()
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
