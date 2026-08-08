@@ -1,102 +1,284 @@
-"""RecordingWorker — alimenta al ClipRecorder desde el broker.
+"""RecordingWorker — feeds a RingFrameBuffer continuously and assembles clips
+with pre/post-buffer context around triggering events (Fase 20, ADR-07).
 
-No cambia la logica de grabacion (ClipRecorder se porta tal cual): solo
-cambia de donde vienen los frames. El worker expone la misma interfaz
-minima que ClipRecorder consumia de RTSPStream (get_frame /
-get_live_count), asi que el recorder no se entera del cambio.
-
-El pre/post-buffer llega en la Fase 20.
+Two threads:
+  _feed_loop      broker -> RingFrameBuffer (always) + live queue (while a clip is active)
+  _assembly_loop  drains the pre-buffer, writes the clip, extends its deadline on
+                  new requests instead of opening a second overlapping clip, and
+                  keeps writing live frames until post_buffer_secs after the last
+                  request — all off the capture critical path.
 """
 
 from __future__ import annotations
 
 import logging
+import queue
 import threading
-from typing import TYPE_CHECKING, Callable
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable
 
-import numpy as np
-
+from backend.pipeline.prebuffer import RingFrameBuffer
+from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.tracking import TrackRegistry
+from backend.recorder import ClipWriter
 
 if TYPE_CHECKING:
-    from backend.pipeline.broker import Subscription
+    from backend.pipeline.broker import Frame, Subscription
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ClipRequest:
+    reason: str
+    trigger_ts: datetime
+    trigger_event_id: str | None = None
+    person_id: int | None = None
+    zone_id: str | None = None
+
+
+@dataclass
+class ClipResult:
+    path: str
+    started_at: datetime
+    ended_at: datetime
+    reason: str
+    trigger_event_id: str | None
+    person_id: int | None
+    zone_id: str | None
+
+
+@dataclass
+class _ActiveClip:
+    writer: ClipWriter
+    started_at: datetime
+    deadline: datetime
+    request: ClipRequest
+
+
 class RecordingWorker:
-    """
-    Adaptador broker → ClipRecorder.
-
-    Mantiene el ultimo frame publicado y el numero de personas vivas
-    (leido del TrackRegistry, no de una deteccion propia), y se lo ofrece
-    al ClipRecorder por la misma interfaz que este ya usaba.
-    """
-
     def __init__(
         self,
         sub: Subscription,
         registry: TrackRegistry,
-        recorder_factory: Callable[["RecordingWorker"], object],
+        clips_dir: str = "data/clips",
+        fps: float = 15.0,
+        pre_buffer_secs: float = 10.0,
+        post_buffer_secs: float = 10.0,
+        pre_buffer_max_mb: int = 48,
+        pre_buffer_jpeg_quality: int = 85,
+        codec: str = "mp4v",
+        on_clip_ready: Callable[[ClipResult], None] | None = None,
+        on_failure: Callable[[str], None] | None = None,
+        live_queue_max: int = 0,
     ) -> None:
         self._sub = sub
         self._registry = registry
-        self._lock = threading.Lock()
-        self._frame: np.ndarray | None = None
+        self._clips_dir = Path(clips_dir)
+        self._fps = fps
+        self._post_buffer_secs = post_buffer_secs
+        self._codec = codec
+        self._on_clip_ready = on_clip_ready
+        self._on_failure = on_failure
+
+        self._prebuffer = RingFrameBuffer(
+            seconds=pre_buffer_secs, fps=fps,
+            max_bytes=pre_buffer_max_mb * 1024 * 1024,
+            quality=pre_buffer_jpeg_quality,
+        )
+        self._rate = AdaptiveRate(target_fps=fps, min_fps=fps, max_fps=fps)
+
+        self._requests: queue.Queue[ClipRequest] = queue.Queue()
+        max_live = live_queue_max or max(1, int(fps * (post_buffer_secs + 30)))
+        self._live_queue: queue.Queue = queue.Queue(maxsize=max_live)
+        self._live_dropped = 0
+
+        self._frame_size: tuple[int, int] = (1280, 720)
         self._running = False
-        self._thread: threading.Thread | None = None
-        # El recorder recibe este worker como "stream": expone get_frame()
-        # y get_live_count(), que es todo lo que ClipRecorder necesita.
-        self._recorder = recorder_factory(self)
-
-    # ------------------------------------------------------------------
-    # Interfaz consumida por ClipRecorder (compatible con RTSPStream)
-    # ------------------------------------------------------------------
-
-    def get_frame(self) -> np.ndarray | None:
-        with self._lock:
-            return self._frame.copy() if self._frame is not None else None
-
-    def get_live_count(self) -> int:
-        return len(self._registry.active_ids())
+        self._feed_thread: threading.Thread | None = None
+        self._assembly_thread: threading.Thread | None = None
+        self._active: _ActiveClip | None = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def start(self) -> None:
+        self._clips_dir.mkdir(parents=True, exist_ok=True)
         self._running = True
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="recording-worker"
-        )
-        self._thread.start()
-        self._recorder.start()
+        self._feed_thread = threading.Thread(target=self._feed_loop, daemon=True, name="recording-feed")
+        self._assembly_thread = threading.Thread(target=self._assembly_loop, daemon=True, name="recording-assembly")
+        self._feed_thread.start()
+        self._assembly_thread.start()
 
     def is_alive(self) -> bool:
-        """True si el hilo del worker sigue vivo (lo consulta WorkerSupervisor)."""
-        return self._thread is not None and self._thread.is_alive()
+        """True if both worker threads are still running (queried by WorkerSupervisor)."""
+        return bool(
+            self._feed_thread is not None and self._feed_thread.is_alive()
+            and self._assembly_thread is not None and self._assembly_thread.is_alive()
+        )
 
     def stop(self, timeout: float = 5.0) -> None:
-        self._recorder.stop()
         self._running = False
-        if self._thread is not None:
-            self._thread.join(timeout)
-            if self._thread.is_alive():
-                logger.warning("RecordingWorker: thread did not stop within %.1fs", timeout)
+        for t in (self._feed_thread, self._assembly_thread):
+            if t is not None:
+                t.join(timeout)
+                if t.is_alive():
+                    logger.warning("RecordingWorker: %s did not stop within %.1fs", t.name, timeout)
         self._sub.close()
 
+    def request_clip(
+        self,
+        reason: str,
+        trigger_ts: datetime,
+        trigger_event_id: str | None = None,
+        person_id: int | None = None,
+        zone_id: str | None = None,
+    ) -> None:
+        """Start or extend the active clip. Thread-safe — callable from the asyncio loop."""
+        self._requests.put_nowait(ClipRequest(reason, trigger_ts, trigger_event_id, person_id, zone_id))
+
     @property
-    def recorder(self) -> object:
-        return self._recorder
+    def stats(self) -> dict[str, Any]:
+        return {
+            "prebuffer_bytes": self._prebuffer.bytes_used,
+            "prebuffer_span_seconds": self._prebuffer.span_seconds,
+            "live_dropped": self._live_dropped,
+            "clip_active": self._active is not None,
+            **self._rate.stats,
+        }
 
     # ------------------------------------------------------------------
-    # Internal
+    # Feed thread: broker -> prebuffer (+ live queue while a clip is active)
     # ------------------------------------------------------------------
 
-    def _loop(self) -> None:
+    def _feed_loop(self) -> None:
         while self._running:
             frame = self._sub.get(timeout=1.0)
             if frame is None:
                 continue
-            with self._lock:
-                self._frame = frame.image
+            if not self._rate.should_process(time.monotonic()):
+                continue
+            t0 = time.monotonic()
+
+            h, w = frame.image.shape[:2]
+            self._frame_size = (w, h)
+            self._prebuffer.push(frame)
+            if self._active is not None:
+                self._offer_live(frame)
+
+            self._rate.observe(time.monotonic() - t0)
+
+    def _offer_live(self, frame: Frame) -> None:
+        try:
+            self._live_queue.put_nowait(frame)
+            return
+        except queue.Full:
+            pass
+        try:
+            self._live_queue.get_nowait()
+            self._live_dropped += 1
+        except queue.Empty:
+            pass
+        try:
+            self._live_queue.put_nowait(frame)
+        except queue.Full:
+            pass
+
+    # ------------------------------------------------------------------
+    # Assembly thread: state machine (idle <-> recording)
+    # ------------------------------------------------------------------
+
+    def _assembly_loop(self) -> None:
+        while self._running:
+            if self._active is None:
+                try:
+                    req = self._requests.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                self._begin_clip(req)
+            else:
+                try:
+                    req = self._requests.get(timeout=0.1)
+                    self._extend_clip(req)
+                except queue.Empty:
+                    pass
+                self._drain_live_frames()
+                if self._active is not None and datetime.now() >= self._active.deadline:
+                    self._finalize_clip()
+
+        if self._active is not None:
+            self._finalize_clip()
+
+    def _begin_clip(self, req: ClipRequest) -> None:
+        ts = req.trigger_ts.strftime("%Y%m%d_%H%M%S")
+        path = str(self._clips_dir / f"clip_{ts}.mp4")
+        writer = ClipWriter(path, self._fps, self._frame_size, self._codec)
+        if not writer.is_opened:
+            logger.error("RecordingWorker: VideoWriter failed to open %s", path)
+            if self._on_failure:
+                try:
+                    self._on_failure(f"VideoWriter failed to open {path}")
+                except Exception:
+                    logger.exception("RecordingWorker: on_failure raised")
+            return
+
+        pre_frames = self._prebuffer.drain()
+        for item in pre_frames:
+            writer.write_jpeg(item.jpeg)
+
+        # Drop any live frames left over from a previous clip before starting this one.
+        while True:
+            try:
+                self._live_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        self._active = _ActiveClip(
+            writer=writer,
+            started_at=pre_frames[0].wall_clock if pre_frames else req.trigger_ts,
+            deadline=req.trigger_ts + timedelta(seconds=self._post_buffer_secs),
+            request=req,
+        )
+
+    def _extend_clip(self, req: ClipRequest) -> None:
+        if self._active is None:
+            return
+        new_deadline = req.trigger_ts + timedelta(seconds=self._post_buffer_secs)
+        if new_deadline > self._active.deadline:
+            self._active.deadline = new_deadline
+
+    def _drain_live_frames(self) -> None:
+        if self._active is None:
+            return
+        while True:
+            try:
+                frame = self._live_queue.get_nowait()
+            except queue.Empty:
+                return
+            self._active.writer.write_image(frame.image)
+
+    def _finalize_clip(self) -> None:
+        active = self._active
+        self._active = None
+        if active is None:
+            return
+        active.writer.release()
+        result = ClipResult(
+            path=active.writer.path,
+            started_at=active.started_at,
+            ended_at=datetime.now(),
+            reason=active.request.reason,
+            trigger_event_id=active.request.trigger_event_id,
+            person_id=active.request.person_id,
+            zone_id=active.request.zone_id,
+        )
+        logger.info("RecordingWorker: clip ready %s", result.path)
+        if self._on_clip_ready:
+            try:
+                self._on_clip_ready(result)
+            except Exception:
+                logger.exception("RecordingWorker: on_clip_ready raised")

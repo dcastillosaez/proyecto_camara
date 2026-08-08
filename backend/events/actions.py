@@ -17,11 +17,11 @@ from backend.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 
-Handler = Callable[[Event, Action], Awaitable[None]]
+Handler = Callable[[Event, Action, str], Awaitable[None]]
 
 
 class ActionRegistry:
-    """Dispatch table: action type name -> async handler(event, action)."""
+    """Dispatch table: action type name -> async handler(event, action, rule_name)."""
 
     def __init__(self) -> None:
         self._handlers: dict[str, Handler] = {}
@@ -107,21 +107,21 @@ async def _emit_upload_failed(source_event: Event, reason: str) -> None:
     await _emit(failure)
 
 
-async def _action_record(event: Event, action: Action) -> None:
+async def _action_record(event: Event, action: Action, rule_name: str) -> None:
     if _recorder_hook is not None:
-        await _recorder_hook(event, action)
+        await _recorder_hook(event, action, rule_name)
     else:
         logger.info("record: sin recorder configurado, se ignora (event=%s)", event.id)
 
 
-async def _action_snapshot(event: Event, action: Action) -> None:
+async def _action_snapshot(event: Event, action: Action, rule_name: str) -> None:
     if _snapshot_hook is not None:
-        await _snapshot_hook(event, action)
+        await _snapshot_hook(event, action, rule_name)
     else:
         logger.info("snapshot: sin snapshot_hook configurado, se ignora (event=%s)", event.id)
 
 
-async def _action_telegram(event: Event, action: Action) -> None:
+async def _action_telegram(event: Event, action: Action, rule_name: str) -> None:
     if _notifier is None:
         logger.warning("telegram: Notifier no configurado")
         return
@@ -131,14 +131,14 @@ async def _action_telegram(event: Event, action: Action) -> None:
     await _notifier.send_telegram(text)
 
 
-async def _action_webhook(event: Event, action: Action) -> None:
+async def _action_webhook(event: Event, action: Action, rule_name: str) -> None:
     if _notifier is None:
         logger.warning("webhook: Notifier no configurado")
         return
     await _notifier.send_webhook(event.model_dump(mode="json"))
 
 
-async def _action_notify(event: Event, action: Action) -> None:
+async def _action_notify(event: Event, action: Action, rule_name: str) -> None:
     """Unifies whatever channels are configured (Web Push + telegram + webhook)."""
     if _notifier is None:
         return
@@ -149,27 +149,27 @@ async def _action_notify(event: Event, action: Action) -> None:
         await _notifier.send_webhook(event.model_dump(mode="json"))
 
 
-async def _action_log(event: Event, action: Action) -> None:
+async def _action_log(event: Event, action: Action, rule_name: str) -> None:
     logger.info(
-        "regla disparada: type=%s camera=%s severity=%s",
-        event.type.value, event.camera_id, event.severity.value,
+        "regla %r disparada: type=%s camera=%s severity=%s",
+        rule_name, event.type.value, event.camera_id, event.severity.value,
     )
 
 
-async def _action_upload_drive(event: Event, action: Action) -> None:
+async def _action_upload_drive(event: Event, action: Action, rule_name: str) -> None:
     if _upload_hook is None:
         logger.info("upload_drive: sin upload_hook configurado, se ignora (event=%s)", event.id)
         return
     try:
-        await _upload_hook(event, action)
+        await _upload_hook(event, action, rule_name)
     except Exception as exc:
         logger.warning("upload_drive fallo: %s", exc)
         await _emit_upload_failed(event, str(exc))
 
 
-async def _action_set_flag(event: Event, action: Action) -> None:
+async def _action_set_flag(event: Event, action: Action, rule_name: str) -> None:
     if _flag_hook is not None:
-        await _flag_hook(event, action)
+        await _flag_hook(event, action, rule_name)
     else:
         logger.info("set_flag: sin flag_hook configurado, se ignora (event=%s)", event.id)
 

@@ -45,7 +45,7 @@ async def TEST_action_failure_does_not_block_siblings():
 
     recorded = []
 
-    async def recorder_hook(event, action):
+    async def recorder_hook(event, action, rule_name):
         recorded.append(event)
 
     configure(notifier=BrokenNotifier(telegram_token="t", telegram_chat_id="c"), recorder_hook=recorder_hook)
@@ -66,7 +66,7 @@ async def TEST_action_failure_does_not_block_siblings():
 async def TEST_action_failure_emits_event():
     emitted = []
 
-    async def failing_upload(event, action):
+    async def failing_upload(event, action, rule_name):
         raise RuntimeError("drive unreachable")
 
     async def emit(event):
@@ -76,7 +76,7 @@ async def TEST_action_failure_emits_event():
 
     source_event = make_event()
     handler = ACTIONS.get("upload_drive")
-    await handler(source_event, Action(type="upload_drive"))
+    await handler(source_event, Action(type="upload_drive"), "r1")
 
     assert len(emitted) == 1
     assert emitted[0].type == EventType.UPLOAD_FAILED
@@ -95,7 +95,7 @@ async def TEST_template_interpolation():
 
     event = make_event(zone_id="jardin", ts=datetime.datetime(2026, 4, 16, 23, 5, 30))
     handler = ACTIONS.get("telegram")
-    await handler(event, Action(type="telegram", template="Intrusion en {zone_id} a las {ts:%H:%M:%S}"))
+    await handler(event, Action(type="telegram", template="Intrusion en {zone_id} a las {ts:%H:%M:%S}"), "r1")
 
     assert sent == ["Intrusion en jardin a las 23:05:30"]
 

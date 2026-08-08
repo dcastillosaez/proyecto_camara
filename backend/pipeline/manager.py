@@ -45,7 +45,7 @@ class CameraPipeline:
         recognizer: PersonRecognizer | None = None,
         event_engine: EventEngine | None = None,
         is_intrusion: Callable[[], bool] | None = None,
-        recorder_factory: Callable[[Any], Any] | None = None,
+        recording_config: dict[str, Any] | None = None,
         on_identified: Callable[[np.ndarray, int], None] | None = None,
         detection_fps: tuple[float, float, float] = (8.0, 3.0, 12.0),
         recognition_fps: float = 2.0,
@@ -96,11 +96,12 @@ class CameraPipeline:
 
             self.supervisor.register("streaming", _make_streaming)
 
-        if recorder_factory is not None:
+        if recording_config is not None:
             def _make_recording() -> RecordingWorker:
                 self.recording = RecordingWorker(
                     self.broker.subscribe("recording", replace=True),
-                    self.registry, recorder_factory,
+                    self.registry,
+                    **recording_config,
                 )
                 return self.recording
 

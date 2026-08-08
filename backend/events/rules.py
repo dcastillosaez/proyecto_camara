@@ -54,7 +54,7 @@ class Rule(BaseModel):
 class ActionRunner(Protocol):
     """Anything that resolves an action type to a handler — ActionRegistry.get() or a plain dict.get()."""
 
-    def get(self, action_type: str) -> Callable[[Event, Action], Awaitable[None]] | None: ...
+    def get(self, action_type: str) -> Callable[[Event, Action, str], Awaitable[None]] | None: ...
 
 
 def _parse_time_range(spec: str) -> tuple[datetime.time, datetime.time]:
@@ -187,7 +187,7 @@ class RuleEngine:
                     logger.error("Accion desconocida %r en regla %r", action.type, rule.name)
                     continue
                 try:
-                    await handler(event, action)
+                    await handler(event, action, rule.name)
                 except Exception:
                     logger.exception("Accion %r de regla %r fallo", action.type, rule.name)
         return fired

@@ -17,117 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 import backend.database as db_module
-from backend.recorder import ClipRecorder
 from backend.gdrive import DriveUploader
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _fake_stream(live_count: int = 1, frame: np.ndarray | None = None):
-    s = MagicMock()
-    s.get_live_count.return_value = live_count
-    s.get_frame.return_value = frame if frame is not None else np.zeros((720, 1280, 3), dtype=np.uint8)
-    return s
-
-
-# ---------------------------------------------------------------------------
-# ClipRecorder
-# ---------------------------------------------------------------------------
-
-# ─── Se crea un fichero .mp4 al detectar una persona ─────────────────────────
-# ClipRecorder monitorea get_live_count(). Cuando live_count > 0 abre un
-# VideoWriter y escribe frames. Al bajar a 0, espera tail_secs y finaliza el
-# clip llamando a on_clip_ready. Este test verifica el flujo completo:
-# start → detección → fin de detección → clip listo.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_040_recorder_creates_clip_when_person_detected(tmp_path):
-    """A .mp4 file appears in clips_dir when live_count > 0."""
-    clips_dir = str(tmp_path / "clips")
-    stream = _fake_stream(live_count=1)
-    ready = threading.Event()
-    received = []
-
-    def on_ready(path):
-        received.append(path)
-        ready.set()
-
-    rec = ClipRecorder(stream, clips_dir=clips_dir, fps=15.0, tail_secs=0.1, on_clip_ready=on_ready)
-    rec.start()
-    time.sleep(0.3)
-    stream.get_live_count.return_value = 0
-    ready.wait(timeout=3.0)
-    rec.stop()
-
-    assert ready.is_set(), "on_clip_ready was never called"
-    assert len(received) == 1
-    assert received[0].endswith(".mp4")
-
-
-# ─── Una sesión continua produce exactamente un clip ─────────────────────────
-# Mientras live_count permanezca > 0, el grabador debe seguir escribiendo en
-# el mismo VideoWriter sin crear nuevos clips. on_clip_ready debe llamarse
-# exactamente una vez al finalizar esa sesión de detección.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_041_recorder_calls_on_clip_ready_once_per_session(tmp_path):
-    """One continuous detection session produces exactly one clip."""
-    clips_dir = str(tmp_path / "clips")
-    stream = _fake_stream(live_count=1)
-    count = {"n": 0}
-    done = threading.Event()
-
-    def on_ready(path):
-        count["n"] += 1
-        done.set()
-
-    rec = ClipRecorder(stream, clips_dir=clips_dir, fps=15.0, tail_secs=0.1, on_clip_ready=on_ready)
-    rec.start()
-    time.sleep(0.3)
-    stream.get_live_count.return_value = 0
-    done.wait(timeout=3.0)
-    rec.stop()
-
-    assert count["n"] == 1
-
-
-# ─── Clips demasiado pequeños se descartan sin llamar on_clip_ready ───────────
-# Si get_frame() devuelve None (cámara no disponible), el VideoWriter produce
-# un fichero vacío o casi vacío (< 4 KB). Subir ese clip a Drive sería un
-# desperdicio y generaría grabaciones corruptas en el historial.
-# El grabador verifica el tamaño y descarta clips por debajo del umbral.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_042_recorder_discards_empty_clip(tmp_path):
-    """Clips too small (<4 KB) do not trigger on_clip_ready."""
-    clips_dir = str(tmp_path / "clips")
-    stream = MagicMock()
-    stream.get_live_count.side_effect = [1] * 3 + [0] * 100
-    stream.get_frame.return_value = None
-    called = []
-
-    rec = ClipRecorder(stream, clips_dir=clips_dir, fps=15.0, tail_secs=0.05, on_clip_ready=lambda p: called.append(p))
-    rec.start()
-    time.sleep(0.5)
-    rec.stop()
-
-    assert called == [], "on_clip_ready should not fire for empty clips"
-
-
-# ─── stop() libera el VideoWriter sin lanzar excepción ───────────────────────
-# Si el servidor se detiene mientras hay una grabación en curso (tail_secs
-# largo o detección activa), stop() debe llamar a _finalise() para cerrar
-# el VideoWriter correctamente. Sin release(), el fichero .mp4 quedaría
-# corrupto e ilegible.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_043_recorder_stop_releases_writer(tmp_path):
-    """stop() releases any open VideoWriter without crashing."""
-    clips_dir = str(tmp_path / "clips")
-    stream = _fake_stream(live_count=1)
-
-    rec = ClipRecorder(stream, clips_dir=clips_dir, fps=15.0, tail_secs=10.0)
-    rec.start()
-    time.sleep(0.2)
-    rec.stop()  # must not raise
+# ClipRecorder (decision logic: start/stop by live_count) was retired in Fase 20
+# — RecordingWorker now decides when to record, driven by rule-matched events
+# with pre/post-buffer context (see tests/test_recording_prepost.py). The pure
+# MP4-writing remainder lives in backend.recorder.ClipWriter.
 
 
 # ---------------------------------------------------------------------------

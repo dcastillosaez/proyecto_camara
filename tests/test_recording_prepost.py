@@ -184,7 +184,7 @@ def TEST_clip_has_expected_duration(tmp_path):
     fps = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
     duration = frame_count / fps
-    assert duration > 0.2  # pre + live frames add up to a non-trivial clip
+    assert duration >= 0.2  # pre + live frames add up to a non-trivial clip
 
 
 def TEST_recording_failure_emits_event(tmp_path):

@@ -53,7 +53,6 @@ from backend.gdrive import DriveUploader
 from backend.notifier import Notifier
 from backend.pipeline import CameraManager, CameraPipeline
 from backend.recognizer import PersonRecognizer
-from backend.recorder import ClipRecorder
 from backend.storage.repositories import DetectionStatRepo, EventRepo
 from backend.tracker import PersonTracker
 
@@ -249,9 +248,10 @@ async def lifespan(app: FastAPI):
     _os.makedirs(settings.gallery_dir, exist_ok=True)
 
     # Phase 10 — clip recorder + Drive uploader
-    def _on_clip_ready(path: str) -> None:
-        """Called from recorder thread when a clip is finalised."""
+    def _on_clip_ready(result) -> None:
+        """Called from the assembly thread when a clip is finalised (backend.pipeline.recording.ClipResult)."""
         import asyncio as _asyncio
+        path = result.path
         filename = Path(path).name
         coro = insert_recording(filename)
         future = _asyncio.run_coroutine_threadsafe(coro, loop)
@@ -309,16 +309,22 @@ async def lifespan(app: FastAPI):
     )
     uploader.start()
 
-    def _recorder_factory(stream_like):
-        """El RecordingWorker se pasa a si mismo como 'stream' al ClipRecorder."""
-        return ClipRecorder(
-            stream=stream_like,
-            clips_dir=settings.clips_dir,
-            fps=settings.recording_fps,
-            tail_secs=settings.recording_tail_secs,
-            codec=settings.recording_codec,
-            on_clip_ready=_on_clip_ready,
-        )
+    def _on_recording_failure(message: str) -> None:
+        logger.error("RecordingWorker failure: %s", message)
+        if event_engine is not None:
+            event_engine.degraded_mode(datetime.datetime.now(), reason=message)
+
+    recording_config = {
+        "clips_dir": settings.clips_dir,
+        "fps": settings.recording_fps,
+        "pre_buffer_secs": settings.pre_buffer_secs,
+        "post_buffer_secs": settings.post_buffer_secs,
+        "pre_buffer_max_mb": settings.pre_buffer_max_mb,
+        "pre_buffer_jpeg_quality": settings.pre_buffer_jpeg_quality,
+        "codec": settings.recording_codec,
+        "on_clip_ready": _on_clip_ready,
+        "on_failure": _on_recording_failure,
+    }
 
     def _is_in_schedule() -> bool:
         """True si la hora actual cae dentro del horario de acceso configurado."""
@@ -368,7 +374,7 @@ async def lifespan(app: FastAPI):
         recognizer=recognizer,
         event_engine=event_engine,
         is_intrusion=lambda: not _is_in_schedule(),
-        recorder_factory=_recorder_factory,
+        recording_config=recording_config,
         on_identified=_save_gallery_capture,
         detection_fps=(
             settings.detection_target_fps,
@@ -397,7 +403,18 @@ async def lifespan(app: FastAPI):
         telegram_token=settings.alert_telegram_token,
         telegram_chat_id=settings.alert_telegram_chat_id,
     )
-    event_actions.configure(notifier=notifier, emit=event_bus.publish)
+
+    async def _recorder_hook(event: Event, action, rule_name: str) -> None:
+        if pipeline.recording is not None:
+            pipeline.recording.request_clip(
+                reason=rule_name,
+                trigger_ts=event.ts,
+                trigger_event_id=event.id,
+                person_id=event.person_id,
+                zone_id=event.zone_id,
+            )
+
+    event_actions.configure(notifier=notifier, emit=event_bus.publish, recorder_hook=_recorder_hook)
 
     watchdog_task = asyncio.create_task(_camera_watchdog())
     purge_task = asyncio.create_task(_purge_loop())
