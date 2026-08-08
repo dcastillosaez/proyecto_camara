@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Fase 17 completa. Fase 18: 18-01 y 18-02 Tasks 1-5 completas (RTSPStream retirado, pipeline de 5 workers + supervisor). Task 6 (checkpoint CPU/crash/1h con camara real) pendiente."
+stopped_at: "Fase 17 y 18 completas. Task 6 de 18-02 dada por suficiente: CPU/ritmo/aislamiento de crash verificados con camara real; 1h de latencia inconcluso por corte externo de RTSP en la camara (ver 18-02-CHECKPOINT.md). Siguiente: Fase 19."
 last_updated: "2026-08-07"
 last_activity: 2026-08-07
 progress:
   total_phases: 22
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
   completed_plans: 4
   percent: 9

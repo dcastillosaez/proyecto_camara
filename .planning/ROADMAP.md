@@ -265,7 +265,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 ### Bloque A — Robustez
 
 - [x] **Phase 17: Frame Broker y Capture Worker** — Fan-out latest-frame; la captura nunca espera a la IA (completed 2026-08-07)
-- [ ] **Phase 18: Workers desacoplados e inferencia adaptativa** — Detección, streaming y grabación como workers con FPS objetivo propios
+- [x] **Phase 18: Workers desacoplados e inferencia adaptativa** — Detección, streaming y grabación como workers con FPS objetivo propios (completed 2026-08-08)
 - [ ] **Phase 19: Event Engine, Rule Engine y esquema de datos v2** — Eventos tipados + reglas YAML + separación detections/events
 - [ ] **Phase 20: Grabación con pre/post-buffer y metadatos** — Ningún clip empieza después del evento
 - [ ] **Phase 21: Observabilidad y latencia end-to-end** — Métricas Prometheus, frames descartados, latencia real
@@ -330,7 +330,7 @@ Plans:
 
 Plans:
 - [x] 18-01-PLAN.md — AdaptiveRate, TrackRegistry y DetectionWorker
-- [x] 18-02-PLAN.md — Streaming/Recording/Recognition workers, supervisor y retirada de RTSPStream (Tasks 1-5 ✓; Task 6 checkpoint con camara real pendiente)
+- [x] 18-02-PLAN.md — Streaming/Recording/Recognition workers, supervisor y retirada de RTSPStream (checkpoint completo, ver 18-02-CHECKPOINT.md — 3/4 criterios con evidencia, 1h de latencia inconcluso por corte externo de camara)
 
 ### Phase 19: Event Engine, Rule Engine y esquema de datos v2
 **Goal**: El sistema deja de razonar en detecciones y pasa a emitir eventos tipados evaluados contra reglas
