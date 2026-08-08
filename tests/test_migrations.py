@@ -13,10 +13,25 @@ from backend.storage.migrations import SCHEMA_VERSION, run_migrations
 
 
 def make_v1_db(path, n_crossings=3, with_zone=True, with_recording=True):
-    """Build a synthetic v1-schema DB using the real v1 ORM models (backend.database)."""
+    """Build a synthetic v1-schema DB.
+
+    zones/recordings still match backend.database's current ORM (unchanged by
+    the v2 migration beyond added columns), but the v1 "events" (crossing
+    events) table no longer has a live ORM class post-Task-4 — database.py
+    now delegates that domain to EventRepo — so it's declared here as raw DDL,
+    matching the schema backend.database.CrossingEvent used to define.
+    """
     engine = create_engine(f"sqlite:///{path}")
     db_v1.Base.metadata.create_all(engine)
     with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE events ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "timestamp DATETIME NOT NULL, "
+            "direction VARCHAR(3) NOT NULL, "
+            "person_name VARCHAR(100), "
+            "is_intrusion BOOLEAN NOT NULL DEFAULT 0)"
+        ))
         now = datetime.datetime(2026, 4, 16, 18, 30, 0)
         for i in range(n_crossings):
             conn.execute(

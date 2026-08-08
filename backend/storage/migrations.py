@@ -78,6 +78,16 @@ def _add_missing_columns(conn: Connection, table: str, orm_model) -> None:
         logger.info("Added column %s.%s", table, column.name)
 
 
+def _ensure_columns(conn: Connection, table: str, columns: dict[str, str]) -> None:
+    """Add each (name -> SQL type) column to *table* if it doesn't already exist."""
+    existing = _column_names(conn, table)
+    for name, sql_type in columns.items():
+        if name in existing:
+            continue
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+        logger.info("Added legacy column %s.%s", table, name)
+
+
 def _migrate_v1_to_v2(conn: Connection) -> None:
     # 1. The v1 "events" table (backend.database.CrossingEvent) collides with the
     #    new typed "events" table. Rename it out of the way first; it is never deleted.
@@ -94,6 +104,15 @@ def _migrate_v1_to_v2(conn: Connection) -> None:
         _add_missing_columns(conn, "zones", models.Zone)
     if _table_exists(conn, "recordings"):
         _add_missing_columns(conn, "recordings", models.Recording)
+        # backend/database.py's legacy Recording ORM (gdrive_id/upload_status/duration_secs)
+        # still owns upload tracking — guarantee its columns too, even on a table that
+        # create_all() just created fresh with only the v2 shape (no prior v1 table to extend).
+        _ensure_columns(conn, "recordings", {
+            "gdrive_id": "VARCHAR(100)",
+            "upload_status": "VARCHAR(20) DEFAULT 'pending'",
+            "duration_secs": "FLOAT",
+            "created_at": "DATETIME",
+        })
 
     # 4. Register the default camera.
     existing_cam = conn.execute(text("SELECT id FROM cameras WHERE id='cam1'")).fetchone()

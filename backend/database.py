@@ -1,4 +1,14 @@
-"""SQLite async persistence — events table, WAL mode."""
+"""Legacy crossing-event API — delegates to backend.storage.repositories (schema v2).
+
+Kept for backward compatibility with existing endpoints: return shapes (dicts
+with id/timestamp/direction/person_name/is_intrusion) are unchanged, but
+storage now goes through EventRepo against the typed `events` table instead of
+the old dedicated crossing-events table (see backend/storage/migrations.py —
+the v1 table is renamed to `crossing_events` and kept as a hot backup).
+
+Zones/captures/recordings are untouched by the v2 migration beyond an added
+`camera_id` column, so their functions still use direct ORM queries here.
+"""
 
 from __future__ import annotations
 
@@ -6,29 +16,22 @@ import datetime
 import os
 from typing import Any
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, and_, func, select, text
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, and_, create_engine, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.config import get_settings
+from backend.events.types import Event, EventType
+from backend.storage.migrations import run_migrations
+from backend.storage.repositories import EventRepo
 
 # ---------------------------------------------------------------------------
-# Schema
+# Schema — zones/captures/recordings only.
 # ---------------------------------------------------------------------------
 
 
 class Base(DeclarativeBase):
     pass
-
-
-class CrossingEvent(Base):
-    __tablename__ = "events"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    timestamp = Column(DateTime, nullable=False)
-    direction = Column(String(3), nullable=False)  # "in" | "out"
-    person_name = Column(String(100), nullable=True)
-    is_intrusion = Column(Boolean, nullable=False, default=False)
 
 
 class Zone(Base):
@@ -87,25 +90,42 @@ def _get_session_factory():
     return _session_factory
 
 
+def _event_repo() -> EventRepo:
+    return EventRepo(_get_session_factory())
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
 async def init_db() -> None:
-    """Create tables and enable WAL mode. Call once at startup."""
+    """Migrate to schema v2 (idempotent) and enable WAL mode. Call once at startup."""
     engine = _get_engine()
+    db_path = engine.url.database
+    if db_path and db_path != ":memory:":
+        sync_engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            run_migrations(sync_engine)
+        finally:
+            sync_engine.dispose()
+
     async with engine.begin() as conn:
         await conn.execute(text("PRAGMA journal_mode=WAL"))
+        # No-op for zones/recordings (already created/extended by run_migrations);
+        # creates `captures`, which has no v2 equivalent model.
         await conn.run_sync(Base.metadata.create_all)
-        for migration in [
-            "ALTER TABLE events ADD COLUMN person_name VARCHAR(100)",
-            "ALTER TABLE events ADD COLUMN is_intrusion BOOLEAN DEFAULT 0",
-        ]:
-            try:
-                await conn.execute(text(migration))
-            except Exception:
-                pass  # Column already exists
+
+
+def _event_to_legacy_dict(event: Event) -> dict[str, Any]:
+    payload = event.payload or {}
+    return {
+        "id": event.id,
+        "timestamp": event.ts.isoformat(),
+        "direction": payload.get("direction", "?"),
+        "person_name": payload.get("person_name"),
+        "is_intrusion": bool(payload.get("is_intrusion", False)),
+    }
 
 
 async def insert_event(
@@ -114,34 +134,25 @@ async def insert_event(
     person_name: str | None = None,
     is_intrusion: bool = False,
 ) -> None:
-    """Persist one crossing event (non-blocking)."""
+    """Persist one crossing event (non-blocking) as a typed LINE_CROSSED event."""
     ts = timestamp or datetime.datetime.now()
-    sf = _get_session_factory()
-    async with sf() as session:
-        async with session.begin():
-            session.add(CrossingEvent(
-                timestamp=ts, direction=direction,
-                person_name=person_name, is_intrusion=is_intrusion,
-            ))
+    event = Event(
+        type=EventType.LINE_CROSSED,
+        camera_id="cam1",
+        ts=ts,
+        payload={
+            "direction": direction,
+            "person_name": person_name,
+            "is_intrusion": bool(is_intrusion),
+        },
+    )
+    await _event_repo().insert(event)
 
 
 async def get_recent_events(limit: int = 50) -> list[dict[str, Any]]:
-    """Return the *limit* most recent events, newest first."""
-    sf = _get_session_factory()
-    async with sf() as session:
-        result = await session.execute(
-            select(CrossingEvent).order_by(CrossingEvent.timestamp.desc()).limit(limit)
-        )
-        return [
-            {
-                "id": r.id,
-                "timestamp": r.timestamp.isoformat(),
-                "direction": r.direction,
-                "person_name": r.person_name,
-                "is_intrusion": bool(r.is_intrusion),
-            }
-            for r in result.scalars().all()
-        ]
+    """Return the *limit* most recent crossing events, newest first."""
+    items, _ = await _event_repo().query(type=EventType.LINE_CROSSED, limit=limit)
+    return [_event_to_legacy_dict(e) for e in items]
 
 
 async def get_events_filtered(
@@ -152,36 +163,63 @@ async def get_events_filtered(
     from_dt: datetime.datetime | None = None,
     to_dt: datetime.datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Return events matching the supplied filters, newest first."""
-    sf = _get_session_factory()
-    async with sf() as session:
-        conditions = []
-        if direction in ("in", "out"):
-            conditions.append(CrossingEvent.direction == direction)
-        if person_name is not None:
-            conditions.append(CrossingEvent.person_name.ilike(f"%{person_name}%"))
-        if is_intrusion is not None:
-            conditions.append(CrossingEvent.is_intrusion == is_intrusion)
-        if from_dt is not None:
-            conditions.append(CrossingEvent.timestamp >= from_dt)
-        if to_dt is not None:
-            conditions.append(CrossingEvent.timestamp <= to_dt)
+    """Return crossing events matching the supplied filters, newest first.
 
-        q = select(CrossingEvent).order_by(CrossingEvent.timestamp.desc()).limit(limit)
-        if conditions:
-            q = q.where(and_(*conditions))
+    direction/person_name/is_intrusion live in Event.payload, which EventRepo
+    doesn't filter on at the SQL level, so they're applied here in Python
+    after a type+range query. Fine at this project's event volume (decenas/dia).
+    """
+    repo = _event_repo()
+    results: list[dict[str, Any]] = []
+    cursor: str | None = None
+    scanned = 0
+    while len(results) < limit and scanned < 5000:
+        items, cursor = await repo.query(
+            type=EventType.LINE_CROSSED,
+            ts_from=from_dt,
+            ts_to=to_dt,
+            cursor=cursor,
+            limit=min(200, max(limit * 2, 50)),
+        )
+        if not items:
+            break
+        scanned += len(items)
+        for e in items:
+            d = _event_to_legacy_dict(e)
+            if direction in ("in", "out") and d["direction"] != direction:
+                continue
+            if person_name is not None and person_name.lower() not in (d["person_name"] or "").lower():
+                continue
+            if is_intrusion is not None and d["is_intrusion"] != is_intrusion:
+                continue
+            results.append(d)
+            if len(results) >= limit:
+                break
+        if cursor is None:
+            break
+    return results
 
-        result = await session.execute(q)
-        return [
-            {
-                "id": r.id,
-                "timestamp": r.timestamp.isoformat(),
-                "direction": r.direction,
-                "person_name": r.person_name,
-                "is_intrusion": bool(r.is_intrusion),
-            }
-            for r in result.scalars().all()
-        ]
+
+async def get_stats_today() -> dict[str, Any]:
+    """Total crossings today + hourly breakdown for the last 24 h."""
+    today_start = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    since_24h = datetime.datetime.now() - datetime.timedelta(hours=24)
+
+    repo = _event_repo()
+    total = await repo.count_since(today_start, type=EventType.LINE_CROSSED)
+    hourly = await repo.hourly_counts(since_24h, type=EventType.LINE_CROSSED)
+    return {"total_today": total, "hourly": hourly}
+
+
+async def purge_old_events(retention_days: int) -> int:
+    """Delete crossing events older than *retention_days*. Returns deleted count."""
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=retention_days)
+    return await _event_repo().delete_before(cutoff, type=EventType.LINE_CROSSED)
+
+
+async def delete_events_range(from_dt: datetime.datetime, to_dt: datetime.datetime) -> int:
+    """Delete crossing events in [from_dt, to_dt]. Returns number of deleted rows."""
+    return await _event_repo().delete_range(from_dt, to_dt, type=EventType.LINE_CROSSED)
 
 
 async def insert_recording(filename: str, created_at: datetime.datetime | None = None) -> int:
@@ -229,24 +267,6 @@ async def get_recent_recordings(limit: int = 20) -> list[dict[str, Any]]:
             }
             for r in result.scalars().all()
         ]
-
-
-async def delete_events_range(from_dt: datetime.datetime, to_dt: datetime.datetime) -> int:
-    """Delete crossing events in [from_dt, to_dt]. Returns number of deleted rows."""
-    sf = _get_session_factory()
-    async with sf() as session:
-        async with session.begin():
-            result = await session.execute(
-                select(CrossingEvent).where(
-                    CrossingEvent.timestamp >= from_dt,
-                    CrossingEvent.timestamp <= to_dt,
-                )
-            )
-            rows = result.scalars().all()
-            count = len(rows)
-            for row in rows:
-                await session.delete(row)
-    return count
 
 
 async def delete_recordings_range(from_dt: datetime.datetime, to_dt: datetime.datetime) -> int:
@@ -352,52 +372,6 @@ async def get_captures_for_person(person_id: int, limit: int = 20) -> list[dict[
             }
             for c in result.scalars().all()
         ]
-
-
-async def get_stats_today() -> dict[str, Any]:
-    """Total crossings today + hourly breakdown for the last 24 h."""
-    sf = _get_session_factory()
-    today_start = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    since_24h = datetime.datetime.now() - datetime.timedelta(hours=24)
-
-    async with sf() as session:
-        total = (
-            await session.execute(
-                select(func.count()).where(CrossingEvent.timestamp >= today_start)
-            )
-        ).scalar() or 0
-
-        rows = (
-            await session.execute(
-                select(
-                    func.strftime("%H", CrossingEvent.timestamp).label("hour"),
-                    func.count().label("count"),
-                )
-                .where(CrossingEvent.timestamp >= since_24h)
-                .group_by(text("hour"))
-                .order_by(text("hour"))
-            )
-        ).all()
-
-        hourly = {row.hour: row.count for row in rows}
-
-    return {"total_today": total, "hourly": hourly}
-
-
-async def purge_old_events(retention_days: int) -> int:
-    """Delete events older than *retention_days*. Returns deleted count."""
-    cutoff = datetime.datetime.now() - datetime.timedelta(days=retention_days)
-    sf = _get_session_factory()
-    async with sf() as session:
-        async with session.begin():
-            result = await session.execute(
-                select(CrossingEvent).where(CrossingEvent.timestamp < cutoff)
-            )
-            rows = result.scalars().all()
-            count = len(rows)
-            for row in rows:
-                await session.delete(row)
-    return count
 
 
 async def purge_old_recordings(retention_days: int) -> int:

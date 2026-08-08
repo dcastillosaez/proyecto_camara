@@ -132,7 +132,7 @@ class Recording(Base):
     __tablename__ = "recordings"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    camera_id = Column(String(50), ForeignKey("cameras.id"), nullable=False, default="cam1")
+    camera_id = Column(String(50), ForeignKey("cameras.id"), nullable=False, server_default="cam1")
     filename = Column(String(255), nullable=False)
     started_at = Column(DateTime, nullable=True)
     ended_at = Column(DateTime, nullable=True)
@@ -144,8 +144,8 @@ class Recording(Base):
     reason = Column(String(50), nullable=True)
     person_id = Column(Integer, ForeignKey("persons.id"), nullable=True)
     zone_id = Column(String(50), nullable=True)
-    upload_state = Column(String(20), nullable=False, default="pending")
-    upload_attempts = Column(Integer, nullable=False, default=0)
+    upload_state = Column(String(20), nullable=False, server_default="pending")
+    upload_attempts = Column(Integer, nullable=False, server_default="0")
     drive_file_id = Column(String(100), nullable=True)
     local_expires_at = Column(DateTime, nullable=True)
 
@@ -156,19 +156,21 @@ class Zone(Base):
     __tablename__ = "zones"
 
     id = Column(String(50), primary_key=True)
-    camera_id = Column(String(50), ForeignKey("cameras.id"), nullable=False, default="cam1")
+    camera_id = Column(String(50), ForeignKey("cameras.id"), nullable=False, server_default="cam1")
     name = Column(String(100), nullable=False)
-    polygon = Column(JSON, nullable=False)
+    # Nullable: zones created via the legacy upsert_zone() (backend/database.py)
+    # only populate polygon_json, not this v2 column, until Zone editing moves to ZoneRepo.
+    polygon = Column(JSON, nullable=True)
     kind = Column(String(30), nullable=True)
     schedule = Column(JSON, nullable=True)
-    enabled = Column(Boolean, nullable=False, default=True)
+    enabled = Column(Boolean, nullable=False, server_default="1")
 
 
 class Line(Base):
     __tablename__ = "lines"
 
     id = Column(String(50), primary_key=True)
-    camera_id = Column(String(50), ForeignKey("cameras.id"), nullable=False, default="cam1")
+    camera_id = Column(String(50), ForeignKey("cameras.id"), nullable=False, server_default="cam1")
     name = Column(String(100), nullable=False)
     start_x_frac = Column(Float, nullable=False)
     start_y_frac = Column(Float, nullable=False)
