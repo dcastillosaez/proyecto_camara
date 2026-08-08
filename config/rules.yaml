@@ -1,0 +1,31 @@
+# Generado por scripts/generate_initial_rules.py a partir de las variables
+# ALERT_* de .env — reproduce el comportamiento de alertas de v1.
+#
+# Este fichero es editable a mano: anade, desactiva o ajusta reglas libremente.
+# Volver a ejecutar el script SOBRESCRIBE cualquier edicion manual.
+#
+# Referencia de esquema (propuesta_mejora/SPEC_v2.md SS6.4):
+#   when: event, zone, camera, time_range ("HH:MM-HH:MM", puede cruzar
+#         medianoche), days ([0..6], 0=lunes), min_confidence, duration_gte,
+#         person ("unknown" o nombre), payload (match exacto de claves)
+#   debounce_secs: por (regla, camera_id, person_id|track_id)
+#   actions: record, snapshot, notify, telegram, webhook, log, upload_drive, set_flag
+version: 1
+rules:
+- name: intrusion
+  enabled: true
+  when:
+    event: LINE_CROSSED
+    payload:
+      is_intrusion: true
+  debounce_secs: 60.0
+  actions:
+  - type: notify
+- name: persona_desconocida
+  enabled: true
+  when:
+    event: LINE_CROSSED
+    person: unknown
+  debounce_secs: 60.0
+  actions:
+  - type: notify

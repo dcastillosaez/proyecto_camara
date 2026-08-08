@@ -172,6 +172,17 @@ async def TEST_disabled_rule_never_fires():
     assert fired == []
 
 
+async def TEST_payload_filter_matches_exact_key():
+    rule = Rule.model_validate({**make_rule(), "when": {**make_rule()["when"], "payload": {"is_intrusion": True}}})
+    engine = RuleEngine([rule], registry={})
+
+    fired_match = await engine.evaluate(make_event(payload={"is_intrusion": True}, track_id=1))
+    fired_no_match = await engine.evaluate(make_event(payload={"is_intrusion": False}, track_id=2))
+
+    assert fired_match == ["r1"]
+    assert fired_no_match == []
+
+
 async def TEST_camera_wildcard():
     wildcard_rule = Rule.model_validate({**make_rule(), "name": "wild", "when": {**make_rule()["when"], "camera": "*"}})
     specific_rule = Rule.model_validate({**make_rule(), "name": "specific", "when": {**make_rule()["when"], "camera": "cam2"}})

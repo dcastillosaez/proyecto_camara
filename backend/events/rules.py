@@ -30,6 +30,7 @@ class When(BaseModel):
     min_confidence: float | None = None
     duration_gte: float | None = None
     person: str | None = None  # nombre o "unknown"
+    payload: dict[str, Any] | None = None  # match exacto de claves del payload (AND)
 
 
 class Action(BaseModel):
@@ -94,6 +95,10 @@ def _matches(when: When, event: Event) -> bool:
                 return False
         elif when.person != event.person_name:
             return False
+    if when.payload is not None:
+        for key, expected in when.payload.items():
+            if event.payload.get(key) != expected:
+                return False
     return True
 
 
