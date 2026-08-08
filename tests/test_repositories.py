@@ -1,0 +1,139 @@
+"""Tests for backend.storage — v2 schema, repositories, indices, and performance."""
+
+from __future__ import annotations
+
+import datetime
+import time
+
+import pytest
+import pytest_asyncio
+from sqlalchemy import create_engine, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+
+from backend.events.types import Event, EventType, Severity
+from backend.storage import models
+from backend.storage.repositories import DetectionStatRepo, EventRepo
+from scripts.seed_events import seed_events
+
+
+@pytest_asyncio.fixture
+async def db(tmp_path):
+    db_file = tmp_path / "storage_test.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+    async with engine.begin() as conn:
+        await conn.run_sync(models.Base.metadata.create_all)
+    sf = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam1", name="Cam 1", enabled=True))
+    yield str(db_file), sf
+    await engine.dispose()
+
+
+def make_event(**overrides) -> Event:
+    kwargs = {"type": EventType.LINE_CROSSED, "camera_id": "cam1", "ts": "2026-04-16T18:30:00"}
+    kwargs.update(overrides)
+    return Event(**kwargs)
+
+
+async def TEST_event_roundtrip_db(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    event = make_event(
+        type=EventType.INTRUSION, track_id=5, confidence=0.87,
+        bbox=(10, 20, 100, 200), payload={"direction": "in"},
+    )
+    await repo.insert(event)
+
+    fetched = await repo.get(event.id)
+    assert fetched is not None
+    assert fetched == event
+
+
+async def TEST_query_by_type_and_range(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 1, 10)))
+    await repo.insert(make_event(type=EventType.INTRUSION, ts=datetime.datetime(2026, 1, 2, 10)))
+    await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 3, 10)))
+    await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 2, 1, 10)))
+
+    items, _ = await repo.query(
+        type=EventType.LINE_CROSSED,
+        ts_from=datetime.datetime(2026, 1, 1),
+        ts_to=datetime.datetime(2026, 1, 31),
+        limit=50,
+    )
+    assert len(items) == 2
+    assert all(e.type == EventType.LINE_CROSSED for e in items)
+    assert all(datetime.datetime(2026, 1, 1) <= e.ts <= datetime.datetime(2026, 1, 31) for e in items)
+
+
+async def TEST_cursor_pagination_is_stable(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1)
+    for i in range(100):
+        await repo.insert(make_event(ts=base + datetime.timedelta(minutes=i)))
+
+    seen_ids = []
+    cursor = None
+    for _ in range(20):  # generous upper bound on page count
+        items, cursor = await repo.query(limit=10, cursor=cursor)
+        seen_ids.extend(e.id for e in items)
+        if cursor is None:
+            break
+
+    assert len(seen_ids) == 100
+    assert len(set(seen_ids)) == 100
+
+
+async def TEST_detection_stats_upsert(db):
+    _, sf = db
+    repo = DetectionStatRepo(sf)
+    minute = datetime.datetime(2026, 1, 1, 12, 5, 0)
+
+    await repo.upsert_minute("cam1", minute, detections=10, unique_tracks=2, avg_confidence=0.8, max_concurrent=2)
+    await repo.upsert_minute("cam1", minute, detections=15, unique_tracks=3, avg_confidence=0.9, max_concurrent=3)
+
+    rows = await repo.recent("cam1", limit=10)
+    assert len(rows) == 1
+    assert rows[0]["detections"] == 25
+    assert rows[0]["unique_tracks"] == 3
+    assert rows[0]["max_concurrent"] == 3
+
+
+async def TEST_indexes_exist(db):
+    db_file, sf = db
+    expected = {
+        "idx_events_ts", "idx_events_type_ts", "idx_events_cam_ts", "idx_events_person",
+        "idx_tracks_cam", "idx_recordings_cam", "idx_detstats_minute",
+    }
+    async with sf() as session:
+        result = await session.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
+        names = {row[0] for row in result.all()}
+    assert expected.issubset(names)
+
+
+async def TEST_query_performance_100k(db, tmp_path):
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1")
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+    sf = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    repo = EventRepo(sf)
+
+    now = datetime.datetime.now()
+    start = time.perf_counter()
+    items, _ = await repo.query(
+        camera_id="cam1",
+        ts_from=now - datetime.timedelta(days=7),
+        ts_to=now,
+        limit=50,
+    )
+    elapsed = time.perf_counter() - start
+    await engine.dispose()
+
+    assert elapsed < 0.5, f"query took {elapsed:.3f}s, expected < 0.5s"
+    assert isinstance(items, list)
