@@ -98,6 +98,16 @@ class Settings(BaseSettings):
     # OpenCV VideoWriter fourcc string. "mp4v" is reliable on Windows; use "avc1" for H.264.
     recording_codec: str = "mp4v"
 
+    # --- Pre/post-buffer de grabacion (Fase 20) ---
+    pre_buffer_secs: float = 10.0
+    post_buffer_secs: float = 10.0
+    pre_buffer_max_mb: int = 48
+    pre_buffer_jpeg_quality: int = 85
+    local_retention_days: int = 7
+    upload_min_severity: str = "warning"  # info | warning | critical
+    max_upload_attempts: int = 5
+    upload_poll_secs: float = 30.0
+
     # Horario de acceso — fuera de este rango los crossing events se marcan como intrusión.
     # Requiere schedule_enabled=True; si está en False todos los eventos son "normales".
     schedule_enabled: bool = False
