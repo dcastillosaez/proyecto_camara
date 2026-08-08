@@ -8,7 +8,6 @@ con una ("cam1").
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -26,6 +25,7 @@ from backend.pipeline.tracking import TrackRegistry
 
 if TYPE_CHECKING:
     from backend.detector import PersonDetector
+    from backend.events.engine import EventEngine
     from backend.recognizer import PersonRecognizer
     from backend.tracker import PersonTracker
 
@@ -43,8 +43,7 @@ class CameraPipeline:
         detector: PersonDetector | None = None,
         tracker: PersonTracker | None = None,
         recognizer: PersonRecognizer | None = None,
-        event_loop: asyncio.AbstractEventLoop | None = None,
-        event_queue: asyncio.Queue[dict[str, Any]] | None = None,
+        event_engine: EventEngine | None = None,
         is_intrusion: Callable[[], bool] | None = None,
         recorder_factory: Callable[[Any], Any] | None = None,
         on_identified: Callable[[np.ndarray, int], None] | None = None,
@@ -78,7 +77,7 @@ class CameraPipeline:
                     self.broker.subscribe("detector", replace=True),
                     detector, tracker, self.registry,
                     AdaptiveRate(target_fps=target, min_fps=lo, max_fps=hi),
-                    event_loop=event_loop, event_queue=event_queue,
+                    event_engine=event_engine,
                     is_intrusion=is_intrusion,
                 )
                 return self.detection

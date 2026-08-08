@@ -8,7 +8,7 @@ en vez del contador fijo detect_every (SPEC_v2.md §5.3, 18-CONTEXT.md).
 
 from __future__ import annotations
 
-import asyncio
+import datetime
 import json
 import logging
 import threading
@@ -24,6 +24,7 @@ from backend.pipeline.tracking import TrackRegistry
 
 if TYPE_CHECKING:
     from backend.detector import PersonDetector
+    from backend.events.engine import EventEngine
     from backend.pipeline.broker import Subscription
     from backend.tracker import PersonTracker
 
@@ -49,8 +50,7 @@ class DetectionWorker:
         tracker: PersonTracker,
         registry: TrackRegistry,
         rate: AdaptiveRate,
-        event_loop: asyncio.AbstractEventLoop | None = None,
-        event_queue: asyncio.Queue[dict[str, Any]] | None = None,
+        event_engine: EventEngine | None = None,
         is_intrusion: Any = None,
     ) -> None:
         self._sub = sub
@@ -58,8 +58,7 @@ class DetectionWorker:
         self._tracker = tracker
         self._registry = registry
         self._rate = rate
-        self._event_loop = event_loop
-        self._event_queue = event_queue
+        self._event_engine = event_engine
         # Callable[[], bool] opcional — decide si un cruce es intrusion
         # (RTSPStream._is_in_schedule). Sin ella, nunca se marca intrusion.
         self._is_intrusion = is_intrusion
@@ -170,7 +169,18 @@ class DetectionWorker:
             self._registry.update_from_detections(tracked, now)
             self._update_zones_and_heat(tracked, frame.image.shape)
             self._emit_crossings(crossings)
+            self._emit_track_lifecycle(tracked)
             self._registry.prune(now)
+
+    def _emit_track_lifecycle(self, tracked: Any) -> None:
+        if self._event_engine is None:
+            return
+        wall_now = datetime.datetime.now()
+        ids = tracked.tracker_id
+        active_ids = {int(tid) for tid in ids} if ids is not None else set()
+        self._event_engine.process_tracks(active_ids, wall_now)
+        confidences = list(tracked.confidence) if tracked.confidence is not None else []
+        self._event_engine.accumulate_detections(wall_now, active_ids, confidences)
 
     def _sync_tracker_frame_rate(self) -> None:
         """Si AdaptiveRate cambio de escalon, sincroniza ByteTrack (riesgo #1 de la fase)."""
@@ -180,14 +190,11 @@ class DetectionWorker:
             self._tracker.set_frame_rate(fps)
 
     def _emit_crossings(self, crossings: list[dict]) -> None:
-        if not crossings or self._event_loop is None or self._event_queue is None:
+        if not crossings or self._event_engine is None:
             return
         is_intrusion = bool(self._is_intrusion()) if self._is_intrusion else False
         for c in crossings:
-            self._event_loop.call_soon_threadsafe(
-                self._event_queue.put_nowait,
-                {**c, "person_name": None, "is_intrusion": is_intrusion},
-            )
+            self._event_engine.emit_line_crossing({**c, "is_intrusion": is_intrusion})
 
     def _update_zones_and_heat(self, tracked: Any, shape: tuple) -> None:
         """Trigger the PolygonZones and accumulate the activity heat mask (MEJORAS.md Bajas)."""
@@ -212,6 +219,8 @@ class DetectionWorker:
                 st["entries"] += len(inside - st["inside"])
                 st["inside"] = inside
                 st["current"] = len(inside)
+            if self._event_engine is not None:
+                self._event_engine.process_zone(st["id"], inside, datetime.datetime.now())
 
         if len(tracked) == 0:
             return
