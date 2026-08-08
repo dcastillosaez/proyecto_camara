@@ -154,3 +154,47 @@ def test_duplicate_subscriber_name_raises():
     broker.subscribe("x")
     with pytest.raises(ValueError):
         broker.subscribe("x")
+
+
+# ─── latest() devuelve el ultimo frame sin consumirlo ────────────────────────
+def test_latest_returns_last_published_without_consuming():
+    broker = FrameBroker()
+    sub = broker.subscribe("a")
+    assert broker.latest() is None
+
+    f = make_frame(3)
+    broker.publish(f)
+
+    assert broker.latest() is f
+    assert broker.latest() is f          # no se consume
+    assert sub.get(timeout=1) is f       # el suscriptor lo sigue recibiendo
+
+
+# ─── subscribe(replace=True) reclama un nombre ya registrado ─────────────────
+# Un worker que muere por una excepcion nunca cierra su suscripcion; la
+# factory que lo recrea tiene que poder reclamar el mismo nombre.
+def test_subscribe_replace_reclaims_name():
+    broker = FrameBroker()
+    old = broker.subscribe("detector")
+    with pytest.raises(ValueError):
+        broker.subscribe("detector")
+
+    new = broker.subscribe("detector", replace=True)
+    assert new is not old
+
+    broker.publish(make_frame(0))
+    assert new.get(timeout=1) is not None   # la nueva recibe
+    assert old.get(timeout=0.05) is None    # la vieja quedo cerrada
+
+
+# ─── Cerrar una suscripcion reemplazada no retira a su sustituta ─────────────
+def test_closing_replaced_subscription_does_not_evict_successor():
+    broker = FrameBroker()
+    old = broker.subscribe("detector")
+    new = broker.subscribe("detector", replace=True)
+
+    old.close()   # cierre tardio de la vieja
+
+    assert "detector" in broker.stats()
+    broker.publish(make_frame(1))
+    assert new.get(timeout=1) is not None

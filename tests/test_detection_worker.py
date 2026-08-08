@@ -235,3 +235,68 @@ def test_detector_exception_does_not_kill_worker(broker):
     worker.stop()
 
     assert calls["n"] >= 2  # sobrevivio a la excepcion y siguio procesando
+
+
+# ---------------------------------------------------------------------------
+# Zonas de interes y heatmap — portados de RTSPStream en la Fase 18
+# ---------------------------------------------------------------------------
+
+def _worker_for_zones() -> DetectionWorker:
+    broker = FrameBroker()
+    return DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+    )
+
+
+def _tracked_at(boxes, tids) -> sv.Detections:
+    det = sv.Detections(
+        xyxy=np.array(boxes, dtype=float),
+        confidence=np.ones(len(tids)),
+        class_id=np.zeros(len(tids), dtype=int),
+    )
+    det.tracker_id = np.array(tids)
+    return det
+
+
+# ─── PolygonZone cuenta presencia y entradas acumuladas por zona ────────────
+def test_polygon_zone_counts_presence_and_entries():
+    import json
+
+    worker = _worker_for_zones()
+    worker.set_zones([{
+        "id": "z1", "name": "Puerta", "enabled": True,
+        "polygon_json": json.dumps([[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]]),
+    }])
+
+    shape = (720, 1280, 3)
+    # frame 1: track 1 dentro (pies en x=320), track 2 fuera (x=960)
+    worker._update_zones_and_heat(
+        _tracked_at([[300, 100, 340, 400], [940, 100, 980, 400]], [1, 2]), shape
+    )
+    assert worker.get_zone_stats() == [
+        {"id": "z1", "name": "Puerta", "current": 1, "entries": 1}
+    ]
+
+    # frame 2: el track 2 entra en la zona
+    worker._update_zones_and_heat(
+        _tracked_at([[300, 100, 340, 400], [400, 100, 440, 400]], [1, 2]), shape
+    )
+    assert worker.get_zone_stats() == [
+        {"id": "z1", "name": "Puerta", "current": 2, "entries": 2}
+    ]
+
+
+# ─── El heatmap acumula actividad y se compone bajo demanda ─────────────────
+def test_heatmap_accumulates_and_renders():
+    worker = _worker_for_zones()
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+    assert worker.compose_heatmap(frame) is None   # sin actividad todavia
+
+    worker._update_zones_and_heat(_tracked_at([[600, 100, 680, 400]], [1]), frame.shape)
+
+    heat = worker.compose_heatmap(frame)
+    assert heat is not None
+    assert heat.shape == frame.shape
+    assert heat[380:420, 620:660].any()   # hay calor alrededor de los pies

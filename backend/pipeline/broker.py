@@ -74,13 +74,17 @@ class Subscription:
                 self.delivered += 1
             return frame
 
-    def close(self) -> None:
-        """Cierra la suscripcion y desbloquea a quien este esperando en get()."""
+    def _mark_closed(self) -> None:
+        """Cierra el slot sin tocar el registro del broker (lo usa replace=True)."""
         with self._cond:
             self._closed = True
             self._slot = None
             self._cond.notify_all()
-        self._broker._unsubscribe(self.name)
+
+    def close(self) -> None:
+        """Cierra la suscripcion y desbloquea a quien este esperando en get()."""
+        self._mark_closed()
+        self._broker._unsubscribe(self.name, self)
 
 
 class FrameBroker:
@@ -89,19 +93,46 @@ class FrameBroker:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._subs: dict[str, Subscription] = {}
+        self._latest: Frame | None = None
 
-    def subscribe(self, name: str) -> Subscription:
+    def subscribe(self, name: str, replace: bool = False) -> Subscription:
+        """
+        Registra un suscriptor con *name*.
+
+        Con ``replace=True`` sustituye una suscripcion existente con ese
+        nombre en vez de fallar. Lo necesita el WorkerSupervisor: un worker
+        que muere por una excepcion nunca llega a cerrar su suscripcion, y
+        la factory que lo recrea tiene que poder reclamar el mismo nombre.
+        """
         with self._lock:
-            if name in self._subs:
-                raise ValueError(f"Subscriber already registered: {name}")
+            existing = self._subs.get(name)
+            if existing is not None:
+                if not replace:
+                    raise ValueError(f"Subscriber already registered: {name}")
+                existing._mark_closed()
+                logger.debug("FrameBroker: replacing subscriber: %s", name)
             sub = Subscription(name, self)
             self._subs[name] = sub
             logger.debug("FrameBroker: subscriber registered: %s", name)
             return sub
 
-    def _unsubscribe(self, name: str) -> None:
+    def _unsubscribe(self, name: str, sub: Subscription | None = None) -> None:
         with self._lock:
-            self._subs.pop(name, None)
+            current = self._subs.get(name)
+            # Solo retirar si sigue siendo la misma suscripcion: una
+            # reemplazada por replace=True no debe llevarse por delante a
+            # su sustituta al cerrarse tarde.
+            if current is not None and (sub is None or current is sub):
+                del self._subs[name]
+
+    def latest(self) -> Frame | None:
+        """Ultimo frame publicado, sin consumirlo ni requerir suscripcion.
+
+        Para necesidades puntuales (una captura para enrolar, un chequeo de
+        vida) que no justifican montar un worker propio.
+        """
+        with self._lock:
+            return self._latest
 
     def publish(self, frame: Frame) -> None:
         """Entrega el frame a todos los suscriptores. NUNCA bloquea al productor.
@@ -110,6 +141,7 @@ class FrameBroker:
         fuera de el, para que un suscriptor no pueda bloquear a los demas.
         """
         with self._lock:
+            self._latest = frame
             subs = list(self._subs.values())
         for sub in subs:
             sub._offer(frame)

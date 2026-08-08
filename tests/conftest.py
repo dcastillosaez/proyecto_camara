@@ -23,6 +23,6 @@ def mock_video_capture(fake_frame):
     mock_cap.isOpened.return_value = True
     mock_cap.read.return_value = (True, fake_frame.copy())
 
-    with patch("backend.stream.cv2.VideoCapture", return_value=mock_cap) as factory:
+    with patch("backend.pipeline.capture.cv2.VideoCapture", return_value=mock_cap) as factory:
         factory._mock_cap = mock_cap  # expose for tests
         yield factory

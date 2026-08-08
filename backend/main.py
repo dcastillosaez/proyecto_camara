@@ -34,6 +34,7 @@ from backend.database import (
     get_stats_today,
     get_zones,
     init_db,
+    insert_capture,
     insert_event,
     insert_recording,
     purge_old_events,
@@ -45,17 +46,18 @@ from backend.database import (
 from backend.detector import PersonDetector
 from backend.gdrive import DriveUploader
 from backend.notifier import Notifier
-from backend.pipeline import CameraManager
+from backend.pipeline import CameraManager, CameraPipeline
 from backend.recognizer import PersonRecognizer
 from backend.recorder import ClipRecorder
-from backend.stream import RTSPStream
 from backend.tracker import PersonTracker
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 logger = logging.getLogger(__name__)
 
-rtsp_stream: RTSPStream | None = None
+# Fachada de la camara activa (CameraPipeline). Conserva el nombre historico
+# porque es el que consumen todos los endpoints; RTSPStream ya no existe.
+rtsp_stream: "CameraPipeline | None" = None
 camera_manager: CameraManager | None = None
 notifier: Notifier | None = None
 _ws_clients: set[WebSocket] = set()
@@ -111,7 +113,8 @@ async def _camera_watchdog(check_interval: float = 10.0) -> None:
         await asyncio.sleep(check_interval)
         if rtsp_stream is None or notifier is None:
             continue
-        is_offline = rtsp_stream.get_frame() is None
+        health = rtsp_stream.health
+        is_offline = not health.connected or health.last_frame_age_s > check_interval
         if is_offline and not was_offline:
             await notifier.fire_camera_offline()
         elif not is_offline and was_offline:
@@ -136,10 +139,10 @@ async def _purge_loop() -> None:
             if (
                 settings.persons_retention_days > 0
                 and rtsp_stream is not None
-                and rtsp_stream._recognizer is not None
+                and rtsp_stream.recognizer is not None
             ):
                 n = await asyncio.to_thread(
-                    rtsp_stream._recognizer.purge_unnamed,
+                    rtsp_stream.recognizer.purge_unnamed,
                     settings.persons_retention_days,
                 )
                 if n:
@@ -162,25 +165,6 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
     drain_task = asyncio.create_task(_drain_events(event_queue))
 
-    # Pipeline v2 (Fase 17): si esta activo, un CaptureWorker independiente
-    # captura y publica en un FrameBroker; RTSPStream consume de ahi en vez
-    # de abrir su propio VideoCapture. Con el flag apagado, broker es None
-    # y RTSPStream captura tal cual lo hacia en v1.2.
-    broker = None
-    if settings.pipeline_v2:
-        camera_manager = CameraManager()
-        process_size = (
-            (settings.process_width, settings.process_height)
-            if settings.process_width > 0
-            else None
-        )
-        cam_pipeline = camera_manager.add(
-            "cam1", build_rtsp_url(settings), process_size=process_size
-        )
-        cam_pipeline.start()
-        broker = cam_pipeline.broker
-        logger.info("Pipeline v2 activo — CaptureWorker cam1 iniciado")
-
     detector = PersonDetector(
         model_path=settings.yolo_model_path,
         confidence=settings.yolo_confidence,
@@ -200,28 +184,6 @@ async def lifespan(app: FastAPI):
         frame_rate=settings.tracker_frame_rate,
     )
     recognizer = PersonRecognizer(db_path=settings.db_path.replace("events.db", "persons.db"))
-    rtsp_stream = RTSPStream(
-        build_rtsp_url(settings),
-        detector=detector,
-        tracker=tracker,
-        recognizer=recognizer,
-        event_loop=loop,
-        event_queue=event_queue,
-        broker=broker,
-    )
-    if settings.camera_driver == "tapo":
-        from backend.camera import set_refs as camera_set_refs
-        camera_set_refs(rtsp_stream, tracker)
-    # Apply initial processing resolution from config
-    if settings.process_width > 0:
-        rtsp_stream.set_process_size(settings.process_width, settings.process_height)
-
-    rtsp_stream.start()
-    logger.info("RTSP stream started: %s", mask_rtsp_url(build_rtsp_url(settings)))
-
-    # Load persisted zones into stream overlay
-    initial_zones = await get_zones()
-    rtsp_stream.set_zones(initial_zones)
 
     # Ensure gallery directory exists
     import os as _os
@@ -286,16 +248,91 @@ async def lifespan(app: FastAPI):
         on_uploaded=_on_uploaded,
         on_failed=_on_failed,
     )
-    recorder = ClipRecorder(
-        stream=rtsp_stream,
-        clips_dir=settings.clips_dir,
-        fps=settings.recording_fps,
-        tail_secs=settings.recording_tail_secs,
-        codec=settings.recording_codec,
-        on_clip_ready=_on_clip_ready,
-    )
     uploader.start()
-    recorder.start()
+
+    def _recorder_factory(stream_like):
+        """El RecordingWorker se pasa a si mismo como 'stream' al ClipRecorder."""
+        return ClipRecorder(
+            stream=stream_like,
+            clips_dir=settings.clips_dir,
+            fps=settings.recording_fps,
+            tail_secs=settings.recording_tail_secs,
+            codec=settings.recording_codec,
+            on_clip_ready=_on_clip_ready,
+        )
+
+    def _is_in_schedule() -> bool:
+        """True si la hora actual cae dentro del horario de acceso configurado."""
+        if not settings.schedule_enabled:
+            return True
+        now = datetime.datetime.now()
+        if now.weekday() not in settings.schedule_days:
+            return False
+        sh, sm = map(int, settings.schedule_start.split(":"))
+        eh, em = map(int, settings.schedule_end.split(":"))
+        start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+        end = now.replace(hour=eh, minute=em, second=0, microsecond=0)
+        return start <= now <= end
+
+    _last_capture: dict[int, float] = {}
+
+    def _save_gallery_capture(crop: np.ndarray, person_id: int) -> None:
+        """Guarda un recorte en la galeria al identificar (throttled). Corre en el worker."""
+        now = time.time()
+        if now - _last_capture.get(person_id, 0) < settings.gallery_throttle_secs:
+            return
+        _last_capture[person_id] = now
+        if len(_last_capture) > 256:
+            expired = now - settings.gallery_throttle_secs
+            for pid in [p for p, t in _last_capture.items() if t < expired]:
+                del _last_capture[pid]
+        if crop.size == 0:
+            return
+        gallery_dir = _os.path.join(settings.gallery_dir, str(person_id))
+        _os.makedirs(gallery_dir, exist_ok=True)
+        ts = datetime.datetime.now()
+        image_path = _os.path.join(gallery_dir, f"{ts.strftime('%Y%m%d_%H%M%S')}.jpg")
+        cv2.imwrite(image_path, crop)
+        asyncio.run_coroutine_threadsafe(insert_capture(person_id, ts, image_path), loop)
+
+    process_size = (
+        (settings.process_width, settings.process_height)
+        if settings.process_width > 0 else None
+    )
+    camera_manager = CameraManager()
+    pipeline = camera_manager.add(
+        "cam1",
+        build_rtsp_url(settings),
+        process_size=process_size,
+        detector=detector,
+        tracker=tracker,
+        recognizer=recognizer,
+        event_loop=loop,
+        event_queue=event_queue,
+        is_intrusion=lambda: not _is_in_schedule(),
+        recorder_factory=_recorder_factory,
+        on_identified=_save_gallery_capture,
+        detection_fps=(
+            settings.detection_target_fps,
+            settings.detection_min_fps,
+            settings.detection_max_fps,
+        ),
+        recognition_fps=settings.recognition_target_fps,
+    )
+    rtsp_stream = pipeline  # fachada consumida por los endpoints
+
+    if settings.camera_driver == "tapo":
+        from backend.camera import set_refs as camera_set_refs
+        camera_set_refs(pipeline, tracker)
+
+    pipeline.start()
+    logger.info(
+        "Pipeline v2 arrancado (%s) — deteccion %.0f FPS objetivo",
+        mask_rtsp_url(build_rtsp_url(settings)), settings.detection_target_fps,
+    )
+
+    # Load persisted zones into the detection worker
+    pipeline.set_zones(await get_zones())
 
     global notifier
     notifier = Notifier(
@@ -314,13 +351,10 @@ async def lifespan(app: FastAPI):
     yield
     purge_task.cancel()
     watchdog_task.cancel()
-    recorder.stop()
+    camera_manager.stop_all()   # para los workers, incluido el recorder
     uploader.stop()
-    rtsp_stream.stop()
-    if camera_manager is not None:
-        camera_manager.stop_all()
     drain_task.cancel()
-    logger.info("RTSP stream stopped")
+    logger.info("Pipeline detenido")
 
 
 _limiter = Limiter(key_func=get_remote_address)
@@ -384,25 +418,34 @@ async def root():
 
 
 async def mjpeg_generator():
-    """Yield JPEG frames in MJPEG multipart format."""
+    """Yield JPEG frames in MJPEG multipart format.
+
+    El encode lo hace el StreamingWorker en su propio hilo; aqui solo se
+    sirve el ultimo JPEG listo. Registrar la conexion y desconexion del
+    cliente es lo que permite al worker no encodear cuando nadie mira.
+    """
+    if rtsp_stream is None:
+        return
+    rtsp_stream.client_connected()
+    last: bytes | None = None
     try:
         while True:
-            frame = rtsp_stream.get_frame()
-            if frame is None:
-                await asyncio.sleep(0.1)
+            jpeg = rtsp_stream.get_jpeg()
+            if jpeg is None or jpeg is last:
+                await asyncio.sleep(0.02)
                 continue
-            _, jpeg = cv2.imencode(
-                ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80]
-            )
+            last = jpeg
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n"
                 b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n"
-                + jpeg.tobytes() + b"\r\n"
+                + jpeg + b"\r\n"
             )
-            await asyncio.sleep(0.033)  # ~30 fps cap
+            await asyncio.sleep(0.02)
     except asyncio.CancelledError:
         pass
+    finally:
+        rtsp_stream.client_disconnected()
 
 
 @app.get("/video_feed")
@@ -419,7 +462,7 @@ async def detections():
     if rtsp_stream is None:
         return {"detections": [], "live_count": 0}
     return {
-        "detections": [asdict(d) for d in rtsp_stream.get_detections()],
+        "detections": rtsp_stream.get_detections(),
         "live_count": rtsp_stream.get_live_count(),
     }
 
@@ -556,11 +599,11 @@ async def websocket_endpoint(ws: WebSocket, token: str | None = Query(default=No
 @app.get("/persons")
 async def persons():
     """Return all known persons with visit history."""
-    if rtsp_stream is None or rtsp_stream._recognizer is None:
+    if rtsp_stream is None or rtsp_stream.recognizer is None:
         return {"persons": [], "recognition_enabled": False}
     return {
-        "persons": rtsp_stream._recognizer.list_persons(),
-        "recognition_enabled": rtsp_stream._recognizer.available,
+        "persons": rtsp_stream.recognizer.list_persons(),
+        "recognition_enabled": rtsp_stream.recognizer.available,
     }
 
 
@@ -577,9 +620,9 @@ async def enroll_face(
     use_current_frame: bool = Form(default=False),
 ):
     """Register a named person from an uploaded image or the current camera frame."""
-    if rtsp_stream is None or rtsp_stream._recognizer is None:
+    if rtsp_stream is None or rtsp_stream.recognizer is None:
         raise HTTPException(status_code=503, detail="Recognizer not available")
-    if not rtsp_stream._recognizer.available:
+    if not rtsp_stream.recognizer.available:
         raise HTTPException(status_code=503, detail="face_recognition library not installed")
 
     if use_current_frame or image is None:
@@ -598,7 +641,7 @@ async def enroll_face(
         if img_bgr is None:
             raise HTTPException(status_code=400, detail="Could not decode image")
 
-    pid = await asyncio.to_thread(rtsp_stream._recognizer.enroll_named_face, img_bgr, name.strip())
+    pid = await asyncio.to_thread(rtsp_stream.recognizer.enroll_named_face, img_bgr, name.strip())
     if pid is None:
         raise HTTPException(status_code=422, detail="No face detected in the provided image")
     return {"person_id": pid, "name": name.strip()}
@@ -702,7 +745,12 @@ async def api_v2_cameras():
     """List cameras managed by pipeline v2, with their capture health."""
     if camera_manager is None:
         raise HTTPException(status_code=503, detail="Pipeline v2 no activo")
-    return {"cameras": [asdict(p.health) for p in camera_manager.all()]}
+    return {
+        "cameras": [
+            {**asdict(p.health), "workers": p.worker_status(), "degraded": p.degraded}
+            for p in camera_manager.all()
+        ]
+    }
 
 
 @app.get("/api/v2/cameras/{camera_id}/health")
@@ -715,7 +763,12 @@ async def api_v2_camera_health(camera_id: str):
         raise HTTPException(status_code=404, detail="Camera not found")
     return {
         **asdict(pipeline.health),
+        # capture_fps y detection_fps son deliberadamente distintos: esa
+        # diferencia ES la prueba de que el pipeline esta desacoplado.
+        "capture_fps": pipeline.get_fps(),
+        "detection_fps": pipeline.get_detection_fps(),
         "broker_stats": pipeline.broker.stats(),
+        **pipeline.stats(),
     }
 
 

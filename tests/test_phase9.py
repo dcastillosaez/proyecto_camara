@@ -756,8 +756,8 @@ import backend.main as main_module
 async def TEST_066_enroll_face_503_when_recognizer_unavailable():
     """Returns 503 when the recognizer reports the library is not installed."""
     mock_stream = MagicMock()
-    mock_stream._recognizer = MagicMock()
-    mock_stream._recognizer.available = False
+    mock_stream.recognizer = MagicMock()
+    mock_stream.recognizer.available = False
 
     with patch.object(main_module, "rtsp_stream", mock_stream):
         async with httpx.AsyncClient(
@@ -776,10 +776,10 @@ async def TEST_066_enroll_face_503_when_recognizer_unavailable():
 async def TEST_067_enroll_face_422_when_no_face_detected():
     """Returns 422 when enroll_named_face finds no face in the image."""
     mock_stream = MagicMock()
-    mock_stream._recognizer = MagicMock()
-    mock_stream._recognizer.available = True
+    mock_stream.recognizer = MagicMock()
+    mock_stream.recognizer.available = True
     mock_stream.get_frame.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
-    mock_stream._recognizer.enroll_named_face = MagicMock(return_value=None)
+    mock_stream.recognizer.enroll_named_face = MagicMock(return_value=None)
 
     with patch.object(main_module, "rtsp_stream", mock_stream):
         async with httpx.AsyncClient(
@@ -798,10 +798,10 @@ async def TEST_067_enroll_face_422_when_no_face_detected():
 async def TEST_068_enroll_face_success_returns_person_id():
     """Returns 200 with person_id and name on successful enrolment."""
     mock_stream = MagicMock()
-    mock_stream._recognizer = MagicMock()
-    mock_stream._recognizer.available = True
+    mock_stream.recognizer = MagicMock()
+    mock_stream.recognizer.available = True
     mock_stream.get_frame.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
-    mock_stream._recognizer.enroll_named_face = MagicMock(return_value=3)
+    mock_stream.recognizer.enroll_named_face = MagicMock(return_value=3)
 
     with patch.object(main_module, "rtsp_stream", mock_stream):
         async with httpx.AsyncClient(
