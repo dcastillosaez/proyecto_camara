@@ -33,6 +33,9 @@ certs/
 # Database
 data/*.db
 
+# Clip thumbnails (Fase 20) — generated at runtime from the trigger frame
+data/thumbnails/
+
 # Referencias externas
 third_party/
 

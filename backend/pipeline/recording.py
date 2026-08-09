@@ -11,7 +11,9 @@ Two threads:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import queue
 import threading
 import time
@@ -20,7 +22,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from backend.pipeline.prebuffer import RingFrameBuffer
+import cv2
+import numpy as np
+
+from backend.pipeline.prebuffer import BufferedFrame, RingFrameBuffer
 from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.tracking import TrackRegistry
 from backend.recorder import ClipWriter
@@ -30,6 +35,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
+
 
 @dataclass
 class ClipRequest:
@@ -38,6 +45,7 @@ class ClipRequest:
     trigger_event_id: str | None = None
     person_id: int | None = None
     zone_id: str | None = None
+    severity: str = "info"
 
 
 @dataclass
@@ -49,6 +57,11 @@ class ClipResult:
     trigger_event_id: str | None
     person_id: int | None
     zone_id: str | None
+    duration_s: float
+    size_bytes: int
+    sha256: str
+    thumbnail_path: str | None
+    upload_state: str
 
 
 @dataclass
@@ -57,6 +70,7 @@ class _ActiveClip:
     started_at: datetime
     deadline: datetime
     request: ClipRequest
+    trigger_jpeg: bytes | None = None
 
 
 class RecordingWorker:
@@ -65,12 +79,15 @@ class RecordingWorker:
         sub: Subscription,
         registry: TrackRegistry,
         clips_dir: str = "data/clips",
+        thumbnails_dir: str = "data/thumbnails",
         fps: float = 15.0,
         pre_buffer_secs: float = 10.0,
         post_buffer_secs: float = 10.0,
         pre_buffer_max_mb: int = 48,
         pre_buffer_jpeg_quality: int = 85,
         codec: str = "mp4v",
+        thumbnail_width: int = 320,
+        upload_min_severity: str = "warning",
         on_clip_ready: Callable[[ClipResult], None] | None = None,
         on_failure: Callable[[str], None] | None = None,
         live_queue_max: int = 0,
@@ -78,9 +95,12 @@ class RecordingWorker:
         self._sub = sub
         self._registry = registry
         self._clips_dir = Path(clips_dir)
+        self._thumbnails_dir = Path(thumbnails_dir)
         self._fps = fps
         self._post_buffer_secs = post_buffer_secs
         self._codec = codec
+        self._thumbnail_width = thumbnail_width
+        self._upload_min_severity = upload_min_severity
         self._on_clip_ready = on_clip_ready
         self._on_failure = on_failure
 
@@ -108,6 +128,7 @@ class RecordingWorker:
 
     def start(self) -> None:
         self._clips_dir.mkdir(parents=True, exist_ok=True)
+        self._thumbnails_dir.mkdir(parents=True, exist_ok=True)
         self._running = True
         self._feed_thread = threading.Thread(target=self._feed_loop, daemon=True, name="recording-feed")
         self._assembly_thread = threading.Thread(target=self._assembly_loop, daemon=True, name="recording-assembly")
@@ -137,9 +158,12 @@ class RecordingWorker:
         trigger_event_id: str | None = None,
         person_id: int | None = None,
         zone_id: str | None = None,
+        severity: str = "info",
     ) -> None:
         """Start or extend the active clip. Thread-safe — callable from the asyncio loop."""
-        self._requests.put_nowait(ClipRequest(reason, trigger_ts, trigger_event_id, person_id, zone_id))
+        self._requests.put_nowait(
+            ClipRequest(reason, trigger_ts, trigger_event_id, person_id, zone_id, severity)
+        )
 
     @property
     def stats(self) -> dict[str, Any]:
@@ -242,7 +266,17 @@ class RecordingWorker:
             started_at=pre_frames[0].wall_clock if pre_frames else req.trigger_ts,
             deadline=req.trigger_ts + timedelta(seconds=self._post_buffer_secs),
             request=req,
+            trigger_jpeg=self._closest_jpeg(pre_frames, req.trigger_ts),
         )
+
+    @staticmethod
+    def _closest_jpeg(pre_frames: list[BufferedFrame], ts: datetime) -> bytes | None:
+        """The pre-buffer frame closest to the trigger timestamp — the thumbnail source
+        (the event frame has the relevant content, not necessarily the first buffered one)."""
+        if not pre_frames:
+            return None
+        closest = min(pre_frames, key=lambda item: abs((item.wall_clock - ts).total_seconds()))
+        return closest.jpeg
 
     def _extend_clip(self, req: ClipRequest) -> None:
         if self._active is None:
@@ -267,14 +301,26 @@ class RecordingWorker:
         if active is None:
             return
         active.writer.release()
+        path = active.writer.path
+        ended_at = datetime.now()
+
+        rank = _SEVERITY_RANK.get(active.request.severity, 0)
+        min_rank = _SEVERITY_RANK.get(self._upload_min_severity, 1)
+        upload_state = "pending" if rank >= min_rank else "skipped"
+
         result = ClipResult(
-            path=active.writer.path,
+            path=path,
             started_at=active.started_at,
-            ended_at=datetime.now(),
+            ended_at=ended_at,
             reason=active.request.reason,
             trigger_event_id=active.request.trigger_event_id,
             person_id=active.request.person_id,
             zone_id=active.request.zone_id,
+            duration_s=(ended_at - active.started_at).total_seconds(),
+            size_bytes=os.path.getsize(path) if os.path.exists(path) else 0,
+            sha256=self._sha256_file(path) if os.path.exists(path) else "",
+            thumbnail_path=self._save_thumbnail(active),
+            upload_state=upload_state,
         )
         logger.info("RecordingWorker: clip ready %s", result.path)
         if self._on_clip_ready:
@@ -282,3 +328,29 @@ class RecordingWorker:
                 self._on_clip_ready(result)
             except Exception:
                 logger.exception("RecordingWorker: on_clip_ready raised")
+
+    @staticmethod
+    def _sha256_file(path: str, block_size: int = 65536) -> str:
+        """Streamed — never loads the file into memory whole (clips can be tens of MB)."""
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(block_size), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    def _save_thumbnail(self, active: _ActiveClip) -> str | None:
+        """Thumbnail from the trigger frame (the relevant content), not the clip's first frame."""
+        if active.trigger_jpeg is None:
+            return None
+        image = cv2.imdecode(np.frombuffer(active.trigger_jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        h, w = image.shape[:2]
+        if w > self._thumbnail_width:
+            scale = self._thumbnail_width / w
+            image = cv2.resize(image, (self._thumbnail_width, max(1, int(h * scale))))
+        stem = Path(active.writer.path).stem
+        thumb_path = str(self._thumbnails_dir / f"{stem}.jpg")
+        if not cv2.imwrite(thumb_path, image):
+            return None
+        return thumb_path
