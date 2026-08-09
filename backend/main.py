@@ -173,6 +173,29 @@ async def _purge_local_clip_files(retention_days: int) -> None:
         logger.info("Purged %d local clip file(s) older than %d days", len(expired), retention_days)
 
 
+async def _housekeeping_loop(interval: float = 60.0) -> None:
+    """Centralized periodic prune() for every per-camera pipeline (Fase 22 — PIPE-07).
+
+    TrackRegistry and PersonRecognizer already prune themselves from their own
+    worker loop (much more frequently — every processed frame). This loop is a
+    second, independent trigger so bounding doesn't depend on any single
+    worker's hot path staying correct; reads the `camera_manager` global fresh
+    on every tick, so it's unaffected by when the pipeline is actually built.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        if camera_manager is None:
+            continue
+        now = time.monotonic()
+        for pipeline in camera_manager.all():
+            try:
+                pipeline.registry.prune(now)
+                if pipeline.recognizer is not None:
+                    pipeline.recognizer.prune(pipeline.registry.active_ids())
+            except Exception:
+                logger.exception("housekeeping: prune failed for camera %s", pipeline.camera_id)
+
+
 async def _purge_loop() -> None:
     """Delete events and recordings older than the configured retention window. Runs daily."""
     while True:
@@ -444,10 +467,12 @@ async def lifespan(app: FastAPI):
     watchdog_task = asyncio.create_task(_camera_watchdog())
     purge_task = asyncio.create_task(_purge_loop())
     stats_flush_task = asyncio.create_task(_detection_stats_flush_loop())
+    housekeeping_task = asyncio.create_task(_housekeeping_loop(settings.housekeeping_secs))
 
     yield
     if metrics_sampler is not None:
         metrics_sampler.stop()
+    housekeeping_task.cancel()
     stats_flush_task.cancel()
     purge_task.cancel()
     watchdog_task.cancel()

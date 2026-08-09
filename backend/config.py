@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     metrics_sample_secs: float = 5.0
 
+    # --- Housekeeping centralizado (Fase 22 — PIPE-07) ---
+    # Purga periodica de TrackRegistry/PersonRecognizer por cámara, ademas de
+    # la que cada worker ya hace en su propio ciclo caliente (mas frecuente).
+    housekeeping_secs: float = 60.0
+
     # Horario de acceso — fuera de este rango los crossing events se marcan como intrusión.
     # Requiere schedule_enabled=True; si está en False todos los eventos son "normales".
     schedule_enabled: bool = False
