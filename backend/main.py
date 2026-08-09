@@ -218,6 +218,9 @@ async def lifespan(app: FastAPI):
     latency_tracker = LatencyTracker()
     event_engine = EventEngine(event_bus, camera_id="cam1", latency_tracker=latency_tracker)
 
+    from backend.api.v2 import metrics as metrics_v2_module
+    metrics_v2_module.configure(latency_tracker)
+
     rules_path = Path("config/rules.yaml")
     if rules_path.exists():
         loaded_rules, rule_errors = load_rules(str(rules_path))
@@ -318,14 +321,6 @@ async def lifespan(app: FastAPI):
     )
     upload_queue.start()
 
-    metrics_sampler = None
-    if settings.metrics_enabled:
-        metrics_sampler = MetricsSampler(
-            obs_metrics, camera_manager, event_bus=event_bus, recording_repo=recording_repo,
-            db_path=settings.db_path, interval=settings.metrics_sample_secs,
-        )
-        metrics_sampler.start()
-
     def _on_recording_failure(message: str) -> None:
         logger.error("RecordingWorker failure: %s", message)
         if event_engine is not None:
@@ -418,6 +413,14 @@ async def lifespan(app: FastAPI):
     # Load persisted zones into the detection worker
     pipeline.set_zones(await get_zones())
 
+    metrics_sampler = None
+    if settings.metrics_enabled:
+        metrics_sampler = MetricsSampler(
+            obs_metrics, camera_manager, event_bus=event_bus, recording_repo=recording_repo,
+            db_path=settings.db_path, interval=settings.metrics_sample_secs,
+        )
+        metrics_sampler.start()
+
     notifier = Notifier(
         webhook_url=settings.alert_webhook_url,
         telegram_token=settings.alert_telegram_token,
@@ -497,6 +500,9 @@ if _settings.camera_driver == "tapo":
 
 from backend.api.v2.recordings import router as recordings_v2_router
 app.include_router(recordings_v2_router)
+
+from backend.api.v2.metrics import router as metrics_v2_router
+app.include_router(metrics_v2_router)
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 

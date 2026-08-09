@@ -472,6 +472,42 @@
         </div>
       </div>
 
+      <!-- OBSERVABILITY METRICS (Fase 21) -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-3.5">
+        <div class="flex items-center gap-2 mb-3">
+          <svg class="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3v18h18"/><path d="M18.7 8 12 14.7 8.5 11.2 3 16.7"/></svg>
+          <h2 class="text-sm font-semibold text-slate-200">Observabilidad</h2>
+          <span id="obs-updated" class="ml-auto text-xs text-slate-700 mono">–</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500">Captura</span>
+            <span id="obs-capture-fps" class="mono text-base font-semibold text-slate-200">–</span>
+          </div>
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500" title="Distinto a proposito: la deteccion corre a su propio ritmo">Deteccion</span>
+            <span id="obs-detection-fps" class="mono text-base font-semibold text-slate-200">–</span>
+          </div>
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500">Facial</span>
+            <span id="obs-face-fps" class="mono text-base font-semibold text-slate-200">–</span>
+          </div>
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500" title="Esperado y correcto: la captura va mas rapida que el procesamiento">Descartados</span>
+            <span id="obs-dropped" class="mono text-base font-semibold text-slate-200">–</span>
+          </div>
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500">Latencia e2e p50/p95</span>
+            <span id="obs-latency" class="mono text-sm font-semibold text-slate-200">–</span>
+          </div>
+          <div class="flex flex-col items-center gap-1 bg-slate-800/60 rounded-xl p-2.5">
+            <span class="text-xs text-slate-500">Colas rec/subida</span>
+            <span id="obs-queues" class="mono text-base font-semibold text-slate-200">–</span>
+          </div>
+        </div>
+        <p class="text-xs text-slate-600 mt-2">Descartados creciente es correcto: significa que la captura va más rápida que el procesamiento, no un error.</p>
+      </div>
+
       <!-- EVENTS LIST -->
       <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col" style="min-height:0">
         <div class="flex items-center justify-between mb-3">
@@ -1826,6 +1862,52 @@
 
     loadHealth();
     setInterval(loadHealth, 30000);
+
+    // ── Fase 21: métricas de observabilidad ───────────────────────────
+    function _gaugeValue(snapshot, name, labelKey) {
+      const series = snapshot.gauges && snapshot.gauges[name];
+      if (!series) return null;
+      if (labelKey !== undefined) return series[labelKey];
+      const values = Object.values(series);
+      return values.length ? values[0] : null;
+    }
+
+    function _counterSum(snapshot, name) {
+      const series = snapshot.counters && snapshot.counters[name];
+      if (!series) return null;
+      return Object.values(series).reduce((a, b) => a + b, 0);
+    }
+
+    async function loadObservability() {
+      try {
+        const res = await fetch('/api/v2/metrics');
+        if (!res.ok) return;
+        const d = await res.json();
+
+        const cam = _gaugeValue(d, 'capture_fps', "{'camera': 'cam1'}");
+        const det = _gaugeValue(d, 'detection_fps', "{'camera': 'cam1'}");
+        const face = _gaugeValue(d, 'face_fps', "{'camera': 'cam1'}");
+        const dropped = _counterSum(d, 'frames_dropped_total');
+        const recQ = _gaugeValue(d, 'recording_queue_depth');
+        const upQ = _gaugeValue(d, 'upload_queue_depth');
+
+        document.getElementById('obs-capture-fps').textContent = cam != null ? `${cam.toFixed(1)} FPS` : '–';
+        document.getElementById('obs-detection-fps').textContent = det != null ? `${det.toFixed(1)} FPS` : '–';
+        document.getElementById('obs-face-fps').textContent = face != null ? `${face.toFixed(1)} FPS` : '–';
+        document.getElementById('obs-dropped').textContent = dropped != null ? `${dropped}` : '–';
+        document.getElementById('obs-queues').textContent = (recQ != null && upQ != null) ? `${recQ} / ${upQ}` : '–';
+
+        const pct = d.e2e_percentiles;
+        document.getElementById('obs-latency').textContent = pct
+          ? `${pct.p50.toFixed(2)}s / ${pct.p95.toFixed(2)}s`
+          : '–';
+
+        document.getElementById('obs-updated').textContent = new Date().toLocaleTimeString();
+      } catch {}
+    }
+
+    loadObservability();
+    setInterval(loadObservability, 5000);
 
   </script>
 
