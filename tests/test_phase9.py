@@ -209,6 +209,20 @@ async def TEST_061_migration_adds_column_to_existing_db(tmp_path):
         await engine.dispose()
 
 
+# ─── _blob_to_encoding rechaza blobs de formato legacy (SEC-15) ──────────────
+# La Fase 22 elimina el fallback a pickle.loads: cualquier blob que no mida
+# exactamente 128*8=1024 bytes (el tamaño de un embedding numpy float64) debe
+# lanzar en lugar de deserializarse con pickle. scripts/migrate_embeddings.py
+# es la única vía soportada para convertir blobs legacy.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_109_blob_to_encoding_rejects_legacy_format(tmp_path):
+    """A non-numpy-sized blob raises instead of falling back to pickle.loads."""
+    import pickle as _pickle_for_test_fixture_only
+    legacy_blob = _pickle_for_test_fixture_only.dumps(np.random.rand(128).astype(np.float64))
+    with pytest.raises(ValueError):
+        PersonRecognizer._blob_to_encoding(legacy_blob)
+
+
 # ---------------------------------------------------------------------------
 # PersonRecognizer — enroll_named_face
 # ---------------------------------------------------------------------------

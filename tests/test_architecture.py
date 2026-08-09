@@ -112,6 +112,17 @@ def test_capture_worker_stays_pure():
         assert forbidden not in src, f"CaptureWorker no debe referenciar '{forbidden}'"
 
 
+# ─── Sin deserializacion insegura (SEC-15) ──────────────────────────────────
+def test_no_pickle_in_backend():
+    offenders: list[str] = []
+    for path in sorted(BACKEND_DIR.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if "pickle" in line:
+                offenders.append(f"{path}:{lineno} {line.strip()}")
+    assert not offenders, "pickle no debe aparecer en backend/ (SEC-15):\n" + "\n".join(offenders)
+
+
 # ─── El pipeline no conoce la capa web ───────────────────────────────────────
 def test_pipeline_modules_do_not_import_fastapi():
     offenders: list[str] = []
