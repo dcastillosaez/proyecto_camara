@@ -146,8 +146,12 @@ class Recording(Base):
     zone_id = Column(String(50), nullable=True)
     upload_state = Column(String(20), nullable=False, server_default="pending")
     upload_attempts = Column(Integer, nullable=False, server_default="0")
+    upload_error = Column(String(500), nullable=True)
+    next_attempt_at = Column(DateTime, nullable=True)
     drive_file_id = Column(String(100), nullable=True)
     local_expires_at = Column(DateTime, nullable=True)
+    # NULL once the local file has been purged (retention) — the row survives for history.
+    local_path = Column(String(255), nullable=True)
 
     __table_args__ = (Index("idx_recordings_cam", "camera_id", started_at.desc()),)
 

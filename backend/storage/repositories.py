@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import datetime
 import json
+from enum import Enum
 from typing import Any
 
 from sqlalchemy import and_, func, select, text, tuple_
@@ -17,6 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.events.types import Event as EventDTO
 from backend.events.types import EventType, Severity
 from backend.storage import models
+
+
+class UploadState(str, Enum):
+    PENDING = "pending"
+    UPLOADING = "uploading"
+    DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
 
 
 def _encode_cursor(ts: datetime.datetime, id_: str) -> str:
@@ -253,38 +262,161 @@ class DetectionStatRepo:
 
 
 class RecordingRepo:
+    """Owns the recordings table: clip metadata, upload-queue state, retention."""
+
     def __init__(self, session_factory) -> None:
         self._sf = session_factory
 
-    async def insert(self, **fields: Any) -> int:
+    async def create(
+        self,
+        camera_id: str,
+        filename: str,
+        started_at: datetime.datetime,
+        reason: str,
+        trigger_event_id: str | None = None,
+        person_id: int | None = None,
+        zone_id: str | None = None,
+    ) -> int:
         async with self._sf() as session:
             async with session.begin():
-                rec = models.Recording(**fields)
+                rec = models.Recording(
+                    camera_id=camera_id,
+                    filename=filename,
+                    local_path=filename,
+                    started_at=started_at,
+                    reason=reason,
+                    trigger_event_id=trigger_event_id,
+                    person_id=person_id,
+                    zone_id=zone_id,
+                )
                 session.add(rec)
                 await session.flush()
                 return int(rec.id)
+
+    async def finalize(
+        self,
+        rec_id: int,
+        ended_at: datetime.datetime,
+        duration_s: float,
+        size_bytes: int,
+        sha256: str,
+        thumbnail_path: str | None,
+        upload_state: UploadState,
+    ) -> None:
+        state = upload_state.value if isinstance(upload_state, UploadState) else upload_state
+        async with self._sf() as session:
+            async with session.begin():
+                row = await session.get(models.Recording, rec_id)
+                if row is None:
+                    return
+                row.ended_at = ended_at
+                row.duration_s = duration_s
+                row.size_bytes = size_bytes
+                row.sha256 = sha256
+                row.thumbnail_path = thumbnail_path
+                row.upload_state = state
+                if state == UploadState.PENDING.value:
+                    row.next_attempt_at = datetime.datetime.now()
+
+    async def next_pending(self, limit: int = 5) -> list[models.Recording]:
+        """Pending uploads whose backoff window has elapsed, oldest first."""
+        now = datetime.datetime.now()
+        async with self._sf() as session:
+            result = await session.execute(
+                select(models.Recording)
+                .where(
+                    models.Recording.upload_state == UploadState.PENDING.value,
+                    (models.Recording.next_attempt_at.is_(None))
+                    | (models.Recording.next_attempt_at <= now),
+                )
+                .order_by(models.Recording.started_at)
+                .limit(limit)
+            )
+            rows = list(result.scalars().all())
+            session.expunge_all()
+            return rows
+
+    async def mark_upload(
+        self,
+        rec_id: int,
+        state: UploadState,
+        drive_file_id: str | None = None,
+        error: str | None = None,
+        next_attempt_at: datetime.datetime | None = None,
+    ) -> None:
+        state_value = state.value if isinstance(state, UploadState) else state
+        async with self._sf() as session:
+            async with session.begin():
+                row = await session.get(models.Recording, rec_id)
+                if row is None:
+                    return
+                row.upload_state = state_value
+                row.upload_attempts += 1
+                if drive_file_id is not None:
+                    row.drive_file_id = drive_file_id
+                row.upload_error = error
+                row.next_attempt_at = next_attempt_at
+
+    async def expired_local(self, before: datetime.datetime) -> list[models.Recording]:
+        """Recordings older than *before* whose local file hasn't been purged yet.
+
+        Excludes pending/uploading rows — never delete a clip before it's been uploaded.
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(models.Recording).where(
+                    models.Recording.started_at < before,
+                    models.Recording.local_path.is_not(None),
+                    models.Recording.upload_state.notin_(
+                        [UploadState.PENDING.value, UploadState.UPLOADING.value]
+                    ),
+                )
+            )
+            rows = list(result.scalars().all())
+            session.expunge_all()
+            return rows
+
+    async def clear_local_path(self, rec_id: int) -> None:
+        """Null local_path after purging the file on disk — the row survives for history."""
+        async with self._sf() as session:
+            async with session.begin():
+                row = await session.get(models.Recording, rec_id)
+                if row is not None:
+                    row.local_path = None
 
     async def get(self, recording_id: int) -> dict[str, Any] | None:
         async with self._sf() as session:
             row = await session.get(models.Recording, recording_id)
             return self._to_dict(row) if row is not None else None
 
-    async def update_upload_state(
-        self, recording_id: int, upload_state: str, drive_file_id: str | None = None
-    ) -> None:
-        async with self._sf() as session:
-            async with session.begin():
-                row = await session.get(models.Recording, recording_id)
-                if row is not None:
-                    row.upload_state = upload_state
-                    row.upload_attempts += 1
-                    if drive_file_id is not None:
-                        row.drive_file_id = drive_file_id
-
-    async def recent(self, camera_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
-        q = select(models.Recording).order_by(models.Recording.started_at.desc()).limit(limit)
+    async def list(
+        self,
+        camera_id: str | None = None,
+        reason: str | None = None,
+        person_id: int | None = None,
+        upload_state: UploadState | str | None = None,
+        ts_from: datetime.datetime | None = None,
+        ts_to: datetime.datetime | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        conditions = []
         if camera_id is not None:
-            q = q.where(models.Recording.camera_id == camera_id)
+            conditions.append(models.Recording.camera_id == camera_id)
+        if reason is not None:
+            conditions.append(models.Recording.reason == reason)
+        if person_id is not None:
+            conditions.append(models.Recording.person_id == person_id)
+        if upload_state is not None:
+            state_value = upload_state.value if isinstance(upload_state, UploadState) else upload_state
+            conditions.append(models.Recording.upload_state == state_value)
+        if ts_from is not None:
+            conditions.append(models.Recording.started_at >= ts_from)
+        if ts_to is not None:
+            conditions.append(models.Recording.started_at <= ts_to)
+
+        q = select(models.Recording).order_by(models.Recording.started_at.desc()).limit(limit)
+        if conditions:
+            q = q.where(and_(*conditions))
         async with self._sf() as session:
             result = await session.execute(q)
             return [self._to_dict(r) for r in result.scalars().all()]
@@ -295,11 +427,20 @@ class RecordingRepo:
             "id": row.id,
             "camera_id": row.camera_id,
             "filename": row.filename,
+            "local_path": row.local_path,
             "started_at": row.started_at.isoformat() if row.started_at else None,
             "ended_at": row.ended_at.isoformat() if row.ended_at else None,
             "duration_s": row.duration_s,
+            "size_bytes": row.size_bytes,
+            "sha256": row.sha256,
+            "thumbnail_path": row.thumbnail_path,
+            "reason": row.reason,
+            "trigger_event_id": row.trigger_event_id,
+            "person_id": row.person_id,
+            "zone_id": row.zone_id,
             "upload_state": row.upload_state,
             "upload_attempts": row.upload_attempts,
+            "upload_error": row.upload_error,
             "drive_file_id": row.drive_file_id,
         }
 
