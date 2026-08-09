@@ -22,26 +22,38 @@ def TEST_000_valid_pt_extension_accepted():
     assert s.yolo_model_path == "yolov8n.pt"
 
 
-# ─── Extensión distinta de .pt es rechazada ───────────────────────────────────
-# Un modelo ONNX, TorchScript u otro formato no soportado no debe poder
-# configurarse como yolo_model_path. El validador debe lanzar ValidationError
-# antes de que el servidor intente cargar el modelo, evitando errores en runtime.
+# ─── Extensión ONNX válida dentro del proyecto (Fase 22 — SEC-16) ────────────
+# La Fase 23 sustituye los embeddings dlib por ArcFace, distribuido como .onnx.
+# El validador acepta .pt y .onnx desde la Fase 22, para no bloquear esa
+# migración con un validador demasiado estricto.
 # ─────────────────────────────────────────────────────────────────────────────
-def TEST_001_non_pt_extension_rejected():
-    """A model path not ending in .pt raises ValidationError."""
+def TEST_000b_valid_onnx_extension_accepted():
+    """A .onnx path inside the project directory is accepted."""
+    s = Settings(yolo_model_path="models/arcface.onnx")
+    assert s.yolo_model_path == "models/arcface.onnx"
+
+
+# ─── Extensión no permitida es rechazada ──────────────────────────────────────
+# Solo .pt y .onnx están permitidos. Cualquier otro formato (ejecutable,
+# script, etc.) no debe poder configurarse como yolo_model_path. El validador
+# debe lanzar ValidationError antes de que el servidor intente cargar el
+# modelo, evitando errores en runtime.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_001_disallowed_extension_rejected():
+    """A model path with a non-allowed extension raises ValidationError."""
     with pytest.raises((ValidationError, ValueError)):
-        Settings(yolo_model_path="model.onnx")
+        Settings(yolo_model_path="model.exe")
 
 
-# ─── .onnx con .pt en el nombre también es rechazado ─────────────────────────
+# ─── Extensión no permitida con .pt en el nombre también es rechazada ────────
 # Alguien podría intentar eludir el validador con un nombre como
-# 'yolov8n.pt.onnx'. Path.suffix devuelve la última extensión (.onnx),
-# así que el validador debe rechazarlo igualmente.
+# 'yolov8n.pt.exe'. Path.suffix devuelve la última extensión (.exe), así
+# que el validador debe rechazarlo igualmente.
 # ─────────────────────────────────────────────────────────────────────────────
-def TEST_002_non_pt_extension_onnx_rejected():
-    """An .onnx path is rejected even if it contains .pt elsewhere in name."""
+def TEST_002_disallowed_extension_with_pt_in_name_rejected():
+    """A disallowed-extension path is rejected even if it contains .pt elsewhere in name."""
     with pytest.raises((ValidationError, ValueError)):
-        Settings(yolo_model_path="yolov8n.pt.onnx")
+        Settings(yolo_model_path="yolov8n.pt.exe")
 
 
 # ─── Path traversal con ../ es rechazado ──────────────────────────────────────

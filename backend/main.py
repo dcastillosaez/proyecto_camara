@@ -22,6 +22,7 @@ from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from backend.api.v2.deps import V2_RATE_LIMIT, limiter as v2_limiter, pagination_limit
 from backend.auth import issue_ws_token, verify, verify_ws_token
 from backend.config import build_rtsp_url, get_settings, mask_rtsp_url
 from backend.database import (
@@ -706,7 +707,9 @@ async def websocket_endpoint(ws: WebSocket, token: str | None = Query(default=No
 
 
 @app.get("/api/v2/events")
+@v2_limiter.limit(V2_RATE_LIMIT)
 async def api_v2_events(
+    request: Request,
     type: str | None = Query(default=None),
     severity: str | None = Query(default=None),
     person_id: int | None = Query(default=None),
@@ -715,7 +718,7 @@ async def api_v2_events(
     from_dt: datetime.datetime | None = Query(default=None, alias="from"),
     to_dt: datetime.datetime | None = Query(default=None, alias="to"),
     cursor: str | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = pagination_limit(),
 ):
     """Typed events with filters and cursor pagination (EventRepo.query)."""
     from backend.events.types import Severity
@@ -739,7 +742,8 @@ async def api_v2_events(
 
 
 @app.get("/api/v2/rules")
-async def api_v2_rules():
+@v2_limiter.limit(V2_RATE_LIMIT)
+async def api_v2_rules(request: Request):
     """Loaded rules plus any that failed validation, with their reason."""
     if rule_engine is None:
         raise HTTPException(status_code=503, detail="rule engine not initialised")
@@ -911,7 +915,8 @@ async def api_heatmap():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v2/cameras")
-async def api_v2_cameras():
+@v2_limiter.limit(V2_RATE_LIMIT)
+async def api_v2_cameras(request: Request):
     """List cameras managed by pipeline v2, with their capture health."""
     if camera_manager is None:
         raise HTTPException(status_code=503, detail="Pipeline v2 no activo")
@@ -924,7 +929,8 @@ async def api_v2_cameras():
 
 
 @app.get("/api/v2/cameras/{camera_id}/health")
-async def api_v2_camera_health(camera_id: str):
+@v2_limiter.limit(V2_RATE_LIMIT)
+async def api_v2_camera_health(request: Request, camera_id: str):
     """CaptureWorker health for one camera, plus FrameBroker subscriber stats."""
     if camera_manager is None:
         raise HTTPException(status_code=503, detail="Pipeline v2 no activo")

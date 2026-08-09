@@ -2,7 +2,8 @@
 
 Auth and rate limiting: the app applies auth globally (FastAPI(dependencies=[Depends(verify)])),
 so routers included via app.include_router() inherit it automatically — no per-route
-Depends(verify) needed here, matching the v1 endpoints' convention.
+Depends(verify) needed here, matching the v1 endpoints' convention. Rate limiting
+(SEC-16, Fase 22) uses the shared limiter/rate value from backend/api/v2/deps.py.
 """
 
 from __future__ import annotations
@@ -11,9 +12,10 @@ import datetime
 import json
 import os
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
+from backend.api.v2.deps import V2_RATE_LIMIT, limiter, pagination_limit
 from backend.database import get_session_factory
 from backend.storage.repositories import EventRepo, RecordingRepo, UploadState
 
@@ -25,14 +27,16 @@ def _recording_repo() -> RecordingRepo:
 
 
 @router.get("")
+@limiter.limit(V2_RATE_LIMIT)
 async def list_recordings(
+    request: Request,
     camera_id: str | None = Query(default=None),
     reason: str | None = Query(default=None),
     person_id: int | None = Query(default=None),
     upload_state: str | None = Query(default=None),
     from_dt: datetime.datetime | None = Query(default=None, alias="from"),
     to_dt: datetime.datetime | None = Query(default=None, alias="to"),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = pagination_limit(),
 ):
     """Recordings with filters by camera, range, reason, person, and upload state."""
     if upload_state is not None:
@@ -49,7 +53,8 @@ async def list_recordings(
 
 
 @router.get("/{recording_id}")
-async def get_recording(recording_id: int):
+@limiter.limit(V2_RATE_LIMIT)
+async def get_recording(request: Request, recording_id: int):
     """Full metadata for one recording, plus its triggering event if any."""
     rec = await _recording_repo().get(recording_id)
     if rec is None:
@@ -65,7 +70,8 @@ async def get_recording(recording_id: int):
 
 
 @router.get("/{recording_id}/thumbnail")
-async def get_recording_thumbnail(recording_id: int):
+@limiter.limit(V2_RATE_LIMIT)
+async def get_recording_thumbnail(request: Request, recording_id: int):
     """Serve the clip thumbnail. Immutable once generated — cached for a day."""
     rec = await _recording_repo().get(recording_id)
     if rec is None or not rec.get("thumbnail_path"):
@@ -80,7 +86,8 @@ async def get_recording_thumbnail(recording_id: int):
 
 
 @router.post("/{recording_id}/retry-upload")
-async def retry_upload(recording_id: int):
+@limiter.limit(V2_RATE_LIMIT)
+async def retry_upload(request: Request, recording_id: int):
     """Requeue a permanently failed upload as pending for the next poll cycle."""
     repo = _recording_repo()
     rec = await repo.get(recording_id)

@@ -6,6 +6,8 @@ from pathlib import Path
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
+_MODEL_PATH_ALLOWED_SUFFIXES = {".pt", ".onnx"}
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment / .env file."""
@@ -24,22 +26,25 @@ class Settings(BaseSettings):
     # Vacío = sin CORS cross-origin (acceso solo desde el mismo origen).
     cors_origins: list[str] = []
 
-    # YOLO model file — swap for yolo26n.pt, yolov8s.pt, etc.
-    # Must end in .pt and must not contain path traversal sequences.
+    # YOLO model file — swap for yolo26n.pt, yolov8s.pt, an ONNX export, etc.
+    # Extension and path containment enforced below (SEC-16) — resolved relative
+    # to the project root, never to the process cwd, so it can't be fooled by
+    # launching uvicorn from an unexpected working directory.
     yolo_model_path: str = "yolov8n.pt"
 
     @field_validator("yolo_model_path")
     @classmethod
     def validate_yolo_model_path(cls, v: str) -> str:
         p = Path(v)
-        if p.suffix.lower() != ".pt":
-            raise ValueError("yolo_model_path must end in .pt")
-        resolved = p.resolve()
-        project_root = Path(__file__).parent.parent.resolve()
-        try:
-            resolved.relative_to(project_root)
-        except ValueError:
-            raise ValueError("yolo_model_path must be inside the project directory")
+        if p.suffix.lower() not in _MODEL_PATH_ALLOWED_SUFFIXES:
+            raise ValueError(
+                f"yolo_model_path extension {p.suffix!r} not allowed. "
+                f"Allowed: {sorted(_MODEL_PATH_ALLOWED_SUFFIXES)}"
+            )
+        project_root = Path(__file__).resolve().parent.parent
+        resolved = p.resolve() if p.is_absolute() else (project_root / p).resolve()
+        if not resolved.is_relative_to(project_root):
+            raise ValueError(f"yolo_model_path must be inside the project directory: {resolved}")
         return v
     yolo_confidence: float = 0.45
     # COCO class IDs to detect. Default [0] = person.
