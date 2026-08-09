@@ -145,6 +145,26 @@ async def _detection_stats_flush_loop(interval: float = 30.0) -> None:
             logger.exception("detection_stats flush failed")
 
 
+async def _purge_local_clip_files(retention_days: int) -> None:
+    """Delete local clip + thumbnail files past retention. Never touches pending/uploading
+    rows — losing a clip before it's uploaded would be worse than a full disk (CONTEXT.md)."""
+    import os
+
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=retention_days)
+    repo = RecordingRepo(get_session_factory())
+    expired = await repo.expired_local(cutoff)
+    for rec in expired:
+        for path in (rec.local_path, rec.thumbnail_path):
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError as exc:
+                    logger.warning("Failed to delete local clip file %s: %s", path, exc)
+        await repo.clear_local_path(rec.id)
+    if expired:
+        logger.info("Purged %d local clip file(s) older than %d days", len(expired), retention_days)
+
+
 async def _purge_loop() -> None:
     """Delete events and recordings older than the configured retention window. Runs daily."""
     while True:
@@ -159,6 +179,8 @@ async def _purge_loop() -> None:
                 n = await purge_old_recordings(settings.recordings_retention_days)
                 if n:
                     logger.info("Purged %d recordings older than %d days", n, settings.recordings_retention_days)
+            if settings.local_retention_days > 0:
+                await _purge_local_clip_files(settings.local_retention_days)
             if (
                 settings.persons_retention_days > 0
                 and rtsp_stream is not None
@@ -453,6 +475,9 @@ if _settings.camera_driver == "tapo":
     from backend.camera import router as camera_router
     app.include_router(ptz_router)
     app.include_router(camera_router)
+
+from backend.api.v2.recordings import router as recordings_v2_router
+app.include_router(recordings_v2_router)
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
