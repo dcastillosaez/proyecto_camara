@@ -13,17 +13,24 @@ a worker thread (Phase 18 pipeline workers) — it publishes via
 from __future__ import annotations
 
 import datetime
-from typing import Any
+import time
+from typing import TYPE_CHECKING, Any
 
 from backend.events.bus import EventBus
 from backend.events.types import Event, EventType, Severity
 from backend.storage.repositories import DetectionStatRepo
 
+if TYPE_CHECKING:
+    from backend.observability.latency import LatencyTracker
+
 
 class EventEngine:
-    def __init__(self, bus: EventBus, camera_id: str = "cam1") -> None:
+    def __init__(
+        self, bus: EventBus, camera_id: str = "cam1", latency_tracker: LatencyTracker | None = None
+    ) -> None:
         self._bus = bus
         self._camera_id = camera_id
+        self._latency_tracker = latency_tracker
 
         self._known_tracks: set[int] = set()
         self._zone_inside: dict[str, set[int]] = {}
@@ -35,18 +42,40 @@ class EventEngine:
     # Publishing
     # ------------------------------------------------------------------
 
-    def _publish(self, event_type: EventType, ts: datetime.datetime, **fields: Any) -> None:
-        event = Event(type=event_type, camera_id=self._camera_id, ts=ts, **fields)
+    def _publish(
+        self,
+        event_type: EventType,
+        ts: datetime.datetime,
+        captured_at: float | None = None,
+        processed_at: float | None = None,
+        **fields: Any,
+    ) -> None:
+        """captured_at/processed_at are monotonic timestamps for OBS-03 latency tracking —
+        stashed under private payload keys, never part of the public Event contract
+        (21-CONTEXT.md). _emitted_at is set unconditionally so downstream (the WebSocket
+        broadcast handler) can always measure the EVENT_TO_WS stage."""
+        payload = dict(fields.pop("payload", None) or {})
+        emitted_at = time.monotonic()
+        payload["_emitted_at"] = emitted_at
+        if captured_at is not None:
+            payload["_captured_at"] = captured_at
+        event = Event(type=event_type, camera_id=self._camera_id, ts=ts, payload=payload, **fields)
         self._bus.publish_threadsafe(event)
+        if self._latency_tracker is not None and processed_at is not None:
+            self._latency_tracker.mark_event(captured_at or 0.0, processed_at)
 
     # ------------------------------------------------------------------
     # Line crossings (LineZone, Fase 17-18)
     # ------------------------------------------------------------------
 
-    def emit_line_crossing(self, crossing: dict[str, Any]) -> None:
+    def emit_line_crossing(
+        self, crossing: dict[str, Any], captured_at: float | None = None, processed_at: float | None = None
+    ) -> None:
         self._publish(
             EventType.LINE_CROSSED,
             ts=crossing["timestamp"],
+            captured_at=captured_at,
+            processed_at=processed_at,
             track_id=crossing.get("tracker_id"),
             payload={
                 "direction": crossing["direction"],
@@ -58,28 +87,53 @@ class EventEngine:
     # Track lifecycle
     # ------------------------------------------------------------------
 
-    def process_tracks(self, active_track_ids: set[int], now: datetime.datetime) -> None:
+    def process_tracks(
+        self,
+        active_track_ids: set[int],
+        now: datetime.datetime,
+        captured_at: float | None = None,
+        processed_at: float | None = None,
+    ) -> None:
         """Diff against the last known set of active tracks; emit only on transitions."""
         entered = active_track_ids - self._known_tracks
         exited = self._known_tracks - active_track_ids
         for track_id in entered:
-            self._publish(EventType.PERSON_ENTERED, ts=now, track_id=track_id)
+            self._publish(
+                EventType.PERSON_ENTERED, ts=now, captured_at=captured_at,
+                processed_at=processed_at, track_id=track_id,
+            )
         for track_id in exited:
-            self._publish(EventType.PERSON_EXITED, ts=now, track_id=track_id)
+            self._publish(
+                EventType.PERSON_EXITED, ts=now, captured_at=captured_at,
+                processed_at=processed_at, track_id=track_id,
+            )
         self._known_tracks = set(active_track_ids)
 
     # ------------------------------------------------------------------
     # Zone membership
     # ------------------------------------------------------------------
 
-    def process_zone(self, zone_id: str, inside_track_ids: set[int], now: datetime.datetime) -> None:
+    def process_zone(
+        self,
+        zone_id: str,
+        inside_track_ids: set[int],
+        now: datetime.datetime,
+        captured_at: float | None = None,
+        processed_at: float | None = None,
+    ) -> None:
         previous = self._zone_inside.get(zone_id, set())
         entered = inside_track_ids - previous
         exited = previous - inside_track_ids
         for track_id in entered:
-            self._publish(EventType.ZONE_ENTERED, ts=now, track_id=track_id, zone_id=zone_id)
+            self._publish(
+                EventType.ZONE_ENTERED, ts=now, captured_at=captured_at,
+                processed_at=processed_at, track_id=track_id, zone_id=zone_id,
+            )
         for track_id in exited:
-            self._publish(EventType.ZONE_EXITED, ts=now, track_id=track_id, zone_id=zone_id)
+            self._publish(
+                EventType.ZONE_EXITED, ts=now, captured_at=captured_at,
+                processed_at=processed_at, track_id=track_id, zone_id=zone_id,
+            )
         self._zone_inside[zone_id] = set(inside_track_ids)
 
     # ------------------------------------------------------------------

@@ -336,6 +336,16 @@ class RecordingRepo:
             session.expunge_all()
             return rows
 
+    async def count_by_upload_state(self, state: UploadState) -> int:
+        """Cheap COUNT for the metrics sampler (upload_queue_depth)."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(func.count()).select_from(models.Recording).where(
+                    models.Recording.upload_state == state.value
+                )
+            )
+            return result.scalar() or 0
+
     async def mark_upload(
         self,
         rec_id: int,

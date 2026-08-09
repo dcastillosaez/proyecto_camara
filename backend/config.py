@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     max_upload_attempts: int = 5
     upload_poll_secs: float = 30.0
 
+    # --- Observabilidad (Fase 21) ---
+    metrics_enabled: bool = True
+    metrics_sample_secs: float = 5.0
+
     # Horario de acceso — fuera de este rango los crossing events se marcan como intrusión.
     # Requiere schedule_enabled=True; si está en False todos los eventos son "normales".
     schedule_enabled: bool = False

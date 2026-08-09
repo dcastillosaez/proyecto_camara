@@ -26,6 +26,7 @@ from backend.pipeline.tracking import TrackRegistry
 if TYPE_CHECKING:
     from backend.detector import PersonDetector
     from backend.events.engine import EventEngine
+    from backend.observability.latency import LatencyTracker
     from backend.recognizer import PersonRecognizer
     from backend.tracker import PersonTracker
 
@@ -44,6 +45,7 @@ class CameraPipeline:
         tracker: PersonTracker | None = None,
         recognizer: PersonRecognizer | None = None,
         event_engine: EventEngine | None = None,
+        latency_tracker: LatencyTracker | None = None,
         is_intrusion: Callable[[], bool] | None = None,
         recording_config: dict[str, Any] | None = None,
         on_identified: Callable[[np.ndarray, int], None] | None = None,
@@ -79,6 +81,8 @@ class CameraPipeline:
                     AdaptiveRate(target_fps=target, min_fps=lo, max_fps=hi),
                     event_engine=event_engine,
                     is_intrusion=is_intrusion,
+                    camera_id=camera_id,
+                    latency_tracker=latency_tracker,
                 )
                 return self.detection
 

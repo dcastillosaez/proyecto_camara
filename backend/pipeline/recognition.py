@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
+from backend.observability.metrics import metrics as _metrics
 from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.tracking import TrackRegistry
 
@@ -126,7 +127,9 @@ class RecognitionWorker:
                     "RecognitionWorker: fallo de reconocimiento (track %d)", target.track_id
                 )
                 continue
-            self._rate.observe(time.monotonic() - t0)
+            face_latency = time.monotonic() - t0
+            self._rate.observe(face_latency)
+            _metrics.inference_latency_seconds.labels(stage="face").observe(face_latency)
 
             if pid is None:
                 continue

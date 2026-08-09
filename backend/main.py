@@ -48,6 +48,9 @@ from backend.events.engine import EventEngine
 from backend.events.rules import RuleEngine, load_rules
 from backend.events.types import Event, EventType
 from backend.gdrive import UploadQueue
+from backend.observability.latency import LatencyTracker
+from backend.observability.metrics import metrics as obs_metrics
+from backend.observability.sampler import MetricsSampler
 from backend.notifier import Notifier
 from backend.pipeline import CameraManager, CameraPipeline
 from backend.recognizer import PersonRecognizer
@@ -66,6 +69,7 @@ notifier: Notifier | None = None
 event_bus: EventBus | None = None
 event_engine: EventEngine | None = None
 rule_engine: RuleEngine | None = None
+latency_tracker: "LatencyTracker | None" = None
 _ws_clients: set[WebSocket] = set()
 _ws_v2_clients: set[WebSocket] = set()
 _start_time: float = time.time()
@@ -87,6 +91,9 @@ async def _broadcast_v2(event: Event) -> None:
     """Send the {"v": 2, "kind": "event", ...} envelope to every /api/v2/ws client."""
     dead: set[WebSocket] = set()
     payload = json.dumps({"v": 2, "kind": "event", "data": json.loads(event.model_dump_json())})
+    emitted_at = event.payload.get("_emitted_at")
+    if latency_tracker is not None and emitted_at is not None:
+        latency_tracker.mark_ws_sent(emitted_at)
     for ws in _ws_v2_clients:
         try:
             await ws.send_text(payload)
@@ -201,14 +208,15 @@ async def _purge_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global rtsp_stream, camera_manager, notifier, event_bus, event_engine, rule_engine
+    global rtsp_stream, camera_manager, notifier, event_bus, event_engine, rule_engine, latency_tracker
     settings = get_settings()
 
     await init_db()  # idempotent: also runs the v1 -> v2 schema migration
 
     loop = asyncio.get_event_loop()
     event_bus = EventBus(loop=loop)
-    event_engine = EventEngine(event_bus, camera_id="cam1")
+    latency_tracker = LatencyTracker()
+    event_engine = EventEngine(event_bus, camera_id="cam1", latency_tracker=latency_tracker)
 
     rules_path = Path("config/rules.yaml")
     if rules_path.exists():
@@ -310,6 +318,14 @@ async def lifespan(app: FastAPI):
     )
     upload_queue.start()
 
+    metrics_sampler = None
+    if settings.metrics_enabled:
+        metrics_sampler = MetricsSampler(
+            obs_metrics, camera_manager, event_bus=event_bus, recording_repo=recording_repo,
+            db_path=settings.db_path, interval=settings.metrics_sample_secs,
+        )
+        metrics_sampler.start()
+
     def _on_recording_failure(message: str) -> None:
         logger.error("RecordingWorker failure: %s", message)
         if event_engine is not None:
@@ -376,6 +392,7 @@ async def lifespan(app: FastAPI):
         tracker=tracker,
         recognizer=recognizer,
         event_engine=event_engine,
+        latency_tracker=latency_tracker,
         is_intrusion=lambda: not _is_in_schedule(),
         recording_config=recording_config,
         on_identified=_save_gallery_capture,
@@ -425,6 +442,8 @@ async def lifespan(app: FastAPI):
     stats_flush_task = asyncio.create_task(_detection_stats_flush_loop())
 
     yield
+    if metrics_sampler is not None:
+        metrics_sampler.stop()
     stats_flush_task.cancel()
     purge_task.cancel()
     watchdog_task.cancel()

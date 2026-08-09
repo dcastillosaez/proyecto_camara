@@ -19,12 +19,14 @@ import cv2
 import numpy as np
 import supervision as sv
 
+from backend.observability.metrics import metrics as _metrics
 from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.tracking import TrackRegistry
 
 if TYPE_CHECKING:
     from backend.detector import PersonDetector
     from backend.events.engine import EventEngine
+    from backend.observability.latency import LatencyTracker
     from backend.pipeline.broker import Subscription
     from backend.tracker import PersonTracker
 
@@ -52,6 +54,8 @@ class DetectionWorker:
         rate: AdaptiveRate,
         event_engine: EventEngine | None = None,
         is_intrusion: Any = None,
+        camera_id: str = "cam1",
+        latency_tracker: LatencyTracker | None = None,
     ) -> None:
         self._sub = sub
         self._detector = detector
@@ -59,6 +63,8 @@ class DetectionWorker:
         self._registry = registry
         self._rate = rate
         self._event_engine = event_engine
+        self._camera_id = camera_id
+        self._latency_tracker = latency_tracker
         # Callable[[], bool] opcional — decide si un cruce es intrusion
         # (RTSPStream._is_in_schedule). Sin ella, nunca se marca intrusion.
         self._is_intrusion = is_intrusion
@@ -161,24 +167,30 @@ class DetectionWorker:
                 logger.exception("DetectionWorker: fallo de inferencia, se salta el frame")
                 continue
 
-            self._rate.observe(time.monotonic() - t0)
+            inference_latency = time.monotonic() - t0
+            self._rate.observe(inference_latency)
+            _metrics.inference_latency_seconds.labels(stage="yolo").observe(inference_latency)
             self._frames_processed += 1
             self._sync_tracker_frame_rate()
 
-            now = time.monotonic()
+            if self._latency_tracker is not None:
+                self._latency_tracker.mark_processed(frame)
+
+            now = time.monotonic()  # "processed_at" for OBS-03 — right after inference, before event emission
+            _metrics.active_tracks.labels(camera=self._camera_id).set(len(tracked))
             self._registry.update_from_detections(tracked, now)
-            self._update_zones_and_heat(tracked, frame.image.shape)
-            self._emit_crossings(crossings)
-            self._emit_track_lifecycle(tracked)
+            self._update_zones_and_heat(tracked, frame.image.shape, frame.captured_at, now)
+            self._emit_crossings(crossings, frame.captured_at, now)
+            self._emit_track_lifecycle(tracked, frame.captured_at, now)
             self._registry.prune(now)
 
-    def _emit_track_lifecycle(self, tracked: Any) -> None:
+    def _emit_track_lifecycle(self, tracked: Any, captured_at: float, processed_at: float) -> None:
         if self._event_engine is None:
             return
         wall_now = datetime.datetime.now()
         ids = tracked.tracker_id
         active_ids = {int(tid) for tid in ids} if ids is not None else set()
-        self._event_engine.process_tracks(active_ids, wall_now)
+        self._event_engine.process_tracks(active_ids, wall_now, captured_at, processed_at)
         confidences = list(tracked.confidence) if tracked.confidence is not None else []
         self._event_engine.accumulate_detections(wall_now, active_ids, confidences)
 
@@ -189,14 +201,18 @@ class DetectionWorker:
             self._last_effective_fps = fps
             self._tracker.set_frame_rate(fps)
 
-    def _emit_crossings(self, crossings: list[dict]) -> None:
+    def _emit_crossings(self, crossings: list[dict], captured_at: float, processed_at: float) -> None:
         if not crossings or self._event_engine is None:
             return
         is_intrusion = bool(self._is_intrusion()) if self._is_intrusion else False
         for c in crossings:
-            self._event_engine.emit_line_crossing({**c, "is_intrusion": is_intrusion})
+            self._event_engine.emit_line_crossing(
+                {**c, "is_intrusion": is_intrusion}, captured_at, processed_at
+            )
 
-    def _update_zones_and_heat(self, tracked: Any, shape: tuple) -> None:
+    def _update_zones_and_heat(
+        self, tracked: Any, shape: tuple, captured_at: float = 0.0, processed_at: float = 0.0
+    ) -> None:
         """Trigger the PolygonZones and accumulate the activity heat mask (MEJORAS.md Bajas)."""
         fh, fw = shape[:2]
         with self._lock:
@@ -220,7 +236,9 @@ class DetectionWorker:
                 st["inside"] = inside
                 st["current"] = len(inside)
             if self._event_engine is not None:
-                self._event_engine.process_zone(st["id"], inside, datetime.datetime.now())
+                self._event_engine.process_zone(
+                    st["id"], inside, datetime.datetime.now(), captured_at, processed_at
+                )
 
         if len(tracked) == 0:
             return

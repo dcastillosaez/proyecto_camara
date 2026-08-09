@@ -7,6 +7,7 @@ import logging
 from typing import Awaitable, Callable
 
 from backend.events.types import Event
+from backend.observability.metrics import metrics as _metrics
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ class EventBus:
                 pass
         self._queue.put_nowait(event)
         self._stats["published"] += 1
+        _metrics.events_total.labels(
+            type=event.type.value, severity=event.severity.value, camera=event.camera_id
+        ).inc()
 
     async def _consume(self) -> None:
         while True:
@@ -73,3 +77,7 @@ class EventBus:
     @property
     def stats(self) -> dict[str, int]:
         return dict(self._stats)
+
+    @property
+    def queue_depth(self) -> int:
+        return self._queue.qsize()

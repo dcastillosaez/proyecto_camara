@@ -43,6 +43,7 @@ class Metrics:
     database_size_bytes: Gauge
     disk_free_bytes: Gauge
     e2e_latency_seconds: Histogram
+    prebuffer_bytes: Gauge
 
 
 def create_metrics() -> Metrics:
@@ -112,6 +113,13 @@ def create_metrics() -> Metrics:
         e2e_latency_seconds=Histogram(
             "e2e_latency_seconds", "Latencia end-to-end por tramo",
             ["stage_pair"], buckets=E2E_BUCKETS, registry=registry,
+        ),
+        # No forma parte del catalogo de SPEC_v2.md §8.4 — anadida aqui porque
+        # 20-CONTEXT.md la exige explicitamente: "el presupuesto de RAM del
+        # pre-buffer debe ser una metrica, no una estimacion".
+        prebuffer_bytes=Gauge(
+            "prebuffer_bytes", "Bytes en uso por el RingFrameBuffer de pre-grabacion",
+            ["camera"], registry=registry,
         ),
     )
 

@@ -172,6 +172,7 @@ class RecordingWorker:
             "prebuffer_span_seconds": self._prebuffer.span_seconds,
             "live_dropped": self._live_dropped,
             "clip_active": self._active is not None,
+            "requests_queue_depth": self._requests.qsize(),
             **self._rate.stats,
         }
 

@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
+from backend.observability.metrics import metrics as _metrics
+
 if TYPE_CHECKING:
     from backend.storage.repositories import RecordingRepo
 
@@ -149,6 +151,7 @@ class UploadQueue:
             logger.info("UploadQueue: recording %s -> drive:%s", rec.id, gdrive_id)
         except Exception as exc:
             kind = classify_error(exc)
+            _metrics.upload_failures_total.labels(reason=kind).inc()
             attempts = rec.upload_attempts + 1
             if attempts >= self._max_attempts:
                 logger.error("UploadQueue: recording %s failed permanently after %d attempts: %s", rec.id, attempts, exc)

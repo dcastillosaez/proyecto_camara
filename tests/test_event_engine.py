@@ -151,3 +151,41 @@ async def TEST_camera_offline_recovered_pair():
 
     assert received[0].type == EventType.CAMERA_OFFLINE
     assert received[1].type == EventType.CAMERA_RECOVERED
+
+
+async def TEST_publish_always_stamps_emitted_at():
+    """_emitted_at (monotonic) must be present even without captured_at/processed_at —
+    the WebSocket broadcast handler needs it to measure EVENT_TO_WS (OBS-03)."""
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.process_tracks({1}, now)
+    await wait_until(lambda: len(received) == 1)
+
+    assert "_emitted_at" in received[0].payload
+    assert isinstance(received[0].payload["_emitted_at"], float)
+    assert "_captured_at" not in received[0].payload
+
+
+async def TEST_captured_at_reaches_payload_and_latency_tracker():
+    import time
+    from unittest.mock import MagicMock
+
+    tracker = MagicMock()
+    bus = EventBus(loop=asyncio.get_event_loop())
+    received = []
+
+    async def capture(event):
+        received.append(event)
+
+    bus.subscribe("capture", capture)
+    engine = EventEngine(bus, camera_id="cam1", latency_tracker=tracker)
+
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+    captured_at = time.monotonic() - 0.05
+    processed_at = time.monotonic()
+    engine.process_tracks({1}, now, captured_at=captured_at, processed_at=processed_at)
+    await wait_until(lambda: len(received) == 1)
+
+    assert received[0].payload["_captured_at"] == captured_at
+    tracker.mark_event.assert_called_once_with(captured_at, processed_at)
