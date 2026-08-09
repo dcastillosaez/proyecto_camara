@@ -145,65 +145,65 @@
 
 ### Pipeline de vídeo (PIPE)
 
-- [ ] **PIPE-01**: La captura RTSP publica siempre el último frame disponible y nunca bloquea esperando a un consumidor
-- [ ] **PIPE-02**: Cada consumidor tiene su propio slot de frame; un consumidor lento solo se pierde frames a sí mismo
-- [ ] **PIPE-03**: El worker de captura contiene únicamente captura, reescalado y publicación — sin detección, reconocimiento, zonas ni heatmap
-- [ ] **PIPE-04**: Detección, streaming y grabación corren como workers independientes que fallan y se reinician de forma aislada
-- [ ] **PIPE-05**: El fallo de un worker emite `DEGRADED_MODE` y no detiene el resto del pipeline
-- [ ] **PIPE-06**: Ningún hilo ejecuta `await` y ninguna corrutina ejecuta inferencia
-- [ ] **PIPE-07**: Toda estructura con crecimiento potencial (tracks, votos, cachés, estados de zona) tiene política de expiración verificada
+- [x] **PIPE-01**: La captura RTSP publica siempre el último frame disponible y nunca bloquea esperando a un consumidor
+- [x] **PIPE-02**: Cada consumidor tiene su propio slot de frame; un consumidor lento solo se pierde frames a sí mismo
+- [x] **PIPE-03**: El worker de captura contiene únicamente captura, reescalado y publicación — sin detección, reconocimiento, zonas ni heatmap
+- [x] **PIPE-04**: Detección, streaming y grabación corren como workers independientes que fallan y se reinician de forma aislada
+- [x] **PIPE-05**: El fallo de un worker emite `DEGRADED_MODE` y no detiene el resto del pipeline
+- [x] **PIPE-06**: Ningún hilo ejecuta `await` y ninguna corrutina ejecuta inferencia
+- [x] **PIPE-07**: Toda estructura con crecimiento potencial (tracks, votos, cachés, estados de zona) tiene política de expiración verificada
 
 ### Detección adaptativa (DET, continúa v1)
 
-- [ ] **DET-05**: El FPS de inferencia es independiente del de captura y se reduce automáticamente cuando la latencia de inferencia supera el presupuesto configurado
+- [x] **DET-05**: El FPS de inferencia es independiente del de captura y se reduce automáticamente cuando la latencia de inferencia supera el presupuesto configurado
 
 ### Motor de eventos (EVT)
 
-- [ ] **EVT-01**: El sistema emite eventos tipados de un catálogo cerrado (personas, identidad, comportamiento, objetos, sistema)
-- [ ] **EVT-02**: Un único objeto `Event` viaja al bus, a la persistencia y al WebSocket — un contrato, tres consumidores
-- [ ] **EVT-03**: Las detecciones no se persisten fila a fila; se agregan por minuto en `detection_stats`
-- [ ] **EVT-04**: Todo evento persistido incluye `camera_id`, severidad y contexto suficiente para reconstruirlo sin el frame original
-- [ ] **EVT-05**: El WebSocket v2 multiplexa canales (`event`, `metrics`, `tracks`, `system`) sobre una única conexión
+- [x] **EVT-01**: El sistema emite eventos tipados de un catálogo cerrado (personas, identidad, comportamiento, objetos, sistema)
+- [x] **EVT-02**: Un único objeto `Event` viaja al bus, a la persistencia y al WebSocket — un contrato, tres consumidores
+- [x] **EVT-03**: Las detecciones no se persisten fila a fila; se agregan por minuto en `detection_stats`
+- [x] **EVT-04**: Todo evento persistido incluye `camera_id`, severidad y contexto suficiente para reconstruirlo sin el frame original
+- [x] **EVT-05**: El WebSocket v2 multiplexa canales (`event`, `metrics`, `tracks`, `system`) sobre una única conexión
 
 ### Motor de reglas (RULE)
 
-- [ ] **RULE-01**: Las reglas se definen en YAML validado por esquema, con condiciones de evento, zona, horario y umbrales
-- [ ] **RULE-02**: Las acciones soportadas son grabar, capturar, notificar, telegram, webhook, log, subir a Drive y marcar flag
-- [ ] **RULE-03**: Cada regla tiene debounce configurable por `(regla, cámara, identidad)`
-- [ ] **RULE-04**: Una regla inválida se desactiva con un error legible sin impedir el arranque del sistema
-- [ ] **RULE-05**: Una regla puede probarse contra el histórico reciente antes de activarse
+- [x] **RULE-01**: Las reglas se definen en YAML validado por esquema, con condiciones de evento, zona, horario y umbrales
+- [x] **RULE-02**: Las acciones soportadas son grabar, capturar, notificar, telegram, webhook, log, subir a Drive y marcar flag
+- [x] **RULE-03**: Cada regla tiene debounce configurable por `(regla, cámara, identidad)`
+- [x] **RULE-04**: Una regla inválida se desactiva con un error legible sin impedir el arranque del sistema
+- [ ] **RULE-05**: Una regla puede probarse contra el histórico reciente antes de activarse *(fuera de alcance del bloque A — no cubierto por 19-01/19-02)*
 
 ### Persistencia v2 (DB, continúa v1)
 
-- [ ] **DB-10**: El esquema separa `cameras`, `persons`, `face_embeddings`, `tracks`, `events`, `detection_stats`, `recordings`, `zones`, `lines`, `rules`, `app_config` y `system_metrics`
-- [ ] **DB-11**: Las migraciones son idempotentes, se ejecutan al arrancar y registran la versión de esquema
-- [ ] **DB-12**: Antes de cada migración destructiva se genera una copia de seguridad de la base de datos
-- [ ] **DB-13**: El histórico de `crossing_events` se conserva íntegro como eventos `LINE_CROSSED`
-- [ ] **DB-14**: Existen los índices necesarios para que las consultas de timeline y analítica sobre 100.000 eventos respondan en menos de 500 ms
+- [x] **DB-10**: El esquema separa `cameras`, `persons`, `face_embeddings`, `tracks`, `events`, `detection_stats`, `recordings`, `zones`, `lines`, `rules`, `app_config` y `system_metrics`
+- [x] **DB-11**: Las migraciones son idempotentes, se ejecutan al arrancar y registran la versión de esquema
+- [x] **DB-12**: Antes de cada migración destructiva se genera una copia de seguridad de la base de datos
+- [x] **DB-13**: El histórico de `crossing_events` se conserva íntegro como eventos `LINE_CROSSED`
+- [x] **DB-14**: Existen los índices necesarios para que las consultas de timeline y analítica sobre 100.000 eventos respondan en menos de 500 ms
 
 ### Grabación de clips (CLIP)
 
-- [ ] **CLIP-01**: Cada clip incluye un pre-buffer configurable anterior al evento que lo dispara
-- [ ] **CLIP-02**: Cada clip incluye un post-buffer configurable posterior a la última detección
-- [ ] **CLIP-03**: El pre-buffer se mantiene en RAM dentro de un presupuesto configurado y medible
-- [ ] **CLIP-04**: Cada grabación registra duración, tamaño, checksum SHA-256, miniatura, motivo, evento origen, persona y zona
-- [ ] **CLIP-05**: La miniatura se genera en el momento del evento y se sirve por API
-- [ ] **CLIP-06**: La retención local y la subida a la nube son políticas independientes y configurables
-- [ ] **CLIP-07**: Los fallos de subida se reintentan con backoff desde una cola persistente sin bloquear el pipeline
+- [x] **CLIP-01**: Cada clip incluye un pre-buffer configurable anterior al evento que lo dispara
+- [x] **CLIP-02**: Cada clip incluye un post-buffer configurable posterior a la última detección
+- [x] **CLIP-03**: El pre-buffer se mantiene en RAM dentro de un presupuesto configurado y medible
+- [x] **CLIP-04**: Cada grabación registra duración, tamaño, checksum SHA-256, miniatura, motivo, evento origen, persona y zona
+- [x] **CLIP-05**: La miniatura se genera en el momento del evento y se sirve por API
+- [x] **CLIP-06**: La retención local y la subida a la nube son políticas independientes y configurables
+- [x] **CLIP-07**: Los fallos de subida se reintentan con backoff desde una cola persistente sin bloquear el pipeline
 
 ### Observabilidad (OBS)
 
-- [ ] **OBS-01**: El sistema expone métricas en formato Prometheus y en JSON para el dashboard
-- [ ] **OBS-02**: Se contabilizan frames descartados por suscriptor, reconexiones RTSP y antigüedad del último frame
-- [ ] **OBS-03**: Se miden los FPS reales de captura, detección, tracking, reconocimiento y ReID por separado
-- [ ] **OBS-04**: Se mide la latencia de inferencia por etapa como histograma
-- [ ] **OBS-05**: Se mide la latencia end-to-end desde la captura del frame hasta el envío del evento por WebSocket
-- [ ] **OBS-06**: Se monitorizan profundidad de colas, tracks activos, cola de subida, fallos de subida, tamaño de BD y espacio libre en disco
+- [x] **OBS-01**: El sistema expone métricas en formato Prometheus y en JSON para el dashboard
+- [x] **OBS-02**: Se contabilizan frames descartados por suscriptor, reconexiones RTSP y antigüedad del último frame
+- [x] **OBS-03**: Se miden los FPS reales de captura, detección, tracking, reconocimiento y ReID por separado
+- [x] **OBS-04**: Se mide la latencia de inferencia por etapa como histograma
+- [x] **OBS-05**: Se mide la latencia end-to-end desde la captura del frame hasta el envío del evento por WebSocket
+- [x] **OBS-06**: Se monitorizan profundidad de colas, tracks activos, cola de subida, fallos de subida, tamaño de BD y espacio libre en disco
 
 ### Seguridad v2 (SEC)
 
-- [ ] **SEC-15**: No existe uso de `pickle` en código de producción; la migración de embeddings legacy es un script explícito de un solo uso
-- [ ] **SEC-16**: La ruta del modelo YOLO se valida por extensión y contención dentro del directorio del proyecto; un valor inválido aborta el arranque con mensaje claro
+- [x] **SEC-15**: No existe uso de `pickle` en código de producción; la migración de embeddings legacy es un script explícito de un solo uso
+- [x] **SEC-16**: La ruta del modelo YOLO se valida por extensión y contención dentro del directorio del proyecto; un valor inválido aborta el arranque con mensaje claro
 
 ### Reconocimiento facial (FACE)
 
@@ -316,7 +316,7 @@
 - Requisitos v2 totales: **107**
 - Mapeados a fases: **107**
 - Sin mapear: **0**
-- Completados: **0/107**
+- Completados: **37/107** (bloque A completo salvo RULE-05, fuera de alcance del bloque A)
 
 ---
 *Requisitos v2 definidos: 2026-08-07*

@@ -266,10 +266,10 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 
 - [x] **Phase 17: Frame Broker y Capture Worker** — Fan-out latest-frame; la captura nunca espera a la IA (completed 2026-08-07)
 - [x] **Phase 18: Workers desacoplados e inferencia adaptativa** — Detección, streaming y grabación como workers con FPS objetivo propios (completed 2026-08-08)
-- [ ] **Phase 19: Event Engine, Rule Engine y esquema de datos v2** — Eventos tipados + reglas YAML + separación detections/events
-- [ ] **Phase 20: Grabación con pre/post-buffer y metadatos** — Ningún clip empieza después del evento
-- [ ] **Phase 21: Observabilidad y latencia end-to-end** — Métricas Prometheus, frames descartados, latencia real
-- [ ] **Phase 22: Deuda de seguridad y gestión de memoria** — Eliminar pickle, validar model path, operación 24/7 estable
+- [x] **Phase 19: Event Engine, Rule Engine y esquema de datos v2** — Eventos tipados + reglas YAML + separación detections/events (completed 2026-08-09; checkpoints de migración de BD real y validación de reglas en vivo pendientes de cámara real)
+- [x] **Phase 20: Grabación con pre/post-buffer y metadatos** — Ningún clip empieza después del evento (completed 2026-08-09; checkpoint de validación visual en vivo pendiente de cámara real)
+- [x] **Phase 21: Observabilidad y latencia end-to-end** — Métricas Prometheus, frames descartados, latencia real (completed 2026-08-09; checkpoint de coste de instrumentación y línea base de 30 min pendiente de cámara real)
+- [x] **Phase 22: Deuda de seguridad y gestión de memoria** — Eliminar pickle, validar model path, operación 24/7 estable (completed 2026-08-09; checkpoint de prueba de resistencia de 8 h pendiente de cámara real)
 
 ### Bloque B — Inteligencia artificial
 
@@ -345,11 +345,11 @@ Plans:
   6. Las detecciones no se persisten fila a fila: `detection_stats` tiene 1 fila por minuto
   7. La migración de `crossing_events` a `events` conserva todas las filas y es idempotente
 **Spec**: SPEC_v2.md §6, §7
-**Plans:** 0/2 plans complete — `.planning/phases/19-event-engine-y-esquema-de-datos-v2/`
+**Plans:** 2/2 plans complete — `.planning/phases/19-event-engine-y-esquema-de-datos-v2/`
 
 Plans:
-- [ ] 19-01-PLAN.md — Catalogo de eventos, EventBus, esquema v2 y migraciones
-- [ ] 19-02-PLAN.md — EventEngine, RuleEngine, acciones e integracion
+- [x] 19-01-PLAN.md — Catalogo de eventos, EventBus, esquema v2 y migraciones (Task 5 checkpoint — migración de BD real — pendiente)
+- [x] 19-02-PLAN.md — EventEngine, RuleEngine, acciones e integracion (Task 5 checkpoint — validación de reglas en vivo — pendiente)
 
 ### Phase 20: Grabación con pre/post-buffer y metadatos
 **Goal**: Ningún clip empieza después del evento y cada clip es auditable
@@ -364,11 +364,11 @@ Plans:
   6. Retención local 7 días y subida a Drive solo de eventos con severity != info
   7. Tres fallos consecutivos de Drive no bloquean el pipeline y el cuarto intento tiene éxito
 **Spec**: SPEC_v2.md ADR-07
-**Plans:** 0/2 plans complete — `.planning/phases/20-grabacion-con-pre-post-buffer/`
+**Plans:** 2/2 plans complete — `.planning/phases/20-grabacion-con-pre-post-buffer/`
 
 Plans:
-- [ ] 20-01-PLAN.md — RingFrameBuffer y RecordingWorker con pre/post-buffer
-- [ ] 20-02-PLAN.md — Metadatos, miniaturas, cola de subida y retencion
+- [x] 20-01-PLAN.md — RingFrameBuffer y RecordingWorker con pre/post-buffer
+- [x] 20-02-PLAN.md — Metadatos, miniaturas, cola de subida y retencion (Task 4 checkpoint — validación en vivo — pendiente)
 
 ### Phase 21: Observabilidad y latencia end-to-end
 **Goal**: El sistema es diagnosticable sin adjuntar un depurador
@@ -382,10 +382,10 @@ Plans:
   5. Una latencia inyectada de 2 s se refleja en el percentil 95
   6. La instrumentación añade menos del 2% de CPU
 **Spec**: SPEC_v2.md §8.4
-**Plans:** 0/1 plans complete — `.planning/phases/21-observabilidad-y-latencia-e2e/`
+**Plans:** 1/1 plans complete — `.planning/phases/21-observabilidad-y-latencia-e2e/`
 
 Plans:
-- [ ] 21-01-PLAN.md — Registro de metricas, LatencyTracker, instrumentacion y endpoints
+- [x] 21-01-PLAN.md — Registro de metricas, LatencyTracker, instrumentacion y endpoints (Task 5 checkpoint — coste y línea base de 30 min — pendiente)
 
 ### Phase 22: Deuda de seguridad y gestión de memoria
 **Goal**: Cerrar los puntos de seguridad pendientes y garantizar operación 24/7 sin crecimiento de memoria
@@ -399,10 +399,10 @@ Plans:
   5. Toda estructura con crecimiento potencial tiene política de expiración verificada por test
   6. `queue_depth` permanece acotado durante la prueba de resistencia
 **Spec**: SPEC_v2.md §1.3
-**Plans:** 0/1 plans complete — `.planning/phases/22-seguridad-y-gestion-de-memoria/`
+**Plans:** 1/1 plans complete — `.planning/phases/22-seguridad-y-gestion-de-memoria/`
 
 Plans:
-- [ ] 22-01-PLAN.md — Erradicar pickle, validar model path, cotas de memoria y soak test
+- [x] 22-01-PLAN.md — Erradicar pickle, validar model path, cotas de memoria y soak test (Task 4 checkpoint — prueba de resistencia de 8 h — pendiente)
 
 ### Phase 23: Migración a InsightFace/ArcFace con quality gating
 **Goal**: El reconocimiento facial usa embeddings ArcFace 512D y descarta caras que no valen la pena procesar
@@ -629,12 +629,12 @@ La Phase 28 solo depende de la 21, por lo que el bloque C puede solaparse con el
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 17. Frame Broker y Capture Worker | 0/2 | Not started | — |
-| 18. Workers desacoplados e inferencia adaptativa | 0/2 | Not started | — |
-| 19. Event Engine, Rule Engine y esquema de datos v2 | 0/2 | Not started | — |
-| 20. Grabación con pre/post-buffer y metadatos | 0/2 | Not started | — |
-| 21. Observabilidad y latencia end-to-end | 0/1 | Not started | — |
-| 22. Deuda de seguridad y gestión de memoria | 0/1 | Not started | — |
+| 17. Frame Broker y Capture Worker | 2/2 | Complete | 2026-08-07 |
+| 18. Workers desacoplados e inferencia adaptativa | 2/2 | Complete | 2026-08-08 |
+| 19. Event Engine, Rule Engine y esquema de datos v2 | 2/2 | Complete (checkpoints pendientes) | 2026-08-09 |
+| 20. Grabación con pre/post-buffer y metadatos | 2/2 | Complete (checkpoint pendiente) | 2026-08-09 |
+| 21. Observabilidad y latencia end-to-end | 1/1 | Complete (checkpoint pendiente) | 2026-08-09 |
+| 22. Deuda de seguridad y gestión de memoria | 1/1 | Complete (checkpoint pendiente) | 2026-08-09 |
 | 23. Migración a InsightFace/ArcFace con quality gating | 0/? | Not started | — |
 | 24. Identidad temporal — votación y máquina de estados | 0/? | Not started | — |
 | 25. Re-identificación de personas (ReID) | 0/? | Not started | — |
@@ -655,4 +655,4 @@ La Phase 28 solo depende de la 21, por lo que el bloque C puede solaparse con el
 ---
 *Milestone v2.0 planificado: 2026-08-07*
 *Especificación de referencia: propuesta_mejora/SPEC_v2.md*
-*Status snapshot: 0/22 fases v2.0 completas.*
+*Status snapshot: 6/22 fases v2.0 completas — bloque A (fases 17-22) cerrado en código y tests; 4 checkpoints con cámara real pendientes de acción del usuario (ver .planning/STATE.md).*

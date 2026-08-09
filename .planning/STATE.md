@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Fase 17 y 18 completas. Task 6 de 18-02 dada por suficiente: CPU/ritmo/aislamiento de crash verificados con camara real; 1h de latencia inconcluso por corte externo de RTSP en la camara (ver 18-02-CHECKPOINT.md). Siguiente: Fase 19."
-last_updated: "2026-08-07"
-last_activity: 2026-08-07
+stopped_at: "Bloque A (fases 17-22) completo en codigo y tests: 310/310 pasan. Quedan 4 checkpoints con camara real pendientes de accion del usuario (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4). Siguiente: Fase 23, con la puerta bloqueante de insightface/onnxruntime en Windows."
+last_updated: "2026-08-09"
+last_activity: 2026-08-09
 progress:
   total_phases: 22
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
-  percent: 9
+  completed_phases: 6
+  total_plans: 10
+  completed_plans: 10
+  percent: 27
 previous_milestone:
   name: v1.2
   status: complete
@@ -31,38 +31,50 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 17 COMPLETA. Phase 18 (Workers desacoplados) — EN CURSO
-Status: Fase 17: comparativa A/B + soak de 30 min contra la camara real
-  (192.168.1.132) sin crecimiento de latencia, 0 reconnects, FPS estable
-  ~15. pipeline_v2=True por defecto desde 2026-08-07. Grabacion de clips
-  verificada end-to-end (upload a Drive pendiente de renovar token OAuth —
-  no relacionado con v2.0).
-  Fase 18-01 completa: AdaptiveRate (escalones + histeresis por rachas),
-  TrackRegistry (estado compartido thread-safe, historial acotado) y
-  DetectionWorker (deteccion desacoplada con ritmo adaptativo, zonas y
-  heatmap portados). PersonTracker gano set_frame_rate() para sincronizar
-  ByteTrack sin perder tracks. 155/155 tests.
-  DetectionWorker todavia NO esta cableado en main.py — el dashboard en
-  produccion sigue usando RTSPStream (pipeline v2 de la Fase 17) sin
-  cambios visibles. Eso ocurre en 18-02 Task 5.
-Last activity: 2026-08-07
+Phase: **Bloque A (17-22) COMPLETO** en código y tests. Siguiente: Fase 23 (bloque B).
+Status: Las seis fases del bloque A tienen código y suite en verde
+  (310/310). Fase 22 cierra la deuda de seguridad pendiente (pickle
+  erradicado, yolo_model_path validado contra {.pt, .onnx} y contención
+  de path) y añade cotas de memoria verificadas por test en las 10
+  estructuras acumulativas del pipeline, más un `_housekeeping_loop`
+  centralizado (60 s) como purga periódica de respaldo.
+  Quedan **4 checkpoints con cámara real** sin ejecutar, ninguno
+  bloqueante para seguir programando: 19-01 Task 5 (migrar BD real),
+  19-02 Task 5 (validación de reglas en vivo), 20-02 Task 4 (validación
+  visual del pre-buffer), 21-01 Task 5 (coste de instrumentación y
+  línea base de 30 min), y el nuevo 22-01 Task 4 (resistencia de 8 h).
+Last activity: 2026-08-09
 
-Progress v2.0: [░░░░░░░░░░] ~7% (Fase 17 completa + 18-01/2 de la Fase 18)
+Progress v2.0: [███░░░░░░░] ~27% (6/22 fases completas — bloque A cerrado)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
+
+## Mediciones acumuladas del bloque A
+
+| Medición | Resultado | Fuente |
+|----------|-----------|--------|
+| CPU antes/después de desacoplar el pipeline (Fase 18) | 587.3% → 568.8% (normalizado, 8 cores) — mejora leve, sin regresión de RAM; YOLO sigue siendo el coste dominante | `18-02-CHECKPOINT.md` |
+| Soak de 30 min, cámara real (Fase 17) | FPS estable ~15, 0 reconnects, sin crecimiento de latencia | `17-02-SUMMARY.md` |
+| Línea base operativa de métricas (Fase 21, 30 min) | **Pendiente** — mecánica de `/api/v2/metrics` y `/metrics` verificada end-to-end (eventos reales incrementan `events_total`, `e2e_latency_seconds` registra observaciones reales), pero sin cámara real no hay FPS/latencia de producción que promediar | `21-01-SUMMARY.md`, checkpoint 21-01 Task 5 |
+| Coste de instrumentación (<2% CPU objetivo) | **Pendiente** — requiere comparar `metrics_enabled=true/false` con carga real | checkpoint 21-01 Task 5 |
+| Resistencia de 8 h (RSS, colas, `active_tracks`) | **Pendiente** — `scripts/soak_test.py` escrito y verificado con servidor real (6 s, 3 muestras), ejecución completa de 8 h aún no realizada | `22-01-SUMMARY.md`, checkpoint 22-01 Task 4 |
 
 ## Siguiente paso
 
 ```
-/gsd:execute-phase 18 --wave 2
+/gsd:plan-phase 23
 ```
 
-18-02-PLAN.md construye StreamingWorker, RecordingWorker,
-RecognitionWorker y WorkerSupervisor, y en su Task 5 retira RTSPStream
-sustituyendolo en backend/main.py — es el cambio de mayor riesgo del
-milestone hasta ahora (toca el camino de ejecucion en produccion). Su
-Task 6 es un checkpoint con camara real (medicion de CPU antes/despues,
-prueba de crash de worker en vivo, 1h sin crecimiento de latencia) y
-requiere confirmacion del usuario antes de arrancar dado el alcance.
+La Fase 23 (Migración a InsightFace/ArcFace) abre el bloque B y tiene
+una **puerta bloqueante**: verificar que `insightface` + `onnxruntime`
+instalan y ejecutan una inferencia real en el entorno Windows del
+proyecto antes de comprometer el resto del bloque (plan B documentado
+en `SPEC_v2.md` ADR-02 si no instalan). No tiene CONTEXT/PLAN escritos
+todavía — a diferencia del bloque A, necesita `/gsd:plan-phase`.
+
+Alternativamente, los 4 checkpoints pendientes del bloque A pueden
+ejecutarse en cualquier momento que haya acceso a la cámara real; no
+bloquean el arranque de la Fase 23, pero sí deberían cerrarse antes de
+dar el bloque A por completamente validado en producción.
 
 ## Pendiente sin relacion con v2.0
 
@@ -79,26 +91,20 @@ requiere confirmacion del usuario antes de arrancar dado el alcance.
 | `propuesta_mejora/mejoras_inmediatas.md` | Propuesta original (25 puntos) |
 | `propuesta_mejora/vulnerabilidades.md` | Análisis de seguridad (12/14 ya corregidas en v1.2) |
 
-## Planes listos para ejecutar
+## Planes listos para ejecutar — bloque A (COMPLETO)
 
-El bloque A (fases 17-22) ya tiene CONTEXT y PLAN escritos. **No hace falta `/gsd:plan-phase`** para estas fases: se puede ir directo a `/gsd:execute-phase`.
+El bloque A (fases 17-22) tiene CONTEXT, PLAN y SUMMARY escritos, código
+implementado y tests en verde. Solo quedan los checkpoints manuales con
+cámara real.
 
 | Fase | Planes | Checkpoints manuales |
 |------|--------|----------------------|
-| 17 — Frame Broker y Capture Worker | 17-01, 17-02 | Comparativa A/B del MJPEG con cámara real |
-| 18 — Workers desacoplados | 18-01, 18-02 | Medición CPU antes/después + crash de worker en vivo |
-| 19 — Event Engine y esquema v2 | 19-01, 19-02 | Migración de la BD real + validación de reglas en vivo |
-| 20 — Pre/post-buffer | 20-01, 20-02 | Verificación visual del pre-buffer + prueba sin red |
-| 21 — Observabilidad | 21-01 | Coste de instrumentación + línea base de 30 min |
-| 22 — Seguridad y memoria | 22-01 | Prueba de resistencia de 8 h |
-
-## Siguiente paso
-
-```
-/gsd:execute-phase 17
-```
-
-Fase 17 no tiene dependencias y su criterio principal es "no cambiar nada visible": el stream MJPEG debe comportarse igual que en v1.2 mientras la captura pasa a ejecutarse tras el FrameBroker.
+| 17 — Frame Broker y Capture Worker | 17-01 ✓, 17-02 ✓ | ✓ Comparativa A/B del MJPEG con cámara real |
+| 18 — Workers desacoplados | 18-01 ✓, 18-02 ✓ | ✓ Medición CPU antes/después + crash de worker en vivo |
+| 19 — Event Engine y esquema v2 | 19-01 ✓, 19-02 ✓ | ⧗ Migración de la BD real + validación de reglas en vivo |
+| 20 — Pre/post-buffer | 20-01 ✓, 20-02 ✓ | ⧗ Verificación visual del pre-buffer + prueba sin red |
+| 21 — Observabilidad | 21-01 ✓ | ⧗ Coste de instrumentación + línea base de 30 min |
+| 22 — Seguridad y memoria | 22-01 ✓ | ⧗ Prueba de resistencia de 8 h |
 
 Las fases 23-38 (bloques B, C y D) tienen su detalle ejecutable en `SPEC_v2.md` §9 pero aún no tienen PLAN. Generarlos con `/gsd:plan-phase 23` cuando llegue el momento, o pedirlos en Cowork como se hizo con el bloque A.
 
