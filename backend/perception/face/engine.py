@@ -49,6 +49,13 @@ class FaceEngine:
     model fails to load — same contract as PersonRecognizer.available today.
     """
 
+    # buffalo_s ships 5 sub-models; this project only needs detection (bbox +
+    # 5-point kps) and recognition (the 512d embedding). Loading genderage
+    # and the dense 2d/3d landmark models too costs ~10-20x more per call
+    # for outputs nothing here reads — measured empirically (23-01-SUMMARY.md
+    # Task 4): ~300ms vs ~15-40ms per detect() on this CPU for the same image.
+    _ALLOWED_MODULES = ["detection", "recognition"]
+
     def __init__(self, model_name: str = "buffalo_s", det_size: tuple[int, int] = (320, 320)) -> None:
         self._available = False
         self._app = None
@@ -56,7 +63,10 @@ class FaceEngine:
             logger.warning("insightface not installed — face recognition disabled")
             return
         try:
-            self._app = FaceAnalysis(name=model_name, providers=["CPUExecutionProvider"])
+            self._app = FaceAnalysis(
+                name=model_name, providers=["CPUExecutionProvider"],
+                allowed_modules=self._ALLOWED_MODULES,
+            )
             self._app.prepare(ctx_id=-1, det_size=det_size)
             self._available = True
         except Exception:
