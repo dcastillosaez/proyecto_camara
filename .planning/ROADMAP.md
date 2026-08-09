@@ -417,10 +417,10 @@ Plans:
   6. La tasa de aciertos sobre un set de validación de 50+ recortes reales es igual o mejor que dlib, documentada en el SUMMARY
   7. `dlib` y `face-recognition` desaparecen de requirements.txt
 **Spec**: SPEC_v2.md ADR-02, ADR-03, §5.4
-**Plans:** 0/2 plans complete — `.planning/phases/23-migracion-a-insightface-arcface-con-quality-gating/`
+**Plans:** 1/2 plans complete — `.planning/phases/23-migracion-a-insightface-arcface-con-quality-gating/`
 
 Plans:
-- [ ] 23-01-PLAN.md — FaceEngine, FaceQualityAssessor, IdentityIndex (aislados, sin tocar recognizer.py)
+- [x] 23-01-PLAN.md — FaceEngine, FaceQualityAssessor, IdentityIndex (aislados, sin tocar recognizer.py)
 - [ ] 23-02-PLAN.md — Integración en recognizer.py, re-enrolamiento real, retirada de dlib (Task 4 checkpoint — benchmark real con cámara — pendiente)
 
 ### Phase 24: Identidad temporal — votación y máquina de estados
