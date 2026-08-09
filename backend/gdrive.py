@@ -1,18 +1,32 @@
-"""Google Drive uploader — OAuth2 desktop flow, upload with exponential-backoff retry."""
+"""Google Drive upload: the blocking API call, and a persistent DB-backed queue
+that drives it with backoff (Fase 20).
+
+The queue lives in the database (recordings.upload_state), not in memory — it
+survives restarts. googleapiclient is synchronous; every call to upload_file()
+runs in a ThreadPoolExecutor, never directly in a coroutine.
+"""
+
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-import queue
-import threading
-import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
+
+if TYPE_CHECKING:
+    from backend.storage.repositories import RecordingRepo
 
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-MAX_RETRIES = 3
+
+# Backoff schedule by attempt number (0-indexed). Quota errors wait longer —
+# they're the one failure mode where retrying sooner makes things worse.
+RETRY_DELAYS = [30, 120, 600, 1800, 3600]
+QUOTA_MULTIPLIER = 4
 
 
 def load_credentials(credentials_path: str, token_path: str):
@@ -36,7 +50,10 @@ def load_credentials(credentials_path: str, token_path: str):
 
 
 def upload_file(local_path: str, folder_id: str, credentials_path: str, token_path: str) -> str:
-    """Upload *local_path* to the Drive folder. Returns the Drive file ID."""
+    """Upload *local_path* to the Drive folder. Returns the Drive file ID.
+
+    Blocking (googleapiclient is synchronous) — always call via an executor.
+    """
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
@@ -49,92 +66,105 @@ def upload_file(local_path: str, folder_id: str, credentials_path: str, token_pa
     return result["id"]
 
 
-class DriveUploader:
-    """
-    Background thread that drains a queue of clip paths and uploads each to Google Drive.
-    Calls *on_uploaded(local_path, gdrive_id)* on success — local file is then deleted.
-    Calls *on_failed(local_path)* after MAX_RETRIES failed attempts.
+def classify_error(exc: Exception) -> str:
+    """'quota' | 'auth' | 'network' — determines the backoff applied on retry."""
+    msg = str(exc).lower()
+    if "quota" in msg or "ratelimitexceeded" in msg or "429" in msg:
+        return "quota"
+    if "invalid_grant" in msg or "unauthorized" in msg or "401" in msg or "token" in msg:
+        return "auth"
+    return "network"
+
+
+def backoff_delay(attempt: int, error_kind: str) -> float:
+    """Seconds to wait before the next attempt. *attempt* is 0-indexed."""
+    idx = min(attempt, len(RETRY_DELAYS) - 1)
+    delay = RETRY_DELAYS[idx]
+    if error_kind == "quota":
+        delay *= QUOTA_MULTIPLIER
+    return delay
+
+
+class UploadQueue:
+    """Polls RecordingRepo for due 'pending' uploads and uploads them off the event loop.
+
+    Never blocks the caller: run_once() fetches due rows and fires each upload
+    as a background task, returning immediately.
     """
 
     def __init__(
         self,
+        repo: RecordingRepo,
         folder_id: str,
         credentials_path: str = "credentials.json",
         token_path: str = "data/token.json",
-        on_uploaded: Callable[[str, str], None] | None = None,
-        on_failed: Callable[[str], None] | None = None,
+        max_attempts: int = 5,
+        poll_secs: float = 30.0,
+        on_permanent_failure: Callable[[int, str], Awaitable[None]] | None = None,
+        max_workers: int = 2,
     ) -> None:
+        self._repo = repo
         self._folder_id = folder_id
         self._credentials_path = credentials_path
         self._token_path = token_path
-        self._on_uploaded = on_uploaded
-        self._on_failed = on_failed
-        self._queue: queue.Queue[str] = queue.Queue()
-        self._running = False
-        self._creds_available = os.path.exists(credentials_path)
-
-    @property
-    def credentials_available(self) -> bool:
-        return self._creds_available
-
-    def enqueue(self, local_path: str) -> None:
-        self._queue.put(local_path)
+        self._max_attempts = max_attempts
+        self._poll_secs = poll_secs
+        self._on_permanent_failure = on_permanent_failure
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drive-upload")
+        self._task: asyncio.Task | None = None
 
     def start(self) -> None:
-        if not self._creds_available:
-            logger.warning(
-                "DriveUploader: %s not found — uploads disabled. "
-                "Download OAuth 2.0 Desktop credentials from Google Cloud Console "
-                "and save as credentials.json in the project root.",
-                self._credentials_path,
-            )
-        self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="drive-uploader")
-        self._thread.start()
+        self._task = asyncio.create_task(self._loop())
 
     def stop(self) -> None:
-        self._running = False
+        if self._task is not None:
+            self._task.cancel()
+        self._executor.shutdown(wait=False)
 
-    # ------------------------------------------------------------------
-
-    def _loop(self) -> None:
-        while self._running:
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._poll_secs)
             try:
-                path = self._queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
-            self._upload_with_retry(path)
+                await self.run_once()
+            except Exception:
+                logger.exception("UploadQueue: poll iteration failed")
 
-    def _upload_with_retry(self, path: str) -> None:
-        if not self._creds_available:
-            logger.warning("DriveUploader: no credentials.json — skipping %s", path)
-            if self._on_failed:
-                self._on_failed(path)
-            return
+    async def run_once(self) -> None:
+        """Fetch due pending uploads and fire each off in the background."""
+        pending = await self._repo.next_pending(limit=5)
+        for rec in pending:
+            asyncio.create_task(self._process(rec))
 
-        for attempt in range(MAX_RETRIES):
-            try:
-                gdrive_id = upload_file(
-                    path, self._folder_id, self._credentials_path, self._token_path
-                )
-                logger.info("DriveUploader: %s → drive:%s", path, gdrive_id)
-                try:
-                    os.remove(path)
-                    logger.info("DriveUploader: deleted local clip %s", path)
-                except OSError as exc:
-                    logger.warning("DriveUploader: could not delete %s: %s", path, exc)
-                if self._on_uploaded:
-                    self._on_uploaded(path, gdrive_id)
-                return
-            except Exception as exc:
-                delay = 2 ** attempt
+    async def _process(self, rec) -> None:
+        from backend.storage.repositories import UploadState
+
+        loop = asyncio.get_running_loop()
+        local_path = rec.local_path or rec.filename
+        try:
+            gdrive_id = await loop.run_in_executor(
+                self._executor, upload_file, local_path,
+                self._folder_id, self._credentials_path, self._token_path,
+            )
+            await self._repo.mark_upload(rec.id, UploadState.DONE, drive_file_id=gdrive_id)
+            logger.info("UploadQueue: recording %s -> drive:%s", rec.id, gdrive_id)
+        except Exception as exc:
+            kind = classify_error(exc)
+            attempts = rec.upload_attempts + 1
+            if attempts >= self._max_attempts:
+                logger.error("UploadQueue: recording %s failed permanently after %d attempts: %s", rec.id, attempts, exc)
+                await self._repo.mark_upload(rec.id, UploadState.FAILED, error=str(exc))
+                if self._on_permanent_failure:
+                    try:
+                        await self._on_permanent_failure(rec.id, str(exc))
+                    except Exception:
+                        logger.exception("UploadQueue: on_permanent_failure raised")
+            else:
+                delay = backoff_delay(attempts - 1, kind)
                 logger.warning(
-                    "DriveUploader: attempt %d/%d failed (%s) — retry in %ds",
-                    attempt + 1, MAX_RETRIES, exc, delay,
+                    "UploadQueue: recording %s attempt %d/%d failed (%s, %s) — retry in %.0fs",
+                    rec.id, attempts, self._max_attempts, kind, exc, delay,
                 )
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(delay)
-
-        logger.error("DriveUploader: all retries exhausted for %s", path)
-        if self._on_failed:
-            self._on_failed(path)
+                await self._repo.mark_upload(
+                    rec.id, UploadState.PENDING, error=str(exc),
+                    next_attempt_at=datetime.now() + timedelta(seconds=delay),
+                )

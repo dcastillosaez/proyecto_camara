@@ -441,6 +441,7 @@ class RecordingRepo:
             "upload_state": row.upload_state,
             "upload_attempts": row.upload_attempts,
             "upload_error": row.upload_error,
+            "next_attempt_at": row.next_attempt_at.isoformat() if row.next_attempt_at else None,
             "drive_file_id": row.drive_file_id,
         }
 

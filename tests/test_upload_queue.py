@@ -114,7 +114,7 @@ async def TEST_token_expired_is_retried(db):
     with patch("backend.gdrive.upload_file", side_effect=upload_side_effect):
         await queue.run_once()
         await asyncio.sleep(0.05)
-        await repo._set_next_attempt_now(rec_id)
+        await force_retry_now(db, rec_id)
         await queue.run_once()
         await asyncio.sleep(0.05)
 
@@ -150,7 +150,7 @@ async def TEST_permanent_failure_marks_failed(db):
         for _ in range(2):
             await queue.run_once()
             await asyncio.sleep(0.05)
-            await repo._set_next_attempt_now(rec_id)
+            await force_retry_now(db, rec_id)
 
     row = await repo.get(rec_id)
     assert row["upload_state"] == "failed"

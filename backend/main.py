@@ -36,10 +36,8 @@ from backend.database import (
     get_zones,
     init_db,
     insert_capture,
-    insert_recording,
     purge_old_events,
     purge_old_recordings,
-    update_recording,
     upsert_zone,
     delete_zone,
 )
@@ -49,11 +47,11 @@ from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
 from backend.events.rules import RuleEngine, load_rules
 from backend.events.types import Event, EventType
-from backend.gdrive import DriveUploader
+from backend.gdrive import UploadQueue
 from backend.notifier import Notifier
 from backend.pipeline import CameraManager, CameraPipeline
 from backend.recognizer import PersonRecognizer
-from backend.storage.repositories import DetectionStatRepo, EventRepo
+from backend.storage.repositories import DetectionStatRepo, EventRepo, RecordingRepo
 from backend.tracker import PersonTracker
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -247,67 +245,48 @@ async def lifespan(app: FastAPI):
     import os as _os
     _os.makedirs(settings.gallery_dir, exist_ok=True)
 
-    # Phase 10 — clip recorder + Drive uploader
+    # Fase 20 — clip metadata persistence + Drive upload queue
+    recording_repo = RecordingRepo(get_session_factory())
+
     def _on_clip_ready(result) -> None:
         """Called from the assembly thread when a clip is finalised (backend.pipeline.recording.ClipResult)."""
-        import asyncio as _asyncio
-        path = result.path
-        filename = Path(path).name
-        coro = insert_recording(filename)
-        future = _asyncio.run_coroutine_threadsafe(coro, loop)
-        try:
-            rec_id = future.result(timeout=5)
-        except Exception as exc:
-            logger.error("insert_recording failed: %s", exc)
-            rec_id = None
-        uploader.enqueue(path)
-        # Broadcast new recording event to dashboard
-        if rec_id is not None:
-            _asyncio.run_coroutine_threadsafe(
-                _broadcast({"type": "recording_started", "filename": filename, "id": rec_id}),
-                loop,
+        async def _persist():
+            rec_id = await recording_repo.create(
+                camera_id="cam1", filename=result.path, started_at=result.started_at,
+                reason=result.reason, trigger_event_id=result.trigger_event_id,
+                person_id=result.person_id, zone_id=result.zone_id,
             )
+            await recording_repo.finalize(
+                rec_id, ended_at=result.ended_at, duration_s=result.duration_s,
+                size_bytes=result.size_bytes, sha256=result.sha256,
+                thumbnail_path=result.thumbnail_path, upload_state=result.upload_state,
+            )
+            await _broadcast({
+                "type": "recording_started",
+                "filename": Path(result.path).name,
+                "id": rec_id,
+            })
 
-    def _on_uploaded(path: str, gdrive_id: str) -> None:
-        import asyncio as _asyncio
-        filename = Path(path).name
+        asyncio.run_coroutine_threadsafe(_persist(), loop)
 
-        async def _update():
-            recs = await get_recent_recordings(100)
-            for r in recs:
-                if r["filename"] == filename and r["upload_status"] == "pending":
-                    await update_recording(r["id"], "uploaded", gdrive_id)
-                    await _broadcast({
-                        "type": "recording_uploaded",
-                        "filename": filename,
-                        "gdrive_id": gdrive_id,
-                    })
-                    break
+    async def _on_upload_failed(rec_id: int, message: str) -> None:
+        await _broadcast({"type": "recording_failed", "id": rec_id, "error": message})
+        if event_bus is not None:
+            await event_bus.publish(Event(
+                type=EventType.UPLOAD_FAILED, camera_id="cam1", ts=datetime.datetime.now(),
+                payload={"reason": message, "recording_id": rec_id},
+            ))
 
-        _asyncio.run_coroutine_threadsafe(_update(), loop)
-
-    def _on_failed(path: str) -> None:
-        import asyncio as _asyncio
-        filename = Path(path).name
-
-        async def _update():
-            recs = await get_recent_recordings(100)
-            for r in recs:
-                if r["filename"] == filename and r["upload_status"] == "pending":
-                    await update_recording(r["id"], "failed")
-                    await _broadcast({"type": "recording_failed", "filename": filename})
-                    break
-
-        _asyncio.run_coroutine_threadsafe(_update(), loop)
-
-    uploader = DriveUploader(
+    upload_queue = UploadQueue(
+        recording_repo,
         folder_id=settings.gdrive_folder_id,
         credentials_path=settings.gdrive_credentials_path,
         token_path=settings.gdrive_token_path,
-        on_uploaded=_on_uploaded,
-        on_failed=_on_failed,
+        max_attempts=settings.max_upload_attempts,
+        poll_secs=settings.upload_poll_secs,
+        on_permanent_failure=_on_upload_failed,
     )
-    uploader.start()
+    upload_queue.start()
 
     def _on_recording_failure(message: str) -> None:
         logger.error("RecordingWorker failure: %s", message)
@@ -316,12 +295,14 @@ async def lifespan(app: FastAPI):
 
     recording_config = {
         "clips_dir": settings.clips_dir,
+        "thumbnails_dir": "data/thumbnails",
         "fps": settings.recording_fps,
         "pre_buffer_secs": settings.pre_buffer_secs,
         "post_buffer_secs": settings.post_buffer_secs,
         "pre_buffer_max_mb": settings.pre_buffer_max_mb,
         "pre_buffer_jpeg_quality": settings.pre_buffer_jpeg_quality,
         "codec": settings.recording_codec,
+        "upload_min_severity": settings.upload_min_severity,
         "on_clip_ready": _on_clip_ready,
         "on_failure": _on_recording_failure,
     }
@@ -412,6 +393,7 @@ async def lifespan(app: FastAPI):
                 trigger_event_id=event.id,
                 person_id=event.person_id,
                 zone_id=event.zone_id,
+                severity=event.severity.value,
             )
 
     event_actions.configure(notifier=notifier, emit=event_bus.publish, recorder_hook=_recorder_hook)
@@ -425,7 +407,7 @@ async def lifespan(app: FastAPI):
     purge_task.cancel()
     watchdog_task.cancel()
     camera_manager.stop_all()   # para los workers, incluido el recorder
-    uploader.stop()
+    upload_queue.stop()
     logger.info("Pipeline detenido")
 
 
