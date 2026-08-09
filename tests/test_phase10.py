@@ -2,139 +2,21 @@
 from __future__ import annotations
 
 import datetime
-import os
-import queue
-import threading
-import time
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
 
-import cv2
-import numpy as np
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 import backend.database as db_module
-from backend.gdrive import DriveUploader
 
 # ClipRecorder (decision logic: start/stop by live_count) was retired in Fase 20
 # — RecordingWorker now decides when to record, driven by rule-matched events
 # with pre/post-buffer context (see tests/test_recording_prepost.py). The pure
 # MP4-writing remainder lives in backend.recorder.ClipWriter.
-
-
-# ---------------------------------------------------------------------------
-# DriveUploader
-# ---------------------------------------------------------------------------
-
-# ─── on_uploaded se llama con path y Drive ID tras subida exitosa ─────────────
-# DriveUploader encola clips y los sube en un hilo separado. Tras una subida
-# exitosa, debe llamar a on_uploaded(local_path, gdrive_id) para que main.py
-# actualice el estado del recording en BD y emita el evento WebSocket
-# 'recording_uploaded' al dashboard.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_044_uploader_calls_on_uploaded_after_success(tmp_path):
-    """on_uploaded is called with the local path and Drive ID on success."""
-    clip = tmp_path / "clip_test.mp4"
-    clip.write_bytes(b"fake video data")
-
-    uploaded = []
-    uploader = DriveUploader(
-        folder_id="FOLDER",
-        credentials_path=str(tmp_path / "credentials.json"),
-        on_uploaded=lambda p, gid: uploaded.append((p, gid)),
-    )
-    uploader._creds_available = True
-
-    with patch("backend.gdrive.upload_file", return_value="gdrive_abc123"):
-        uploader.start()
-        uploader.enqueue(str(clip))
-        time.sleep(0.5)
-        uploader.stop()
-
-    assert len(uploaded) == 1
-    assert uploaded[0][1] == "gdrive_abc123"
-
-
-# ─── El fichero local se elimina tras subida exitosa ─────────────────────────
-# Los clips .mp4 pueden ocupar varios MB. Una vez subidos a Drive, el fichero
-# local debe borrarse para no agotar el espacio en disco del servidor.
-# Si el fichero persiste, tras semanas de grabación el disco se llenaría.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_045_uploader_deletes_local_file_after_upload(tmp_path):
-    """Local clip is removed after successful upload."""
-    clip = tmp_path / "clip_del.mp4"
-    clip.write_bytes(b"data")
-
-    uploader = DriveUploader(folder_id="F", credentials_path=str(tmp_path / "creds.json"))
-    uploader._creds_available = True
-
-    with patch("backend.gdrive.upload_file", return_value="id_xyz"):
-        uploader.start()
-        uploader.enqueue(str(clip))
-        time.sleep(0.5)
-        uploader.stop()
-
-    assert not clip.exists(), "Local file should be deleted after upload"
-
-
-# ─── Reintentos con backoff y llamada a on_failed tras MAX_RETRIES fallos ─────
-# La red puede fallar transitoriamente. DriveUploader reintenta hasta
-# MAX_RETRIES=3 veces con backoff. Tras agotar los reintentos, llama a
-# on_failed(path) para que main.py marque el recording como 'failed' en BD
-# y notifique al dashboard sin bloquear indefinidamente.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_046_uploader_retries_on_failure_then_calls_on_failed(tmp_path):
-    """Calls on_failed after MAX_RETRIES consecutive failures."""
-    clip = tmp_path / "clip_fail.mp4"
-    clip.write_bytes(b"data")
-
-    failed = []
-    uploader = DriveUploader(
-        folder_id="F",
-        credentials_path=str(tmp_path / "creds.json"),
-        on_failed=lambda p: failed.append(p),
-    )
-    uploader._creds_available = True
-
-    with patch("backend.gdrive.upload_file", side_effect=RuntimeError("network error")):
-        with patch("backend.gdrive.time.sleep"):
-            uploader.start()
-            uploader.enqueue(str(clip))
-            time.sleep(0.5)
-            uploader.stop()
-            uploader._thread.join(timeout=3.0)
-
-    assert len(failed) == 1
-    assert str(clip) in failed[0]
-
-
-# ─── Sin credentials.json: on_failed se llama inmediatamente ─────────────────
-# Si el fichero credentials.json no existe (Drive no configurado), el uploader
-# no debe intentar la subida ni bloquearse esperando OAuth. Debe llamar a
-# on_failed de inmediato para que el recording quede marcado como 'failed'
-# en lugar de quedarse eternamente en estado 'pending'.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_047_uploader_skips_when_no_credentials(tmp_path):
-    """If credentials.json is absent, on_failed is called immediately."""
-    clip = tmp_path / "clip_nocreds.mp4"
-    clip.write_bytes(b"data")
-
-    failed = []
-    uploader = DriveUploader(
-        folder_id="F",
-        credentials_path=str(tmp_path / "credentials.json"),
-        on_failed=lambda p: failed.append(p),
-    )
-
-    uploader.start()
-    uploader.enqueue(str(clip))
-    time.sleep(0.3)
-    uploader.stop()
-
-    assert len(failed) == 1
+#
+# DriveUploader (thread + in-memory queue + enqueue()/on_uploaded/on_failed)
+# was retired in the same phase — uploads are now a DB-backed queue driven by
+# RecordingRepo.next_pending()/mark_upload(), see tests/test_upload_queue.py.
 
 
 # ---------------------------------------------------------------------------
