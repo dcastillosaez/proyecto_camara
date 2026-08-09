@@ -122,6 +122,15 @@ class Settings(BaseSettings):
     # la que cada worker ya hace en su propio ciclo caliente (mas frecuente).
     housekeeping_secs: float = 60.0
 
+    # --- Reconocimiento facial ArcFace (Fase 23 — FACE-01..03) ---
+    # Defaults de SPEC_v2.md §5.4 — no son los mismos umbrales que usaba dlib
+    # (distancia euclídea vs. similitud coseno, no comparables directamente).
+    face_min_size_px: int = 60
+    face_max_blur: float = 100.0
+    face_max_yaw_deg: float = 40.0
+    face_match_threshold: float = 0.45
+    face_confirm_threshold: float = 0.55
+
     # Horario de acceso — fuera de este rango los crossing events se marcan como intrusión.
     # Requiere schedule_enabled=True; si está en False todos los eventos son "normales".
     schedule_enabled: bool = False
