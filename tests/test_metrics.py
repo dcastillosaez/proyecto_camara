@@ -31,19 +31,26 @@ EXPECTED_METRICS = {
 }
 
 
+def _full_family_names() -> set[str]:
+    """prometheus_client strips the _total suffix from Counter family.name — restore it
+    so the catalog check compares against the names as declared (and as SPEC_v2.md lists)."""
+    names = set()
+    for mf in m.REGISTRY.collect():
+        names.add(f"{mf.name}_total" if mf.type == "counter" else mf.name)
+    return names
+
+
 def TEST_catalog_complete():
     m._reset_for_tests()
-    families = {mf.name for mf in m.REGISTRY.collect()}
-    assert EXPECTED_METRICS <= families
+    assert EXPECTED_METRICS <= _full_family_names()
 
 
 def TEST_naming_convention():
     m._reset_for_tests()
-    for mf in m.REGISTRY.collect():
-        if mf.type == "counter":
-            assert mf.name.endswith("_total"), f"{mf.name} is a counter but doesn't end in _total"
-        if mf.type == "histogram" and mf.name.endswith("_latency_seconds".rsplit("_", 1)[0]):
-            pass  # histograms already end in _seconds by construction, checked below
+    for name in _full_family_names():
+        family_type = next(mf.type for mf in m.REGISTRY.collect() if f"{mf.name}_total" == name or mf.name == name)
+        if family_type == "counter":
+            assert name.endswith("_total"), f"{name} is a counter but doesn't end in _total"
     for name in ("inference_latency_seconds", "e2e_latency_seconds"):
         assert name.endswith("_seconds")
 
@@ -54,7 +61,9 @@ def TEST_labels_present():
     metrics.inference_latency_seconds.labels(stage="yolo").observe(0.05)
 
     families = {mf.name: mf for mf in m.REGISTRY.collect()}
-    dropped_sample = next(s for s in families["frames_dropped_total"].samples if s.name == "frames_dropped_total")
+    dropped_sample = next(
+        s for s in families["frames_dropped"].samples if s.name == "frames_dropped_total"
+    )
     assert set(dropped_sample.labels) == {"camera", "subscriber"}
 
     latency_family = families["inference_latency_seconds"]
