@@ -21,3 +21,4 @@ httpx>=0.24
 slowapi>=0.1.9
 psutil>=5.9
 PyYAML>=6.0
+prometheus-client>=0.21
