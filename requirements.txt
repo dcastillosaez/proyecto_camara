@@ -10,7 +10,6 @@ websockets>=12.0
 python-multipart>=0.0.9
 aiofiles>=23.0
 pytapo>=0.0.63
-face-recognition>=1.3
 google-auth-oauthlib>=1.0
 google-auth-httplib2>=0.2
 google-api-python-client>=2.100
