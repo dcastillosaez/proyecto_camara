@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Bloque A (fases 17-22) completo en codigo y tests: 310/310 pasan. Quedan 4 checkpoints con camara real pendientes de accion del usuario (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4). Siguiente: Fase 23, con la puerta bloqueante de insightface/onnxruntime en Windows."
-last_updated: "2026-08-09"
-last_activity: 2026-08-09
+stopped_at: "Fase 23 (Migracion a InsightFace/ArcFace) completa en codigo y tests: 326/326 pasan. Puerta bloqueante superada con evidencia real. Quedan 6 checkpoints con camara real pendientes de accion del usuario (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4). Siguiente: Fase 24 (Identidad temporal), sin CONTEXT/PLAN escritos todavia."
+last_updated: "2026-08-10"
+last_activity: 2026-08-10
 progress:
   total_phases: 22
-  completed_phases: 6
-  total_plans: 10
-  completed_plans: 10
-  percent: 27
+  completed_phases: 7
+  total_plans: 12
+  completed_plans: 12
+  percent: 32
 previous_milestone:
   name: v1.2
   status: complete
@@ -31,24 +31,28 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) COMPLETO** en código y tests. Siguiente: Fase 23 (bloque B).
-Status: Las seis fases del bloque A tienen código y suite en verde
-  (310/310). Fase 22 cierra la deuda de seguridad pendiente (pickle
-  erradicado, yolo_model_path validado contra {.pt, .onnx} y contención
-  de path) y añade cotas de memoria verificadas por test en las 10
-  estructuras acumulativas del pipeline, más un `_housekeeping_loop`
-  centralizado (60 s) como purga periódica de respaldo.
-  Quedan **4 checkpoints con cámara real** sin ejecutar, ninguno
+Phase: **Bloque A (17-22) + Fase 23 COMPLETOS** en código y tests. Siguiente: Fase 24 (bloque B, sin CONTEXT/PLAN).
+Status: Bloque A cerrado (310/310) y Fase 23 (Migración a InsightFace/
+  ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
+  se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
+  compilar en Windows, `buffalo_s` descarga y ejecuta una inferencia
+  real (5 submodelos ONNX, embedding 512D confirmado). `FaceEngine`,
+  `FaceQualityAssessor` e `IdentityIndex` construidos y verificados
+  (23-01); `backend/recognizer.py` reducido a orquestación sobre ellos,
+  `scripts/reenroll.py` para re-enrolamiento real, `dlib`/
+  `face-recognition` fuera de requirements.txt (23-02).
+  Quedan **6 checkpoints con cámara real** sin ejecutar, ninguno
   bloqueante para seguir programando: 19-01 Task 5 (migrar BD real),
   19-02 Task 5 (validación de reglas en vivo), 20-02 Task 4 (validación
   visual del pre-buffer), 21-01 Task 5 (coste de instrumentación y
-  línea base de 30 min), y el nuevo 22-01 Task 4 (resistencia de 8 h).
-Last activity: 2026-08-09
+  línea base de 30 min), 22-01 Task 4 (resistencia de 8 h), y el nuevo
+  23-02 Task 4 (tasa de aciertos ArcFace vs dlib con datos reales).
+Last activity: 2026-08-10
 
-Progress v2.0: [███░░░░░░░] ~27% (6/22 fases completas — bloque A cerrado)
+Progress v2.0: [███░░░░░░░] ~32% (7/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
 
-## Mediciones acumuladas del bloque A
+## Mediciones acumuladas del bloque A y Fase 23
 
 | Medición | Resultado | Fuente |
 |----------|-----------|--------|
@@ -57,24 +61,33 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 | Línea base operativa de métricas (Fase 21, 30 min) | **Pendiente** — mecánica de `/api/v2/metrics` y `/metrics` verificada end-to-end (eventos reales incrementan `events_total`, `e2e_latency_seconds` registra observaciones reales), pero sin cámara real no hay FPS/latencia de producción que promediar | `21-01-SUMMARY.md`, checkpoint 21-01 Task 5 |
 | Coste de instrumentación (<2% CPU objetivo) | **Pendiente** — requiere comparar `metrics_enabled=true/false` con carga real | checkpoint 21-01 Task 5 |
 | Resistencia de 8 h (RSS, colas, `active_tracks`) | **Pendiente** — `scripts/soak_test.py` escrito y verificado con servidor real (6 s, 3 muestras), ejecución completa de 8 h aún no realizada | `22-01-SUMMARY.md`, checkpoint 22-01 Task 4 |
+| Latencia FaceEngine (detect+embed) tras optimizar `allowed_modules` | ~15-40ms/llamada (antes ~250-370ms con los 5 submodelos por defecto de buffalo_s) — medido con imagen real, 10-20x de mejora | `23-01-SUMMARY.md` |
+| Tasa de aciertos ArcFace vs dlib (≥50 recortes reales) | **Pendiente** — requiere `data/gallery/` poblada con capturas reales | `23-02-SUMMARY.md`, checkpoint 23-02 Task 4 |
 
 ## Siguiente paso
 
 ```
-/gsd:plan-phase 23
+/gsd:plan-phase 24
 ```
 
-La Fase 23 (Migración a InsightFace/ArcFace) abre el bloque B y tiene
-una **puerta bloqueante**: verificar que `insightface` + `onnxruntime`
-instalan y ejecutan una inferencia real en el entorno Windows del
-proyecto antes de comprometer el resto del bloque (plan B documentado
-en `SPEC_v2.md` ADR-02 si no instalan). No tiene CONTEXT/PLAN escritos
-todavía — a diferencia del bloque A, necesita `/gsd:plan-phase`.
+La Fase 24 (Identidad temporal — votación y máquina de estados) abre
+con `IdentityStateMachine`/`TemporalVoter` (4 estados: UNKNOWN →
+CANDIDATE → CONFIRMED → TEMPORARILY_LOST) y depende de la Fase 23 en
+código (ya completa), no de su checkpoint de validación en vivo. No
+tiene CONTEXT/PLAN escritos todavía — a diferencia del bloque A y la
+Fase 23, necesita `/gsd:plan-phase` o una sesión de planificación
+dedicada antes de ejecutarse.
 
-Alternativamente, los 4 checkpoints pendientes del bloque A pueden
-ejecutarse en cualquier momento que haya acceso a la cámara real; no
-bloquean el arranque de la Fase 23, pero sí deberían cerrarse antes de
-dar el bloque A por completamente validado en producción.
+Nota histórica — la Fase 23 (ya cerrada) abrió con una **puerta
+bloqueante** (verificar que `insightface` + `onnxruntime` instalan y
+ejecutan una inferencia real en Windows, con plan B en `SPEC_v2.md`
+ADR-02 si no instalaban) que se resolvió con evidencia real antes de
+planificar el resto de la fase — ver `23-CONTEXT.md`.
+
+Los 6 checkpoints pendientes (bloque A + Fase 23) pueden ejecutarse en
+cualquier momento que haya acceso a la cámara real; ninguno bloquea el
+avance a la Fase 24, pero sí deberían cerrarse antes de dar el bloque A
+y la Fase 23 por completamente validados en producción.
 
 ## Pendiente sin relacion con v2.0
 
@@ -105,8 +118,9 @@ cámara real.
 | 20 — Pre/post-buffer | 20-01 ✓, 20-02 ✓ | ⧗ Verificación visual del pre-buffer + prueba sin red |
 | 21 — Observabilidad | 21-01 ✓ | ⧗ Coste de instrumentación + línea base de 30 min |
 | 22 — Seguridad y memoria | 22-01 ✓ | ⧗ Prueba de resistencia de 8 h |
+| 23 — InsightFace/ArcFace | 23-01 ✓, 23-02 ✓ | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
 
-Las fases 23-38 (bloques B, C y D) tienen su detalle ejecutable en `SPEC_v2.md` §9 pero aún no tienen PLAN. Generarlos con `/gsd:plan-phase 23` cuando llegue el momento, o pedirlos en Cowork como se hizo con el bloque A.
+Las fases 24-38 (resto de bloques B, C y D) tienen su detalle ejecutable en `SPEC_v2.md` §9 pero aún no tienen PLAN. Generarlos con `/gsd:plan-phase 24` cuando llegue el momento, o pedirlos en Cowork como se hizo con el bloque A y la Fase 23.
 
 ## Notas de ejecución
 

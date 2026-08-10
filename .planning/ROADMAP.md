@@ -410,18 +410,18 @@ Plans:
 **Requirements**: FACE-01..FACE-06
 **Success Criteria**:
   1. ✅ Puerta de entrada superada (2026-08-09): `insightface` + `onnxruntime` instalan sin compilar y ejecutan una inferencia real (buffalo_s, 5 submodelos ONNX, embedding 512D confirmado) en el entorno Windows del proyecto — Plan A de ADR-02 viable, ver `23-CONTEXT.md`
-  2. FaceEngine produce embeddings 512D L2-normalizados con buffalo_s
-  3. FaceQualityAssessor rechaza y etiqueta el motivo para caras pequeñas, borrosas y de pose extrema
-  4. IdentityIndex resuelve una búsqueda sobre 1.000 identidades en menos de 5 ms
-  5. `scripts/reenroll.py` reconstruye las identidades desde data/gallery/ y reporta migradas vs no migradas
-  6. La tasa de aciertos sobre un set de validación de 50+ recortes reales es igual o mejor que dlib, documentada en el SUMMARY
-  7. `dlib` y `face-recognition` desaparecen de requirements.txt
+  2. ✅ FaceEngine produce embeddings 512D L2-normalizados con buffalo_s
+  3. ✅ FaceQualityAssessor rechaza y etiqueta el motivo para caras pequeñas, borrosas y de pose extrema
+  4. ✅ IdentityIndex resuelve una búsqueda sobre 1.000 identidades en menos de 5 ms
+  5. ✅ `scripts/reenroll.py` reconstruye las identidades desde data/gallery/ y reporta migradas vs no migradas
+  6. ⧗ La tasa de aciertos sobre un set de validación de 50+ recortes reales es igual o mejor que dlib, documentada en el SUMMARY — pendiente, checkpoint 23-02 Task 4, requiere cámara real y galería poblada
+  7. ✅ `dlib` y `face-recognition` desaparecen de requirements.txt
 **Spec**: SPEC_v2.md ADR-02, ADR-03, §5.4
-**Plans:** 1/2 plans complete — `.planning/phases/23-migracion-a-insightface-arcface-con-quality-gating/`
+**Plans:** 2/2 plans complete — `.planning/phases/23-migracion-a-insightface-arcface-con-quality-gating/`
 
 Plans:
 - [x] 23-01-PLAN.md — FaceEngine, FaceQualityAssessor, IdentityIndex (aislados, sin tocar recognizer.py)
-- [ ] 23-02-PLAN.md — Integración en recognizer.py, re-enrolamiento real, retirada de dlib (Task 4 checkpoint — benchmark real con cámara — pendiente)
+- [x] 23-02-PLAN.md — Integración en recognizer.py, re-enrolamiento real, retirada de dlib (Task 4 checkpoint — benchmark real con cámara — pendiente)
 
 ### Phase 24: Identidad temporal — votación y máquina de estados
 **Goal**: Una persona es identificada tras evidencia coherente, no tras un frame afortunado

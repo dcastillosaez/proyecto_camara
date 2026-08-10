@@ -207,12 +207,12 @@
 
 ### Reconocimiento facial (FACE)
 
-- [ ] **FACE-01**: Los embeddings faciales se generan con ArcFace (512D, L2-normalizado) sobre ONNXRuntime
-- [ ] **FACE-02**: Las caras se alinean por landmarks antes de generar el embedding
-- [ ] **FACE-03**: Se descartan las caras que no superan los umbrales de tamaño, nitidez y pose, registrando el motivo del descarte
-- [ ] **FACE-04**: La búsqueda de identidad sobre 1.000 personas se resuelve en menos de 5 ms
-- [ ] **FACE-05**: Existe un procedimiento de re-enrolamiento masivo desde las imágenes de la galería que reporta identidades migradas y fallidas
-- [ ] **FACE-06**: `dlib` y `face-recognition` dejan de ser dependencias del proyecto
+- [x] **FACE-01**: Los embeddings faciales se generan con ArcFace (512D, L2-normalizado) sobre ONNXRuntime
+- [x] **FACE-02**: Las caras se alinean por landmarks antes de generar el embedding
+- [x] **FACE-03**: Se descartan las caras que no superan los umbrales de tamaño, nitidez y pose, registrando el motivo del descarte
+- [x] **FACE-04**: La búsqueda de identidad sobre 1.000 personas se resuelve en menos de 5 ms
+- [x] **FACE-05**: Existe un procedimiento de re-enrolamiento masivo desde las imágenes de la galería que reporta identidades migradas y fallidas
+- [x] **FACE-06**: `dlib` y `face-recognition` dejan de ser dependencias del proyecto
 - [ ] **FACE-07**: Una identidad solo se confirma tras N votos coherentes en una ventana deslizante
 - [ ] **FACE-08**: Cada track tiene un estado de identidad explícito: UNKNOWN, CANDIDATE, CONFIRMED o TEMPORARILY_LOST
 - [ ] **FACE-09**: Una visita de una persona conocida genera un único evento de reconocimiento, no uno por frame
@@ -316,7 +316,7 @@
 - Requisitos v2 totales: **107**
 - Mapeados a fases: **107**
 - Sin mapear: **0**
-- Completados: **37/107** (bloque A completo salvo RULE-05, fuera de alcance del bloque A)
+- Completados: **43/107** (bloque A completo salvo RULE-05; FACE-01..06 de la Fase 23 completos en código, verificación con datos reales pendiente — checkpoint 23-02 Task 4)
 
 ---
 *Requisitos v2 definidos: 2026-08-07*
