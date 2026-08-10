@@ -211,9 +211,9 @@ async def TEST_061_migration_adds_column_to_existing_db(tmp_path):
 
 # ─── _blob_to_encoding rechaza blobs de formato legacy (SEC-15) ──────────────
 # La Fase 22 elimina el fallback a pickle.loads: cualquier blob que no mida
-# exactamente 128*8=1024 bytes (el tamaño de un embedding numpy float64) debe
-# lanzar en lugar de deserializarse con pickle. scripts/migrate_embeddings.py
-# es la única vía soportada para convertir blobs legacy.
+# exactamente el tamaño esperado (512*4=2048 bytes desde la Fase 23, antes
+# 128*8=1024 con dlib) debe lanzar en lugar de deserializarse con pickle.
+# scripts/reenroll.py es la única vía soportada para convertir blobs legacy.
 # ─────────────────────────────────────────────────────────────────────────────
 def TEST_109_blob_to_encoding_rejects_legacy_format(tmp_path):
     """A non-numpy-sized blob raises instead of falling back to pickle.loads."""
@@ -225,75 +225,13 @@ def TEST_109_blob_to_encoding_rejects_legacy_format(tmp_path):
 
 # ---------------------------------------------------------------------------
 # PersonRecognizer — enroll_named_face
+#
+# Fase 23: PersonRecognizer.enroll_named_face is exercised against mocked
+# FaceEngine/FaceQualityAssessor in tests/test_recognizer_orchestration.py
+# (TEST_enroll_named_face_no_face_returns_none/_registers_new_person/
+# _updates_existing_person) — the dlib-era versions that used to live here,
+# mocking backend.recognizer.fr, are superseded now that fr no longer exists.
 # ---------------------------------------------------------------------------
-
-def _make_mock_fr(face_found: bool = True, distance: float = 0.8, encoding=None):
-    enc = encoding if encoding is not None else np.random.rand(128).astype(np.float64)
-    m = MagicMock()
-    m.face_locations.return_value = [(0, 50, 50, 0)] if face_found else []
-    m.face_encodings.return_value = [enc] if face_found else []
-    m.face_distance.return_value = np.array([distance])
-    return m, enc
-
-
-# ─── Sin cara detectada en la imagen: devuelve None ──────────────────────────
-# Si face_locations no encuentra ninguna cara en el frame o la imagen subida,
-# enroll_named_face debe devolver None sin registrar ninguna persona ni
-# lanzar excepción. El endpoint /api/enroll_face responderá con 422.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_062_enroll_named_face_no_face_returns_none(tmp_path):
-    """Returns None when no face is detected in the provided image."""
-    r = PersonRecognizer(db_path=str(tmp_path / "p.db"))
-    mock_fr, _ = _make_mock_fr(face_found=False)
-    with patch("backend.recognizer.fr", mock_fr):
-        result = r.enroll_named_face(np.zeros((100, 100, 3), dtype=np.uint8), "Bob")
-    assert result is None
-
-
-# ─── Primera enrolación: crea persona nueva con ID positivo ──────────────────
-# Cuando no hay embeddings previos (o la distancia supera TOLERANCE=0.55),
-# _register() inserta una nueva fila en persons y devuelve su id autoincremental.
-# Se verifica que el ID es positivo y que list_persons() incluye el nombre.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_063_enroll_named_face_registers_new_person(tmp_path):
-    """Registers a new person and returns a positive integer ID."""
-    r = PersonRecognizer(db_path=str(tmp_path / "p.db"))
-    mock_fr, _ = _make_mock_fr(face_found=True, distance=0.8)
-    with patch("backend.recognizer.fr", mock_fr):
-        pid = r.enroll_named_face(np.zeros((100, 100, 3), dtype=np.uint8), "Carol")
-    assert pid is not None and pid > 0
-    assert any(p["name"] == "Carol" for p in r.list_persons())
-
-
-# ─── Re-enrolación: actualiza nombre sin crear duplicado ─────────────────────
-# Si la cara ya existe en BD (distancia <= TOLERANCE), enroll_named_face debe
-# actualizar el nombre en lugar de crear una segunda entrada. De lo contrario,
-# la misma persona aparecería dos veces en el panel de personas reconocidas.
-# Se usa el mismo encoding con distancia 0.1 para simular un match seguro.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_064_enroll_named_face_updates_existing_person(tmp_path):
-    """Renames an existing matched person instead of creating a duplicate."""
-    r = PersonRecognizer(db_path=str(tmp_path / "p.db"))
-    enc = np.random.rand(128).astype(np.float64)
-
-    mock_new = MagicMock()
-    mock_new.face_locations.return_value = [(0, 50, 50, 0)]
-    mock_new.face_encodings.return_value = [enc]
-    mock_new.face_distance.return_value = np.array([0.8])
-    with patch("backend.recognizer.fr", mock_new):
-        pid1 = r.enroll_named_face(np.zeros((100, 100, 3), dtype=np.uint8), "Dave")
-
-    mock_upd = MagicMock()
-    mock_upd.face_locations.return_value = [(0, 50, 50, 0)]
-    mock_upd.face_encodings.return_value = [enc]
-    mock_upd.face_distance.return_value = np.array([0.1])
-    with patch("backend.recognizer.fr", mock_upd):
-        pid2 = r.enroll_named_face(np.zeros((100, 100, 3), dtype=np.uint8), "David")
-
-    assert pid1 == pid2
-    persons = r.list_persons()
-    assert any(p["name"] == "David" for p in persons)
-    assert not any(p["name"] == "Dave" for p in persons)
 
 
 # ─── visit_count solo sube si la última visita es antigua ────────────────────
@@ -308,7 +246,7 @@ def TEST_093_visit_count_respects_gap(tmp_path):
     if not r.available:
         pytest.skip("face_recognition not installed")
 
-    enc = np.zeros(128, dtype=np.float64)
+    enc = np.zeros(512, dtype=np.float32)
     with r._lock:
         pid = r._register(enc)
 
@@ -330,336 +268,27 @@ def TEST_093_visit_count_respects_gap(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# PersonRecognizer — quality gates de identify_or_register (MEJORAS.md punto 4)
+# PersonRecognizer — quality gates, consensus, ratio test, face selection,
+# re-verification (MEJORAS.md puntos 4-8)
+#
+# Fase 23: this whole block (TEST_094-105) mocked backend.recognizer.fr
+# (face_recognition/dlib), which no longer exists in the module — recognizer.py
+# now delegates to backend.perception.face.{engine,quality}. Equivalent
+# coverage (quality-gate rejection, consensus buffering, ratio-test ambiguity,
+# same-person-multiple-samples grouping, upper-half face selection,
+# majority-vote re-verification) lives in tests/test_recognizer_orchestration.py,
+# mocking FaceEngine/FaceQualityAssessor instead.
 # ---------------------------------------------------------------------------
-
-_SHARP_FRAME = None
-
-
-def _sharp_frame() -> np.ndarray:
-    """Frame de ruido aleatorio — varianza de Laplaciano altísima (pasa el filtro de blur)."""
-    global _SHARP_FRAME
-    if _SHARP_FRAME is None:
-        rng = np.random.default_rng(42)
-        _SHARP_FRAME = rng.integers(0, 255, (200, 200, 3), dtype=np.uint8)
-    return _SHARP_FRAME
 
 
 def _recog(tmp_path) -> PersonRecognizer:
-    r = PersonRecognizer(db_path=str(tmp_path / "p.db"))
-    if not r.available:
-        pytest.skip("face_recognition not installed")
-    return r
-
-
-# ─── Gate 1: cara demasiado pequeña se descarta ──────────────────────────────
-# Embeddings de caras < MIN_FACE_SIZE px no son fiables y generaban personas
-# fantasma. Una cara de 50×50 (bajo el mínimo de 60) debe descartarse sin
-# registrar nada, devolviendo (None, None, False) para reintentar más tarde.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_094_identify_rejects_small_face(tmp_path):
-    """Faces smaller than MIN_FACE_SIZE are discarded without registering."""
-    r = _recog(tmp_path)
-    m = MagicMock()
-    m.face_locations.return_value = [(0, 50, 50, 0)]  # 50×50 < 60
-    with patch("backend.recognizer.fr", m):
-        result = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 0)
-    assert result == (None, None, False)
-    assert r.list_persons() == []
-    m.face_encodings.assert_not_called()
-
-
-# ─── Gate 2: cara borrosa se descarta ────────────────────────────────────────
-# Un frame uniforme (varianza de Laplaciano = 0) simula desenfoque de
-# movimiento. La cara pasa el filtro de tamaño pero no el de nitidez;
-# no debe llegar a codificarse ni registrarse.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_095_identify_rejects_blurry_face(tmp_path):
-    """Blurry faces (low Laplacian variance) are discarded without registering."""
-    r = _recog(tmp_path)
-    m = MagicMock()
-    m.face_locations.return_value = [(0, 80, 80, 0)]  # 80×80 ≥ 60
-    blurry = np.full((200, 200, 3), 128, dtype=np.uint8)  # uniforme → var 0
-    with patch("backend.recognizer.fr", m):
-        result = r.identify_or_register(blurry, (0, 0, 200, 200), 1, 0)
-    assert result == (None, None, False)
-    assert r.list_persons() == []
-    m.face_encodings.assert_not_called()
-
-
-# ─── Gate 3: consenso de K muestras antes de registrar persona nueva ─────────
-# Antes, una sola cara no reconocida creaba una persona en BD (fantasmas por
-# frames malos). Ahora hacen falta NEW_PERSON_CONSENSUS=3 muestras consistentes
-# de frames distintos del mismo track: los 2 primeros intentos devuelven None
-# y el 3.º registra con is_new=True y las 3 muestras guardadas.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_096_identify_needs_consensus_to_register(tmp_path):
-    """A new person is registered only after 3 consistent samples."""
-    r = _recog(tmp_path)
-    enc = np.random.rand(128).astype(np.float64)
-    m = MagicMock()
-    m.face_locations.return_value = [(0, 80, 80, 0)]
-    m.face_encodings.return_value = [enc]
-    m.face_distance.return_value = np.array([0.1])  # muestras consistentes entre sí
-
-    with patch("backend.recognizer.fr", m):
-        r1 = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 0)
-        r2 = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 30)
-        r3 = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 60)
-
-    assert r1 == (None, None, False)
-    assert r2 == (None, None, False)
-    pid, name, is_new = r3
-    assert pid is not None and is_new is True
-    persons = r.list_persons()
-    assert len(persons) == 1
-    assert persons[0]["sample_count"] == 3  # las 3 muestras del consenso
-
-
-# ─── Gate 3: muestra inconsistente resetea el buffer ─────────────────────────
-# Si la 2.ª muestra difiere de la 1.ª más de CONSENSUS_TOLERANCE (cara de otra
-# persona, o basura), el buffer se resetea: tras 3 intentos no hay registro
-# porque nunca se acumulan 3 muestras consistentes.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_097_identify_inconsistent_sample_resets_buffer(tmp_path):
-    """An inconsistent sample resets the consensus buffer — no registration."""
-    r = _recog(tmp_path)
-    enc = np.random.rand(128).astype(np.float64)
-    m = MagicMock()
-    m.face_locations.return_value = [(0, 80, 80, 0)]
-    m.face_encodings.return_value = [enc]
-    m.face_distance.return_value = np.array([0.9])  # cada muestra difiere de las previas
-
-    with patch("backend.recognizer.fr", m):
-        for fn in (0, 30, 60):
-            result = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, fn)
-            assert result == (None, None, False)
-
-    assert r.list_persons() == []
-
-
-# ─── Match contra persona existente sigue siendo de muestra única ────────────
-# El consenso solo aplica al REGISTRO de personas nuevas. Reconocer a una
-# persona ya en BD debe seguir funcionando al primer intento con una sola
-# muestra buena — es un caso de bajo riesgo y la latencia importa.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_098_identify_existing_person_single_sample(tmp_path):
-    """Matching an already-known person still works on the first attempt."""
-    r = _recog(tmp_path)
-    enc = np.random.rand(128).astype(np.float64)
-    with r._lock:
-        pid = r._register(enc)
-
-    m = MagicMock()
-    m.face_locations.return_value = [(0, 80, 80, 0)]
-    m.face_encodings.return_value = [enc]
-    m.face_distance.return_value = np.array([0.1])  # match seguro
-
-    with patch("backend.recognizer.fr", m):
-        rpid, name, is_new = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 0)
-
-    assert rpid == pid
-    assert is_new is False
-
-
-# ---------------------------------------------------------------------------
-# PersonRecognizer — ratio test y agrupación por persona (MEJORAS.md 5 y 6)
-# ---------------------------------------------------------------------------
-
-def _enc_at_distance(d: float) -> np.ndarray:
-    """Embedding a distancia euclídea exacta *d* del vector cero."""
-    return np.full(128, d / np.sqrt(128), dtype=np.float64)
-
-
-def _real_distance_mock(enc: np.ndarray) -> MagicMock:
-    """Mock de fr con face_distance REAL (numpy) — la geometría no se falsea."""
-    m = MagicMock()
-    m.face_locations.return_value = [(0, 80, 80, 0)]
-    m.face_encodings.return_value = [enc]
-    m.face_distance.side_effect = lambda known, e: np.linalg.norm(
-        np.asarray(known) - e, axis=1
-    )
-    return m
-
-
-# ─── Match ambiguo entre dos personas: no decide ni registra ─────────────────
-# Dos personas conocidas a distancias 0.45 y 0.50 del embedding entrante:
-# ambas dentro de TOLERANCE=0.55 pero separadas menos de MATCH_MARGIN=0.10.
-# Decidir sería arriesgar una identidad falsa; bufferizar arriesgaría
-# registrar un duplicado. El sample se descarta: sin match, sin persona nueva.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_099_ambiguous_match_neither_decides_nor_registers(tmp_path):
-    """Two known persons within MATCH_MARGIN of each other → sample skipped."""
-    r = _recog(tmp_path)
-    enc = np.zeros(128, dtype=np.float64)
-    with r._lock:
-        r._register(_enc_at_distance(0.45))
-        r._register(_enc_at_distance(0.50))
-
-    m = _real_distance_mock(enc)
-    with patch("backend.recognizer.fr", m):
-        for fn in (0, 30, 60):
-            result = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, fn)
-            assert result == (None, None, False)
-
-    assert len(r.list_persons()) == 2  # ninguna persona nueva
-    assert r.get_cached(1) is None     # y ningún match cacheado
-
-
-# ─── Match decisivo con margen suficiente: acepta ────────────────────────────
-# Persona A a 0.30 y persona B a 0.50: margen 0.20 ≥ MATCH_MARGIN.
-# El ratio test debe aceptar a A al primer intento.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_100_decisive_match_with_margin_accepts(tmp_path):
-    """Best person clearly ahead of runner-up → match accepted."""
-    r = _recog(tmp_path)
-    enc = np.zeros(128, dtype=np.float64)
-    with r._lock:
-        pid_a = r._register(_enc_at_distance(0.30))
-        r._register(_enc_at_distance(0.50))
-
-    m = _real_distance_mock(enc)
-    with patch("backend.recognizer.fr", m):
-        rpid, _, is_new = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 0)
-
-    assert rpid == pid_a
-    assert is_new is False
-
-
-# ─── Dos muestras de la MISMA persona no bloquean el ratio test ──────────────
-# Persona A con embeddings a 0.30 y 0.32 (entre sí a 0.02) y persona B a 0.55.
-# Sin agrupación por persona, el "segundo mejor" sería la otra muestra de A
-# (margen 0.02 < 0.10 → rechazo erróneo). Con agrupación (punto 6), el
-# runner-up real es B (margen 0.25) y el match con A se acepta.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_101_same_person_samples_do_not_block_ratio_test(tmp_path):
-    """Ratio test compares persons, not individual samples of the same person."""
-    r = _recog(tmp_path)
-    enc = np.zeros(128, dtype=np.float64)
-    with r._lock:
-        pid_a = r._register(_enc_at_distance(0.30))
-        # segunda muestra de A, solo en memoria — suficiente para el matching
-        r._person_ids.append(pid_a)
-        r._person_names.append(None)
-        r._encodings.append(_enc_at_distance(0.32))
-        r._register(_enc_at_distance(0.55))
-
-    m = _real_distance_mock(enc)
-    with patch("backend.recognizer.fr", m):
-        rpid, _, is_new = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 0)
-
-    assert rpid == pid_a
-    assert is_new is False
-
-
-# ---------------------------------------------------------------------------
-# PersonRecognizer — selección de cara y re-verificación (MEJORAS.md 7 y 8)
-# ---------------------------------------------------------------------------
-
-# ─── Punto 7: se elige la cara de la mitad superior, no la mayor ─────────────
-# El bbox de la persona trackeada tiene su cabeza en la mitad superior del
-# crop. Una cara MÁS GRANDE pero en la mitad inferior (otra persona por
-# detrás, solapando el bbox) no debe ganar. Se verifica qué localización
-# llega a face_encodings.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_102_select_face_prefers_upper_half(tmp_path):
-    """A bigger face in the lower half loses to the tracked person's face."""
-    r = _recog(tmp_path)
-    upper_face = (0, 70, 70, 0)        # 70×70, centro y=35 (mitad superior)
-    lower_face = (110, 199, 199, 110)  # 89×89, centro y=154 (mitad inferior)
-    enc = np.random.rand(128).astype(np.float64)
-    m = MagicMock()
-    m.face_locations.return_value = [lower_face, upper_face]
-    m.face_encodings.return_value = [enc]
-    m.face_distance.return_value = np.array([0.1])
-
-    with patch("backend.recognizer.fr", m):
-        r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 0)
-
-    m.face_encodings.assert_called_once()
-    assert m.face_encodings.call_args.kwargs["known_face_locations"] == [upper_face]
-
-
-# ─── Punto 8: la re-verificación corrige un primer match erróneo ─────────────
-# Frame 0: match con persona A → cacheado. Frames 300 y 600 (re-verify):
-# la cara matchea con B. Votos [A,B] → empate, gana A (sin flip prematuro);
-# votos [A,B,B] → mayoría B, la cache se corrige y se devuelve B.
-# Antes del fix, el primer match se quedaba pegado al track para siempre.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_103_reverify_corrects_wrong_identity(tmp_path):
-    """Majority vote flips the cached identity after repeated disagreement."""
-    r = _recog(tmp_path)
-    enc_a = np.zeros(128, dtype=np.float64)
-    enc_b = _enc_at_distance(1.0)
-    with r._lock:
-        pid_a = r._register(enc_a)
-        pid_b = r._register(enc_b)
-
-    m = _real_distance_mock(enc_a)
-    with patch("backend.recognizer.fr", m):
-        rpid, _, _ = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 0)
-        assert rpid == pid_a
-
-        m.face_encodings.return_value = [enc_b]  # a partir de aquí la cara es B
-        rv = r.REVERIFY_INTERVAL
-        r2, _, _ = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, rv)
-        assert r2 == pid_a                      # empate [A,B] → sin flip
-        assert r.get_cached(1) == (pid_a, None)
-
-        r3, _, _ = r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 2 * rv)
-        assert r3 == pid_b                      # mayoría [A,B,B] → corrige
-        assert r.get_cached(1) == (pid_b, None)
-
-
-# ─── Punto 8: track cacheado no respeta RECOG_INTERVAL sino REVERIFY ─────────
-# Tras identificar, los intentos antes de REVERIFY_INTERVAL no deben ni
-# llegar a la detección de caras (ahorro de CPU): face_locations no se llama.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_104_cached_track_waits_reverify_interval(tmp_path):
-    """No face detection runs on a cached track before REVERIFY_INTERVAL."""
-    r = _recog(tmp_path)
-    enc = np.zeros(128, dtype=np.float64)
-    with r._lock:
-        r._register(enc)
-
-    m = _real_distance_mock(enc)
-    with patch("backend.recognizer.fr", m):
-        r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 0)
-        m.face_locations.reset_mock()
-        result = r.identify_or_register(
-            _sharp_frame(), (0, 0, 200, 200), 1, r.RECOG_INTERVAL + 1
-        )
-
-    assert result == (None, None, False)
-    m.face_locations.assert_not_called()
-
-
-# ─── Punto 8: cara desconocida en re-verify no crea persona nueva ────────────
-# Un track ya identificado cuya cara deja de matchear (oclusión, otra persona
-# cruzando por delante del bbox) NO debe alimentar el buffer de consenso ni
-# registrar una persona nueva: la identidad cacheada se mantiene.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_105_reverify_unknown_face_does_not_register(tmp_path):
-    """An unknown face during re-verify never seeds a new person."""
-    r = _recog(tmp_path)
-    enc_a = np.zeros(128, dtype=np.float64)
-    with r._lock:
-        pid_a = r._register(enc_a)
-
-    m = _real_distance_mock(enc_a)
-    with patch("backend.recognizer.fr", m):
-        r.identify_or_register(_sharp_frame(), (0, 0, 200, 200), 1, 0)
-
-        m.face_encodings.return_value = [_enc_at_distance(0.9)]  # desconocida
-        rv = r.REVERIFY_INTERVAL
-        for k in (1, 2, 3):
-            result = r.identify_or_register(
-                _sharp_frame(), (0, 0, 200, 200), 1, k * rv
-            )
-            assert result == (None, None, False)
-
-    assert len(r.list_persons()) == 1          # sin personas nuevas
-    assert r.get_cached(1) == (pid_a, None)    # identidad intacta
+    """A PersonRecognizer with a mocked (always-available) FaceEngine —
+    used by tests below that exercise internals unrelated to face detection
+    itself (should_attempt, prune, purge_unnamed)."""
+    engine = MagicMock()
+    engine.available = True
+    with patch("backend.recognizer.FaceEngine", return_value=engine):
+        return PersonRecognizer(db_path=str(tmp_path / "p.db"))
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +327,7 @@ def TEST_107_prune_drops_inactive_track_state(tmp_path):
     r._cache[2] = (2, None)
     r._last_attempt[1] = 10
     r._last_attempt[2] = 20
-    r._pending[2] = [np.zeros(128)]
+    r._pending[2] = [np.zeros(512, dtype=np.float32)]
     r._votes[2] = _deque([2], maxlen=r.VOTE_WINDOW)
 
     r.prune({1})
@@ -718,10 +347,11 @@ def TEST_107_prune_drops_inactive_track_state(tmp_path):
 def TEST_108_purge_unnamed_removes_stale_single_visit(tmp_path):
     """Stale unnamed one-visit persons are purged; named/recent ones survive."""
     r = _recog(tmp_path)
+    rng = np.random.default_rng(0)
     with r._lock:
-        pid_old = r._register(_enc_at_distance(0.30))
-        pid_named = r._register(_enc_at_distance(0.50))
-        pid_recent = r._register(_enc_at_distance(0.70))
+        pid_old = r._register(rng.standard_normal(512).astype(np.float32))
+        pid_named = r._register(rng.standard_normal(512).astype(np.float32))
+        pid_recent = r._register(rng.standard_normal(512).astype(np.float32))
     r._conn.execute(
         "UPDATE persons SET last_seen=datetime('now','-40 days') WHERE id IN (?,?)",
         (pid_old, pid_named),
@@ -740,21 +370,11 @@ def TEST_108_purge_unnamed_removes_stale_single_visit(tmp_path):
     assert r.purge_unnamed(0) == 0
 
 
-# ─── Sin librería face_recognition: devuelve None inmediatamente ─────────────
-# En sistemas donde dlib/face_recognition no está instalado, PersonRecognizer.
-# _available es False. enroll_named_face debe devolver None sin intentar
-# llamar a fr.*, lo que causaría NameError o AttributeError.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_065_enroll_named_face_unavailable_returns_none(tmp_path):
-    """Returns None immediately when face_recognition library is unavailable."""
-    r = PersonRecognizer(db_path=str(tmp_path / "p.db"))
-    r._available = False
-    result = r.enroll_named_face(np.zeros((100, 100, 3), dtype=np.uint8), "Eve")
-    assert result is None
-
-
 # ---------------------------------------------------------------------------
 # API — POST /api/enroll_face
+#
+# "Sin face_recognition, enroll_named_face devuelve None inmediatamente" is
+# now tests/test_recognizer_orchestration.py::TEST_enroll_named_face_unavailable_returns_none.
 # ---------------------------------------------------------------------------
 
 import httpx

@@ -1,4 +1,11 @@
-"""Persistent face recognition — identifies persons across sessions."""
+"""Persistent face recognition — identifies persons across sessions.
+
+Fase 23: orquesta backend/perception/face/{engine,quality,index}.py
+(ArcFace/buffalo_s via insightface) instead of calling face_recognition/dlib
+directly. The business logic below (consensus buffering, majority-vote
+re-verification, ratio-test ambiguity handling) is unchanged from the dlib
+era — only the underlying detection/embedding/matching primitives changed.
+"""
 
 from __future__ import annotations
 
@@ -8,24 +15,21 @@ import threading
 from collections import Counter, deque
 from pathlib import Path
 
-import cv2
 import numpy as np
+
+from backend.perception.face.engine import FaceCandidate, FaceEngine
+from backend.perception.face.index import IdentityIndex
+from backend.perception.face.quality import FaceQualityAssessor
 
 logger = logging.getLogger(__name__)
 
-try:
-    import face_recognition as fr
-    _AVAILABLE = True
-except ImportError:
-    _AVAILABLE = False
-    logger.warning("face_recognition not installed — person re-ID disabled. "
-                   "Windows/Python 3.12: install a pre-built dlib wheel first, "
-                   "then `pip install face-recognition`.")
+_EMBEDDING_DIM = 512
+_EMBEDDING_DTYPE = np.float32
 
 
 class PersonRecognizer:
     """
-    Detects faces inside person bounding-box crops, extracts 128-dim dlib
+    Detects faces inside person bounding-box crops, extracts 512-dim ArcFace
     embeddings, and matches them against a persistent SQLite store.
 
     Multiple embeddings per person are supported: each call to enroll_named_face
@@ -39,27 +43,27 @@ class PersonRecognizer:
     and stops retrying once a face has been successfully linked to that id.
     """
 
-    TOLERANCE = 0.55        # euclidean distance threshold (lower = stricter)
-    MATCH_MARGIN = 0.10     # min distance gap over the runner-up person (ratio test)
+    MATCH_MARGIN = 0.10     # min similarity gap over the runner-up person (ratio test)
     RECOG_INTERVAL = 30     # frames between attempts for unidentified tracker IDs
     REVERIFY_INTERVAL = 300  # frames between identity re-checks for identified tracks
     VOTE_WINDOW = 5         # majority vote over the last N decisive matches per track
     MAX_EMBEDDINGS_PER_PERSON = 20  # cap to keep matching fast
     VISIT_GAP_MINUTES = 5   # min gap since last_seen for a match to count as a new visit
 
-    # Quality gates for automatic registration (identify_or_register only —
-    # manual enrollment via enroll_named_face bypasses them on purpose):
-    MIN_FACE_SIZE = 60          # px — embeddings from smaller faces are unreliable
-    BLUR_THRESHOLD = 60.0       # min Laplacian variance of the face crop
+    # Consensus gate for automatic registration (identify_or_register only —
+    # manual enrollment via enroll_named_face bypasses it on purpose):
     NEW_PERSON_CONSENSUS = 3    # consistent samples required to register a new person
-    CONSENSUS_TOLERANCE = 0.40  # max distance between samples in the pending buffer
-    # MEJORAS.md punto 9.1: below this crop side (px), HOG runs with an extra
-    # upsample pass — more detections on small/distant persons, at CPU cost
-    # paid only for small crops (the recognition worker absorbs it).
-    SMALL_CROP_PX = 240
+    CONSENSUS_TOLERANCE = 0.30  # min cosine similarity between samples in the pending buffer
 
-    def __init__(self, db_path: str = "data/persons.db") -> None:
-        self._available = _AVAILABLE
+    def __init__(
+        self,
+        db_path: str = "data/persons.db",
+        match_threshold: float = 0.45,
+        confirm_threshold: float = 0.55,
+        min_face_size_px: int = 60,
+        max_blur: float = 100.0,
+        max_yaw_deg: float = 40.0,
+    ) -> None:
         self._lock = threading.Lock()
         # tracker_id → (person_id, name)  — populated once face is matched
         self._cache: dict[int, tuple[int, str | None]] = {}
@@ -69,6 +73,16 @@ class PersonRecognizer:
         self._pending: dict[int, list[np.ndarray]] = {}
         # tracker_id → last VOTE_WINDOW matched person_ids (identity majority vote)
         self._votes: dict[int, deque[int]] = {}
+
+        self._match_threshold = match_threshold
+        self._confirm_threshold = confirm_threshold  # reserved for Fase 24's TemporalVoter
+
+        self._engine = FaceEngine()
+        self._quality = FaceQualityAssessor(
+            min_size_px=min_face_size_px, max_blur=max_blur, max_yaw_deg=max_yaw_deg
+        )
+        self._index = IdentityIndex()
+        self._available = self._engine.available
 
         if not self._available:
             return
@@ -139,8 +153,8 @@ class PersonRecognizer:
         self, crop_bgr: np.ndarray, tracker_id: int
     ) -> tuple[int | None, str | None, bool]:
         """
-        Run face detection + matching on a person crop (the expensive dlib
-        path, 100-500 ms on CPU). Safe to call from a worker thread.
+        Run face detection + matching on a person crop (the ArcFace path).
+        Safe to call from a worker thread.
 
         Returns (person_id, name, is_new):
           - person_id=None  → no usable face yet (none detected, failed a
@@ -149,11 +163,12 @@ class PersonRecognizer:
           - is_new=True     → consensus reached, person just registered
           - is_new=False    → recognised an existing person
 
-        Quality gates (MEJORAS.md punto 4): faces smaller than MIN_FACE_SIZE
-        or blurrier than BLUR_THRESHOLD are discarded, and a NEW person is
-        only registered after NEW_PERSON_CONSENSUS mutually-consistent
-        samples from distinct frames of the same track. Matching against
-        already-known persons needs a single good sample, as before.
+        Quality gates (MEJORAS.md punto 4, now FaceQualityAssessor): faces
+        smaller than face_min_size_px or blurrier than face_max_blur are
+        discarded, and a NEW person is only registered after
+        NEW_PERSON_CONSENSUS mutually-consistent samples from distinct
+        frames of the same track. Matching against already-known persons
+        needs a single good sample, as before.
 
         Identified tracks are re-verified every REVERIFY_INTERVAL frames
         (MEJORAS.md punto 8): each decisive match casts a vote, and the
@@ -163,37 +178,24 @@ class PersonRecognizer:
         """
         if not self._available or crop_bgr.size == 0:
             return None, None, False
-        crop = crop_bgr
 
-        rgb = np.ascontiguousarray(crop[:, :, ::-1])
-        upsample = 2 if min(crop.shape[:2]) < self.SMALL_CROP_PX else 1
-        locs = fr.face_locations(
-            rgb, number_of_times_to_upsample=upsample, model="hog"
-        )
-        if not locs:
+        candidates = self._engine.detect(crop_bgr)
+        if not candidates:
+            return None, None, False
+        cand = self._select_face(candidates, crop_bgr.shape[0])
+
+        x1, y1, x2, y2 = cand.bbox
+        face_crop = crop_bgr[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
+        if face_crop.size == 0:
+            return None, None, False
+        local_kps = cand.kps - np.array([x1, y1], dtype=cand.kps.dtype)
+        quality = self._quality.assess(face_crop, local_kps)
+        if not quality.passed:
             return None, None, False
 
-        # Gate 1 — minimum face size
-        locs = [
-            loc for loc in locs
-            if (loc[2] - loc[0]) >= self.MIN_FACE_SIZE
-            and (loc[1] - loc[3]) >= self.MIN_FACE_SIZE
-        ]
-        if not locs:
+        enc = self._engine.embed(crop_bgr, cand)
+        if enc is None:
             return None, None, False
-        top, right, bottom, left = self._select_face(locs, crop.shape[0])
-
-        # Gate 2 — blur filter on the face region
-        gray = cv2.cvtColor(rgb[top:bottom, left:right], cv2.COLOR_RGB2GRAY)
-        if cv2.Laplacian(gray, cv2.CV_64F).var() < self.BLUR_THRESHOLD:
-            return None, None, False
-
-        encodings = fr.face_encodings(
-            rgb, known_face_locations=[(top, right, bottom, left)]
-        )
-        if not encodings:
-            return None, None, False
-        enc = encodings[0]
 
         with self._lock:
             cached = self._cache.get(tracker_id)
@@ -228,7 +230,7 @@ class PersonRecognizer:
             # An inconsistent sample resets the buffer: it was either an
             # outlier or the earlier samples were junk.
             buf = self._pending.setdefault(tracker_id, [])
-            if buf and float(np.max(fr.face_distance(buf, enc))) > self.CONSENSUS_TOLERANCE:
+            if buf and min(float(np.dot(b, enc)) for b in buf) < self.CONSENSUS_TOLERANCE:
                 buf.clear()
             buf.append(enc)
             if len(buf) < self.NEW_PERSON_CONSENSUS:
@@ -238,11 +240,12 @@ class PersonRecognizer:
             for extra in buf[1:]:
                 self._conn.execute(
                     "INSERT INTO face_encodings (person_id, encoding) VALUES (?, ?)",
-                    (pid, extra.tobytes()),
+                    (pid, extra.astype(_EMBEDDING_DTYPE).tobytes()),
                 )
                 self._person_ids.append(pid)
                 self._person_names.append(None)
                 self._encodings.append(extra)
+                self._index.add(pid, extra)
             self._conn.commit()
             del self._pending[tracker_id]
             self._cache[tracker_id] = (pid, None)
@@ -257,27 +260,26 @@ class PersonRecognizer:
 
         Uses plain nearest-neighbour matching on purpose (no ratio test):
         enrollment is user-driven, and rejecting an ambiguous match here
-        would create a duplicate of the very person being named.
+        would create a duplicate of the very person being named. Also skips
+        the quality gate on purpose — the user chose this image deliberately.
 
         Returns the person_id, or None if no face detected.
         """
         if not self._available:
             return None
-        rgb = np.ascontiguousarray(image_bgr[:, :, ::-1])
-        locs = fr.face_locations(rgb, model="hog")
-        if not locs:
+        candidates = self._engine.detect(image_bgr)
+        if not candidates:
             return None
-        encodings = fr.face_encodings(rgb, known_face_locations=locs)
-        if not encodings:
+        cand = max(candidates, key=lambda c: c.det_score)
+        enc = self._engine.embed(image_bgr, cand)
+        if enc is None:
             return None
-        enc = encodings[0]
 
         with self._lock:
             if self._encodings:
-                dists = fr.face_distance(self._encodings, enc)
-                best = int(np.argmin(dists))
-                if dists[best] <= self.TOLERANCE:
-                    pid = self._person_ids[best]
+                results = self._index.search(enc, top_k=1)
+                if results and results[0][1] >= self._match_threshold:
+                    pid = results[0][0]
                     # Update name on all in-memory entries for this person
                     for i, p in enumerate(self._person_ids):
                         if p == pid:
@@ -286,7 +288,7 @@ class PersonRecognizer:
                     # Add new embedding sample if under the cap
                     count = self._person_ids.count(pid)
                     if count < self.MAX_EMBEDDINGS_PER_PERSON:
-                        blob = enc.tobytes()
+                        blob = enc.astype(_EMBEDDING_DTYPE).tobytes()
                         self._conn.execute(
                             "INSERT INTO face_encodings (person_id, encoding) VALUES (?, ?)",
                             (pid, blob),
@@ -294,6 +296,7 @@ class PersonRecognizer:
                         self._person_ids.append(pid)
                         self._person_names.append(name)
                         self._encodings.append(enc)
+                        self._index.add(pid, enc)
                         logger.info(
                             "PersonRecognizer: added embedding sample %d/%d for person id=%d name=%s",
                             count + 1, self.MAX_EMBEDDINGS_PER_PERSON, pid, name,
@@ -381,6 +384,7 @@ class PersonRecognizer:
             self._person_ids = [p for p, _, _ in kept]
             self._person_names = [n for _, n, _ in kept]
             self._encodings = [e for _, _, e in kept]
+            self._index.rebuild(list(zip(self._person_ids, self._encodings)))
             for tid, (pid, _) in list(self._cache.items()):
                 if pid in gone:
                     del self._cache[tid]
@@ -392,9 +396,7 @@ class PersonRecognizer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _select_face(
-        locs: list[tuple[int, int, int, int]], crop_height: int
-    ) -> tuple[int, int, int, int]:
+    def _select_face(candidates: list[FaceCandidate], crop_height: int) -> FaceCandidate:
         """
         Pick the face belonging to the tracked person (MEJORAS.md punto 7).
 
@@ -403,14 +405,14 @@ class PersonRecognizer:
         largest face whose center lies in the upper half of the crop; only
         if none qualifies, fall back to the largest face overall.
         """
-        def area(loc: tuple[int, int, int, int]) -> int:
-            top, right, bottom, left = loc
-            return (bottom - top) * (right - left)
+        def area(cand: FaceCandidate) -> int:
+            x1, y1, x2, y2 = cand.bbox
+            return (y2 - y1) * (x2 - x1)
 
         upper = [
-            loc for loc in locs if (loc[0] + loc[2]) / 2 < crop_height / 2
+            c for c in candidates if (c.bbox[1] + c.bbox[3]) / 2 < crop_height / 2
         ]
-        return max(upper or locs, key=area)
+        return max(upper or candidates, key=area)
 
     def _name_of(self, person_id: int) -> str | None:
         """Name of *person_id*, or None. Must be called with ``_lock`` held."""
@@ -425,35 +427,31 @@ class PersonRecognizer:
 
         Returns ``(person_id, name, ambiguous)``:
           - person_id set   → decisive match
-          - ambiguous=True  → a candidate exists within TOLERANCE but the
-                              runner-up person is closer than MATCH_MARGIN —
-                              too risky to decide either way
+          - ambiguous=True  → a candidate exists above match_threshold but the
+                              runner-up person is within MATCH_MARGIN — too
+                              risky to decide either way
           - both falsy      → genuinely unknown face
 
-        Distances are grouped per person (MEJORAS.md punto 6): a person's
-        score is the minimum distance among their embeddings, so a person
+        Similarities are grouped per person (MEJORAS.md punto 6): a person's
+        score is the MAXIMUM similarity among their embeddings, so a person
         with many samples gets no extra nearest-neighbour "tickets" and the
         ratio test (punto 5) compares *persons*, never two samples of the
         same person.
         """
-        if not self._encodings:
+        if not self._person_ids:
             return None, None, False
-        dists = fr.face_distance(self._encodings, enc)
+        results = self._index.search(enc, top_k=len(self._person_ids))
         best_per_person: dict[int, float] = {}
-        for pid, d in zip(self._person_ids, dists):
-            d = float(d)
-            if d < best_per_person.get(pid, float("inf")):
-                best_per_person[pid] = d
-        ranked = sorted(best_per_person.items(), key=lambda kv: kv[1])
-        best_pid, best_d = ranked[0]
-        if best_d > self.TOLERANCE:
+        for pid, sim in results:
+            if sim > best_per_person.get(pid, float("-inf")):
+                best_per_person[pid] = sim
+        ranked = sorted(best_per_person.items(), key=lambda kv: -kv[1])
+        best_pid, best_sim = ranked[0]
+        if best_sim < self._match_threshold:
             return None, None, False
-        if len(ranked) > 1 and ranked[1][1] - best_d < self.MATCH_MARGIN:
+        if len(ranked) > 1 and (best_sim - ranked[1][1]) < self.MATCH_MARGIN:
             return None, None, True
-        name = next(
-            n for p, n in zip(self._person_ids, self._person_names) if p == best_pid
-        )
-        return best_pid, name, False
+        return best_pid, self._name_of(best_pid), False
 
     def _init_db(self) -> None:
         self._conn.executescript("""
@@ -477,27 +475,30 @@ class PersonRecognizer:
 
     @staticmethod
     def _blob_to_encoding(blob: bytes) -> np.ndarray:
-        """Deserialize a numpy-format embedding blob.
+        """Deserialize a numpy-format ArcFace embedding blob (512 float32).
 
-        Blobs must already be in raw numpy float64 format — run
-        scripts/migrate_embeddings.py once against the database before
-        upgrading if it may still hold blobs from the old serialization format.
+        Blobs must already be in this format — run scripts/reenroll.py once
+        against the database before upgrading if it may still hold 128-d
+        legacy-format blobs (dlib embeddings are not convertible to ArcFace
+        space; re-enrollment from data/gallery/ is the only path).
         """
-        _NUMPY_SIZE = 128 * 8  # 128 float64 values = 1024 bytes
-        if len(blob) != _NUMPY_SIZE:
+        expected_size = _EMBEDDING_DIM * np.dtype(_EMBEDDING_DTYPE).itemsize
+        if len(blob) != expected_size:
             raise ValueError(
-                f"Embedding blob has unexpected size {len(blob)} bytes (expected {_NUMPY_SIZE}). "
-                "Run scripts/migrate_embeddings.py to convert legacy-format blobs first."
+                f"Embedding blob has unexpected size {len(blob)} bytes (expected {expected_size}). "
+                "Run scripts/reenroll.py to rebuild embeddings in ArcFace format first."
             )
-        return np.frombuffer(blob, dtype=np.float64)
+        return np.frombuffer(blob, dtype=_EMBEDDING_DTYPE)
 
     def _load(self) -> None:
         # Primary embeddings (one per person, stored in persons table)
         cur = self._conn.execute("SELECT id, name, encoding FROM persons")
         for pid, name, blob in cur.fetchall():
+            enc = self._blob_to_encoding(blob)
             self._person_ids.append(pid)
             self._person_names.append(name)
-            self._encodings.append(self._blob_to_encoding(blob))
+            self._encodings.append(enc)
+            self._index.add(pid, enc)
 
         # Additional embeddings added via enroll_named_face
         cur = self._conn.execute(
@@ -506,9 +507,11 @@ class PersonRecognizer:
             "ORDER BY fe.person_id, fe.id"
         )
         for feid, pid, name, blob in cur.fetchall():
+            enc = self._blob_to_encoding(blob)
             self._person_ids.append(pid)
             self._person_names.append(name)
-            self._encodings.append(self._blob_to_encoding(blob))
+            self._encodings.append(enc)
+            self._index.add(pid, enc)
 
         persons_count = len(set(self._person_ids))
         logger.info(
@@ -517,7 +520,7 @@ class PersonRecognizer:
         )
 
     def _register(self, encoding: np.ndarray) -> int:
-        blob = encoding.tobytes()
+        blob = encoding.astype(_EMBEDDING_DTYPE).tobytes()
         cur = self._conn.execute(
             "INSERT INTO persons (encoding) VALUES (?)", (blob,)
         )
@@ -526,6 +529,7 @@ class PersonRecognizer:
         self._person_ids.append(pid)
         self._person_names.append(None)
         self._encodings.append(encoding)
+        self._index.add(pid, encoding)
         logger.info("PersonRecognizer: new person registered id=%d", pid)
         return pid
 

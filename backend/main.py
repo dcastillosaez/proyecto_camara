@@ -296,7 +296,14 @@ async def lifespan(app: FastAPI):
         ),
         frame_rate=settings.tracker_frame_rate,
     )
-    recognizer = PersonRecognizer(db_path=settings.db_path.replace("events.db", "persons.db"))
+    recognizer = PersonRecognizer(
+        db_path=settings.db_path.replace("events.db", "persons.db"),
+        match_threshold=settings.face_match_threshold,
+        confirm_threshold=settings.face_confirm_threshold,
+        min_face_size_px=settings.face_min_size_px,
+        max_blur=settings.face_max_blur,
+        max_yaw_deg=settings.face_max_yaw_deg,
+    )
 
     # Ensure gallery directory exists
     import os as _os
@@ -822,7 +829,7 @@ async def enroll_face(
     if rtsp_stream is None or rtsp_stream.recognizer is None:
         raise HTTPException(status_code=503, detail="Recognizer not available")
     if not rtsp_stream.recognizer.available:
-        raise HTTPException(status_code=503, detail="face_recognition library not installed")
+        raise HTTPException(status_code=503, detail="Face recognition engine not available")
 
     if use_current_frame or image is None:
         frame = rtsp_stream.get_frame()
