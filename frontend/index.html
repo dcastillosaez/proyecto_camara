@@ -1764,12 +1764,18 @@
       vid.play().catch(() => {});
     }
 
-    document.getElementById('clip-modal').addEventListener('click', e => {
-      if (e.target === e.currentTarget || e.target.id === 'clip-modal-close') {
-        const vid = document.getElementById('clip-video');
-        vid.pause(); vid.src = '';
-        document.getElementById('clip-modal').classList.remove('open');
-      }
+    // clip-modal is declared later in the body than this script tag, so its
+    // listener must wait for the full document to parse — otherwise this
+    // throws immediately and halts every script line after it (including
+    // the observability panel polling further down).
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('clip-modal').addEventListener('click', e => {
+        if (e.target === e.currentTarget || e.target.id === 'clip-modal-close') {
+          const vid = document.getElementById('clip-video');
+          vid.pause(); vid.src = '';
+          document.getElementById('clip-modal').classList.remove('open');
+        }
+      });
     });
 
     document.addEventListener('keydown', e => {

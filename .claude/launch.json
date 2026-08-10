@@ -3,10 +3,10 @@
   "configurations": [
     {
       "name": "Tapo Dashboard (FastAPI)",
-      "runtimeExecutable": ".venv/Scripts/python",
-      "runtimeArgs": ["-m", "uvicorn", "backend.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
+      "runtimeExecutable": "F:/Documentos/IA/Proyecto_Camara/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"],
       "port": 8000,
-      "cwd": "F:/Documentos/IA/Proyecto_Camara"
+      "cwd": "F:/Documentos/IA/Proyecto_Camara/.claude/worktrees/event-engine-schema-v2-653038"
     }
   ]
 }
