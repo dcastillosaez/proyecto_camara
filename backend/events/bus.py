@@ -34,8 +34,19 @@ class EventBus:
         self._subscribers.pop(name, None)
 
     def _ensure_consumer(self) -> None:
-        if self._consumer_task is None or self._consumer_task.done():
-            self._consumer_task = asyncio.ensure_future(self._consume())
+        if self._consumer_task is not None and not self._consumer_task.done():
+            return
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # _enqueue() called with no loop running and none injected at
+                # construction (e.g. a synchronous caller exercising the queue
+                # directly). The event is still queued; delivery resumes once
+                # a consumer gets scheduled from a running loop.
+                return
+        self._consumer_task = loop.create_task(self._consume())
 
     def _enqueue(self, event: Event) -> None:
         self._ensure_consumer()
