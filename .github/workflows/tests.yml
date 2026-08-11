@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# El job solo hace checkout, instala dependencias, ejecuta tests y sube el
+# reporte como artefacto — no necesita escribir en el repo.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

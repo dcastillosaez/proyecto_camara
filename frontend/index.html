@@ -1074,18 +1074,26 @@
         const arrow = dir === 'in'
           ? '<polyline points="18 15 12 9 6 15"/>'
           : '<polyline points="6 9 12 15 18 9"/>';
+        // dir/ts/personName/total llegan del backend (WS/API) — nunca se
+        // interpolan como HTML: se asignan via textContent tras montar la
+        // estructura estatica, para que un person_name con marcado no pueda
+        // ejecutarse en el navegador de otro operador (CodeQL js/xss).
         const nameTag = personName
-          ? `<span class="text-slate-400 text-xs truncate max-w-[60px]">${personName}</span>`
+          ? `<span class="ev-name text-slate-400 text-xs truncate max-w-[60px]"></span>`
           : '';
         const intrusionTag = isIntrusion ? `<span class="intrusion-badge">INTRUSIÓN</span>` : '';
         item.innerHTML = `
           <svg class="w-3.5 h-3.5 flex-shrink-0 ${color}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">${arrow}</svg>
-          <span class="${color} font-semibold uppercase text-xs w-6">${dir}</span>
-          <span class="text-slate-400 flex-1 mono text-xs">${ts}</span>
+          <span class="ev-dir ${color} font-semibold uppercase text-xs w-6"></span>
+          <span class="ev-ts text-slate-400 flex-1 mono text-xs"></span>
           ${nameTag}
           ${intrusionTag}
-          <span class="text-slate-600 text-xs tabular-nums">#${total}</span>
+          <span class="ev-total text-slate-600 text-xs tabular-nums"></span>
         `;
+        item.querySelector('.ev-dir').textContent = dir;
+        item.querySelector('.ev-ts').textContent = ts;
+        item.querySelector('.ev-total').textContent = `#${total}`;
+        if (personName) item.querySelector('.ev-name').textContent = personName;
         list.prepend(item);
         while (list.children.length > 50) list.lastChild.remove();
         document.getElementById('events-badge').textContent = total;
@@ -1349,23 +1357,38 @@
       const st   = r.upload_status ?? 'pending';
       const col  = STATUS_COLOR[st] ?? 'text-slate-400';
       const lbl  = STATUS_LABEL[st] ?? st;
-      const link = r.gdrive_id
-        ? `<a href="https://drive.google.com/file/d/${r.gdrive_id}/view" target="_blank" rel="noopener" class="text-blue-400 hover:text-blue-300 text-xs ml-1" aria-label="Ver en Drive">↗</a>`
-        : '';
       const row  = document.createElement('div');
       row.className = 'rec-row flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-slate-800 border border-slate-700';
       row.dataset.filename = r.filename;
+      // r.filename/r.gdrive_id llegan del backend — se asignan via
+      // propiedades del DOM (dataset/href/textContent), nunca interpolados
+      // en innerHTML, para que un filename con marcado no se ejecute
+      // (CodeQL js/xss).
       row.innerHTML = `
         <div class="flex items-center gap-2 min-w-0">
-          <button class="btn-play-clip flex-shrink-0 text-slate-500 hover:text-blue-400 transition-colors cursor-pointer" data-src="/clips/${r.filename}" aria-label="Reproducir clip">
+          <button class="btn-play-clip flex-shrink-0 text-slate-500 hover:text-blue-400 transition-colors cursor-pointer" aria-label="Reproducir clip">
             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           </button>
-          <span class="text-xs text-slate-300 truncate max-w-[110px]" title="${r.filename}">${r.filename.replace('clip_', '')}</span>
+          <span class="rec-name text-xs text-slate-300 truncate max-w-[110px]"></span>
         </div>
         <div class="flex items-center gap-1 flex-shrink-0">
-          <span class="rec-status text-xs ${col}">${lbl}</span>${link}
+          <span class="rec-status text-xs ${col}"></span>
           <span class="text-slate-600 text-xs ml-1">${ts}</span>
         </div>`;
+      row.querySelector('.btn-play-clip').dataset.src = `/clips/${r.filename}`;
+      const nameSpan = row.querySelector('.rec-name');
+      nameSpan.textContent = r.filename.replace('clip_', '');
+      nameSpan.title = r.filename;
+      row.querySelector('.rec-status').textContent = lbl;
+      if (r.gdrive_id) {
+        const link = document.createElement('a');
+        link.href = `https://drive.google.com/file/d/${r.gdrive_id}/view`;
+        link.target = '_blank'; link.rel = 'noopener';
+        link.className = 'text-blue-400 hover:text-blue-300 text-xs ml-1';
+        link.setAttribute('aria-label', 'Ver en Drive');
+        link.textContent = '↗';
+        row.querySelector('.rec-status').insertAdjacentElement('afterend', link);
+      }
       return row;
     }
 
