@@ -12,11 +12,12 @@
 
 | Documento | Rol |
 |-----------|-----|
-| `propuesta_mejora/SPEC_v2.md` (este) | **Referencia**: arquitectura objetivo, decisiones técnicas, contratos de módulo, modelo de datos, catálogo de eventos, detalle ejecutable por fase |
-| `.planning/ROADMAP.md` § v2.0 | **Gestión**: fases GSD 17-38 con dependencias y criterios de éxito |
+| `propuesta_mejora/SPEC_v2.md` (este) | **Referencia técnica**: arquitectura objetivo, decisiones técnicas, contratos de módulo, modelo de datos, catálogo de eventos; en §9, ficheros y riesgos por fase |
+| `.planning/ROADMAP.md` § v2.0 | **Plan**: fases GSD 17-38 con goal, dependencias, requisitos y criterios de éxito |
+| `.planning/STATE.md` | **Estado**: qué fase está completa, cuál falta y qué checkpoints quedan pendientes |
 | `.planning/REQUIREMENTS.md` § v2 | **Trazabilidad**: requisitos con ID estable referenciados por cada fase |
 
-Cada fase de la sección 9 es directamente convertible en `.planning/phases/NN-nombre/NN-01-PLAN.md` sin diseño adicional.
+Cada fase de la sección 9, combinada con su entrada en `ROADMAP.md` § Phase Details v2.0, es directamente convertible en `.planning/phases/NN-nombre/NN-01-PLAN.md` sin diseño adicional.
 
 **Regla de oro del milestone:** ninguna fase puede romper la funcionalidad v1.2 en producción. Todo cambio estructural entra detrás de un flag de configuración con default = comportamiento v1, y el flag se invierte a default v2 solo cuando la fase pasa su verificación.
 
@@ -776,19 +777,11 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 # FASE A — ROBUSTEZ (fases 17-22)
 
+Goal, dependencias, requisitos y criterios de éxito de cada fase: ver
+`.planning/ROADMAP.md` § Phase Details v2.0. Aquí solo lo que ese
+documento no cubre — ficheros afectados y riesgos con su mitigación.
+
 ## Phase 17 — Frame Broker y Capture Worker 🔴
-
-**Goal:** la captura RTSP produce frames a ritmo nativo y nunca espera a ningún consumidor.
-
-**Depends on:** nada (primera fase v2).
-**Requisitos:** PIPE-01, PIPE-02, PIPE-03.
-
-**Success criteria (verificables):**
-1. `backend/pipeline/broker.py` expone `FrameBroker` con `publish()` que jamás bloquea: test con suscriptor que duerme 1 s por frame demuestra que el productor mantiene su FPS.
-2. Con 3 suscriptores de velocidades distintas, el lento acumula `dropped > 0` y los rápidos mantienen `dropped == 0`.
-3. `CaptureWorker` contiene **solo** captura, reescalado y publicación: `grep -c "YOLO\|recogn\|zone\|heat" backend/pipeline/capture.py` devuelve 0.
-4. El stream MJPEG sigue funcionando exactamente igual que en v1.2 (verificación manual en navegador).
-5. `GET /api/v2/cameras/cam1/health` devuelve `fps`, `connected`, `reconnects`, `last_frame_age_s`.
 
 **Ficheros:**
 - Crear: `backend/pipeline/__init__.py`, `broker.py`, `capture.py`, `manager.py`
@@ -807,18 +800,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 18 — Workers desacoplados e inferencia adaptativa 🔴
 
-**Goal:** detección, tracking, streaming y grabación corren como workers independientes con FPS objetivo propios.
-
-**Depends on:** 17.
-**Requisitos:** PIPE-04, PIPE-05, PIPE-06, DET-05.
-
-**Success criteria:**
-1. Existen y arrancan de forma independiente: `DetectionWorker`, `StreamingWorker`, `RecordingWorker`. Matar uno (simulado con excepción) no detiene los demás; el supervisor lo reinicia y emite `DEGRADED_MODE`.
-2. Con `detection_target_fps=8` y cámara a 20 FPS, el vídeo se sirve a ~20 FPS y la detección corre a 8±1 FPS medidos.
-3. `AdaptiveRate` reduce el FPS de detección cuando la latencia de inferencia supera el presupuesto: test con detector simulado de 300 ms verifica descenso hasta `min_fps`.
-4. El uso de CPU medido en reposo con 1 persona en escena baja respecto a v1.2 (medición documentada antes/después).
-5. Ningún worker hace `await`; ninguna corrutina hace inferencia (revisión + test de arquitectura con `ast`).
-
 **Ficheros:**
 - Crear: `backend/pipeline/detection.py`, `tracking.py`, `streaming.py`, `recording.py`
 - Modificar: `backend/detector.py` (interfaz `infer(frame) -> Detections` pura), `backend/tracker.py` (exponer `TrackState`)
@@ -830,20 +811,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 ---
 
 ## Phase 19 — Event Engine, Rule Engine y esquema de datos v2 🔴
-
-**Goal:** el sistema deja de razonar en "detecciones" y pasa a emitir eventos tipados evaluados contra reglas.
-
-**Depends on:** 18.
-**Requisitos:** EVT-01..EVT-05, RULE-01..RULE-04, DB-10..DB-14.
-
-**Success criteria:**
-1. `EventType` cubre los 22 tipos del catálogo (§6.1) y `Event` valida con Pydantic.
-2. El `EventBus` entrega el **mismo** objeto `Event` a persistencia, WebSocket y RuleEngine (test de identidad de payload).
-3. `rules.yaml` con las 3 reglas de ejemplo carga, valida y dispara: test de integración inyecta un `PERSON_ENTERED` en zona `jardin` a las 23:30 simuladas y verifica que se llama a `record` + `telegram`.
-4. Una regla mal formada produce un error de validación legible al arrancar y **no** tumba el servidor: se desactiva esa regla y se emite un log de nivel ERROR.
-5. `debounce_secs` funciona: 10 eventos idénticos en 5 s producen 1 sola acción.
-6. Las detecciones ya no se persisten fila a fila: tras 10 min de operación, `SELECT COUNT(*) FROM events` es del orden de decenas y `detection_stats` tiene 1 fila por minuto.
-7. La migración desde v1 conserva el histórico: `crossing_events` → `events` con `type=LINE_CROSSED` sin pérdida de filas (test de conteo).
 
 **Ficheros:**
 - Crear: `backend/events/{types,engine,bus,rules}.py`, `backend/storage/{models,repositories,migrations}.py`, `config/rules.yaml`
@@ -858,20 +825,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 20 — Grabación con pre/post-buffer y metadatos 🔴
 
-**Goal:** ningún clip empieza después del evento; cada clip es auditable.
-
-**Depends on:** 19.
-**Requisitos:** CLIP-01..CLIP-07.
-
-**Success criteria:**
-1. Con `pre_buffer_secs=10`, el clip generado por un evento en T contiene imagen desde T-10 s (verificable con timestamp quemado en el frame durante el test).
-2. El post-buffer añade `post_buffer_secs` tras la última detección (default 10 s).
-3. Cada fila de `recordings` tiene `sha256`, `duration_s`, `size_bytes`, `thumbnail_path`, `trigger_event_id`, `reason`, `upload_state`.
-4. La miniatura existe en disco y se sirve por `/api/v2/recordings/{id}/thumbnail`.
-5. El uso de RAM del pre-buffer se mantiene por debajo de 40 MB con la configuración por defecto (medido).
-6. Política de retención: local 7 días (configurable) / Drive solo eventos con `severity != info`. Los clips no subidos se marcan `upload_state='skipped'`, no `failed`.
-7. Un fallo de Drive no bloquea el pipeline: cola persistente en `recordings.upload_state='pending'` con reintentos y backoff; test simula 3 fallos y verifica el 4º intento correcto.
-
 **Ficheros:**
 - Crear: `backend/pipeline/prebuffer.py` (`RingFrameBuffer`)
 - Modificar: `backend/pipeline/recording.py`, `backend/recorder.py` (retirada), `backend/gdrive.py` (cola + reintentos)
@@ -885,19 +838,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 21 — Observabilidad y latencia end-to-end 🟡
 
-**Goal:** el sistema es diagnosticable sin adjuntar un depurador.
-
-**Depends on:** 20.
-**Requisitos:** OBS-01..OBS-06.
-
-**Success criteria:**
-1. `/metrics` expone todas las métricas del catálogo (§8.4) en formato Prometheus.
-2. `/api/v2/metrics` devuelve el mismo snapshot en JSON y el dashboard lo pinta.
-3. `frames_dropped_total` se incrementa de forma demostrable al ralentizar artificialmente el detector.
-4. `e2e_latency_seconds` se calcula desde `Frame.captured_at` hasta el envío por WebSocket, con los tres tramos desglosados.
-5. Un test de humo verifica que una latencia inyectada de 2 s aparece reflejada en el percentil 95 de la métrica.
-6. La recolección de métricas añade < 2% de CPU (medido comparando con la fase anterior).
-
 **Ficheros:**
 - Crear: `backend/observability/{metrics,latency}.py`
 - Modificar: todos los workers (instrumentación), `backend/api/v2/metrics.py`
@@ -908,19 +848,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 ---
 
 ## Phase 22 — Deuda de seguridad y gestión de memoria 🔴
-
-**Goal:** cerrar los puntos de seguridad realmente pendientes y garantizar operación 24/7 sin crecimiento de memoria.
-
-**Depends on:** 21.
-**Requisitos:** SEC-15, SEC-16, PIPE-07.
-
-**Success criteria:**
-1. `grep -rn "pickle" backend/` no devuelve resultados en código de producción. La migración de blobs legacy se hace con un script explícito `scripts/migrate_embeddings.py` ejecutado una vez, no en el camino de carga.
-2. `yolo_model_path` se valida: extensión `.pt`/`.onnx` y ruta resuelta contenida en el directorio del proyecto. Un path fuera del proyecto aborta el arranque con mensaje claro.
-3. Todos los endpoints `/api/v2` tienen rate limiting y validación de cotas (`limit <= 200`).
-4. Prueba de resistencia de 8 h: RSS del proceso estable dentro de ±10% tras la primera hora; `active_tracks`, cachés de reconocimiento y estados de zona no crecen monótonamente.
-5. Todas las estructuras con crecimiento potencial (`TrackRegistry`, `TemporalVoter`, `IdentityStateMachine`, cachés de zona/heatmap) tienen política de expiración con test que la verifica.
-6. Las colas acotadas nunca crecen sin límite: `queue_depth` acotado en la prueba de 8 h.
 
 **Ficheros:**
 - Crear: `scripts/migrate_embeddings.py`, `tests/test_memory_bounds.py`
@@ -934,20 +861,7 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 23 — Migración a InsightFace/ArcFace con quality gating 🟠
 
-**Goal:** el reconocimiento facial usa embeddings ArcFace 512D y descarta caras que no valen la pena procesar.
-
-**Depends on:** 22.
-**Requisitos:** FACE-01..FACE-06.
-
-**Puerta de entrada (bloqueante):** spike de 1 día que verifica `pip install insightface onnxruntime` y una inferencia real en el entorno Windows del proyecto. Si falla, se activa el plan B de ADR-02 antes de continuar.
-
-**Success criteria:**
-1. `FaceEngine.detect()` + `.embed()` producen embeddings 512D L2-normalizados con `buffalo_s`.
-2. `FaceQualityAssessor` rechaza y **etiqueta el motivo** de: caras < 60 px, borrosas (laplaciano < 100), yaw > 40°. Test con imágenes sintéticas de cada caso.
-3. `IdentityIndex` resuelve una búsqueda sobre 1.000 identidades en < 5 ms (benchmark en el test).
-4. `scripts/reenroll.py` reconstruye todas las identidades desde `data/gallery/` y reporta cuántas se pudieron migrar y cuántas no (por falta de imagen fuente).
-5. Sobre un set de validación de al menos 50 recortes reales del propio proyecto, la tasa de aciertos de ArcFace es igual o mejor que la de dlib, con el mismo conjunto de identidades. **Este número se documenta en el SUMMARY de la fase**, no se asume.
-6. `dlib` y `face-recognition` desaparecen de `requirements.txt`.
+**Puerta de entrada (bloqueante):** spike de 1 día que verifica `pip install insightface onnxruntime` y una inferencia real en el entorno Windows del proyecto. Si falla, se activa el plan B de ADR-02 antes de continuar. *(Superada — ver 23-CONTEXT.md.)*
 
 **Ficheros:**
 - Crear: `backend/perception/face/{engine,quality,index}.py`, `scripts/fetch_models.py`, `scripts/reenroll.py`
@@ -962,19 +876,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 24 — Identidad temporal: votación y máquina de estados 🟠
 
-**Goal:** una persona es "Juan" tras evidencia coherente, no tras un frame afortunado; y sigue siendo Juan aunque se pierda el track.
-
-**Depends on:** 23.
-**Requisitos:** FACE-07..FACE-11.
-
-**Success criteria:**
-1. `IdentityStateMachine` implementa los 4 estados de §5.5 con transiciones testeadas una a una.
-2. Con una secuencia de 200 frames de una persona conocida se emite **exactamente un** `PERSON_RECOGNIZED`.
-3. Con embeddings ruidosos alternando dos identidades, `TemporalVoter` no confirma ninguna (ratio < `min_ratio`) y el track permanece en `CANDIDATE`.
-4. Cero identidades duplicadas: en una secuencia con pérdida y recuperación de track, no se crean `person_id` nuevos para la misma persona. Métrica `identities_created_total` = 0 en ese test.
-5. Revalidación: tras `revalidate_after=120 s`, un track `CONFIRMED` vuelve a intentar reconocimiento; si falla 3 veces consecutivas, pasa a `TEMPORARILY_LOST` y emite `IDENTITY_LOST`.
-6. El reconocimiento se dispara **por evento** (track nuevo, confianza baja, revalidación vencida), no cada N frames a ciegas: el número de inferencias faciales por minuto con 1 persona estática en escena baja al menos un 70% respecto a la Fase 23.
-
 **Ficheros:**
 - Crear: `backend/perception/face/identity.py`
 - Modificar: `backend/perception/face/engine.py`, `backend/events/engine.py`
@@ -985,18 +886,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 ---
 
 ## Phase 25 — Re-identificación de personas (ReID) 🟠
-
-**Goal:** el sistema mantiene la identidad cuando la cara no es visible.
-
-**Depends on:** 24.
-**Requisitos:** REID-01..REID-04.
-
-**Success criteria:**
-1. `ReIDEngine` produce embeddings 512D con `osnet_x0_25` en ONNX, latencia < 20 ms por crop en CPU (medido).
-2. `TrackGallery.resolve()` hereda identidad de un track cerrado hace < 15 s con similitud > 0.7, y **no** la hereda si otro track activo ya tiene esa identidad.
-3. Escenario de test: persona identificada se gira de espaldas 10 s y vuelve — mantiene el mismo `person_id` sin emitir `UNKNOWN_PERSON` intermedio.
-4. Escenario negativo: dos personas distintas con ropa similar no se fusionan (se documenta el umbral elegido y la tasa de falsos positivos en el set de prueba).
-5. ReID corre como máximo 1 vez cada 2 s por track: `reid_fps` acotado en métricas.
 
 **Ficheros:**
 - Crear: `backend/perception/reid/{engine,gallery}.py`
@@ -1009,18 +898,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 26 — Análisis de comportamiento 🟡
 
-**Goal:** el sistema responde a "¿qué está ocurriendo?", no solo a "¿hay alguien?".
-
-**Depends on:** 25.
-**Requisitos:** BEH-01..BEH-05.
-
-**Success criteria:**
-1. `BehaviorAnalyzer` emite `LOITERING`, `RUNNING`, `IMMOBILE`, `CROWD_DETECTED`, `ZONE_ENTERED`, `ZONE_EXITED` con los umbrales de §5.7, todos configurables.
-2. Test con trayectorias sintéticas: 6 escenarios (merodeo, carrera, inmovilidad, grupo, entrada y salida de zona) producen exactamente el evento esperado y ninguno más.
-3. Cada evento de comportamiento incluye en `payload` las magnitudes que lo justifican (`duration_s`, `speed_px_s`, `net_displacement_px`, `track_count`).
-4. `TrackState` mantiene un historial acotado (`maxlen`) — no crece con el tiempo de sesión.
-5. Los eventos de comportamiento son utilizables como `when.event` en `rules.yaml` sin cambios en el RuleEngine.
-
 **Ficheros:**
 - Crear: `backend/perception/behavior.py`
 - Modificar: `backend/pipeline/tracking.py`, `config/rules.yaml`
@@ -1031,19 +908,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 ---
 
 ## Phase 27 — Multi-clase y contexto de escena 🟡
-
-**Goal:** capa semántica: además de personas, el sistema entiende objetos y describe el estado de la escena.
-
-**Depends on:** 26.
-**Requisitos:** BEH-06..BEH-09.
-
-**Success criteria:**
-1. Las clases detectadas son configurables (`yolo_classes`): persona, bicicleta, coche, moto, mochila, maleta. La UI permite activarlas/desactivarlas.
-2. `OBJECT_LEFT` se emite cuando un objeto de clase-equipaje permanece inmóvil > `object_left_secs` (default 60 s) sin persona asociada a < `assoc_radius_px`.
-3. `OBJECT_REMOVED` se emite cuando un objeto previamente estable desaparece con una persona cerca.
-4. `GET /api/v2/analytics/context` devuelve el estado agregado: hora, zona, personas totales, conocidas, desconocidas, nivel de actividad (`low|normal|high` calculado contra la media móvil de 7 días de esa franja horaria).
-5. Test: escena sintética con mochila abandonada emite exactamente un `OBJECT_LEFT`; la misma escena con la persona permaneciendo al lado no lo emite.
-6. Activar 6 clases en lugar de 1 no incrementa la latencia de inferencia más de un 15% (YOLO detecta todas las clases en la misma pasada; solo cambia el post-proceso).
 
 **Ficheros:**
 - Crear: `backend/perception/objects.py`, `backend/api/v2/context.py`
@@ -1058,19 +922,6 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 28 — Refactor del frontend a módulos ES 🟠
 
-**Goal:** `index.html` deja de contener lógica; el frontend es mantenible.
-
-**Depends on:** 21 (necesita `/api/v2/metrics`); independiente de la Fase B.
-**Requisitos:** OPS-01, OPS-02, OPS-03.
-
-**Success criteria:**
-1. La estructura de §8.2 existe y `index.html` baja de 1843 a menos de 300 líneas (solo shell + contenedores).
-2. `frontend/js/app.js` deja de ser un placeholder de 2 líneas y es el punto de entrada real.
-3. Ningún módulo excede 300 líneas; cada uno tiene una responsabilidad declarada en su cabecera.
-4. **Paridad funcional total con v1.2**: todas las funciones actuales (vídeo, contadores, histograma, tabla de eventos, filtros, clips, PTZ, zonas, alertas, salud) siguen operativas. Checklist manual firmada en el SUMMARY.
-5. FastAPI monta `StaticFiles` para `/static` y el SRI de Chart.js se mantiene.
-6. La carga inicial no supera 1 s en LAN (medido en DevTools).
-
 **Ficheros:**
 - Crear: `frontend/css/*.css`, `frontend/js/**` (según §8.2)
 - Modificar: `frontend/index.html`, `backend/main.py` (mount estático)
@@ -1082,37 +933,11 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 29 — Vista de operaciones 🟠
 
-**Goal:** la pantalla principal responde en 3 segundos a las tres preguntas del operador.
-
-**Depends on:** 28.
-**Requisitos:** OPS-04, OPS-05, OPS-06.
-
-**Success criteria:**
-1. El layout de §8.3 está implementado y es responsive hasta 1366×768 sin scroll.
-2. La barra superior refleja el estado real del pipeline (online / degradado / offline) leyendo `/api/v2/cameras`.
-3. El panel "Personas ahora" lista las identidades activas con su estado (`CONFIRMED` / `verificando…` / `desconocido`).
-4. El overlay sobre el vídeo dibuja bboxes, `track_id`, nombre e identidad, alimentado por el canal `tracks` del WebSocket a 2 Hz — no re-renderiza el `<img>` MJPEG.
-5. La reconexión del WebSocket es automática con backoff y la UI lo indica sin recargar la página.
-6. Prueba de usuario: un observador no familiarizado identifica correctamente si hay una alerta activa en menos de 3 s.
-
 **Ficheros:** `frontend/js/views/operations.js`, `components/videoCanvas.js`, `alertCenter.js`, `css/layout.css`; `backend/api/v2/ws.py`.
 
 ---
 
 ## Phase 30 — Event Timeline y centro de alertas 🟠
-
-**Goal:** sustituir la tabla plana por una línea temporal accionable.
-
-**Depends on:** 29.
-**Requisitos:** OPS-07..OPS-11.
-
-**Success criteria:**
-1. Cada entrada muestra: hora, icono de severidad, descripción legible, zona, miniatura y acciones (`Ver vídeo`, `Ver captura`, `Marcar como persona`, `Descartar`).
-2. Filtros combinables por tipo, severidad, persona, zona y rango temporal, resueltos en servidor (`/api/v2/events` con cursor).
-3. Scroll infinito con paginación por cursor: 10.000 eventos navegables sin degradación perceptible.
-4. Un evento nuevo entrante aparece en el timeline en < 1 s sin recargar.
-5. "Marcar como persona" abre el enrolamiento con el crop del evento precargado y, al confirmar, actualiza retroactivamente los eventos de ese track.
-6. El centro de alertas agrupa alertas activas, permite silenciar por regla y muestra el motivo (qué regla disparó).
 
 **Ficheros:** `frontend/js/views/timeline.js`, `components/eventCard.js`; `backend/api/v2/{events,timeline}.py`.
 
@@ -1122,37 +947,11 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 31 — Vista de analítica 🟡
 
-**Goal:** convertir el histórico en información operativa.
-
-**Depends on:** 30.
-**Requisitos:** OPS-12..OPS-15.
-
-**Success criteria:**
-1. La vista muestra: personas por hora, ocupación por zona (barras), heatmap, ranking de personas por visitas y tendencias (hoy vs ayer con % de variación) y hora más activa.
-2. Selector de rango: hoy / 7 días / 30 días / personalizado.
-3. Todas las agregaciones se calculan en SQL, no en el navegador: el payload de `/api/v2/analytics/hourly` para 30 días es < 100 KB.
-4. Las consultas de analítica sobre 100.000 eventos responden en < 500 ms (benchmark con BD sintética poblada por script).
-5. Exportación CSV/JSON del rango visible.
-
 **Ficheros:** `frontend/js/views/analytics.js`; `backend/api/v2/analytics.py`; `scripts/seed_events.py` (datos sintéticos para benchmark).
 
 ---
 
 ## Phase 32 — Vista de cámara y configuración visual 🟠
-
-**Goal:** operar y configurar el sistema sin tocar `.env`.
-
-**Depends on:** 31.
-**Requisitos:** OPS-16..OPS-20, SET-01..SET-04.
-
-**Success criteria:**
-1. La vista Cámara muestra live view + FPS, latencia e2e, CPU, RAM, FPS de detector, estado de tracking y estado RTSP, todo desde `/api/v2/metrics`.
-2. El árbol de configuración de la propuesta (Cámara / Detección / Tracking / Reconocimiento / Zonas / Reglas / Alertas / Almacenamiento) está implementado.
-3. Los cambios se persisten en `app_config` y se aplican **en caliente** cuando el parámetro lo permite; los que requieren reinicio se marcan claramente en la UI.
-4. Cada parámetro tiene rango validado en servidor; un valor fuera de rango devuelve 422 con mensaje legible y la UI lo muestra junto al campo.
-5. Botón "Restaurar valores por defecto" por sección.
-6. Los cambios de configuración quedan auditados: `events` recibe una entrada `CONFIG_CHANGED` con el diff.
-7. La precedencia queda documentada y testeada: `app_config` (runtime) > `.env` > default del código.
 
 **Ficheros:** `frontend/js/views/{camera,settings}.js`; `backend/api/v2/config.py`, `backend/storage/repositories.py`.
 
@@ -1162,38 +961,11 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 33 — Editores visuales de zonas, líneas y reglas 🟠
 
-**Goal:** dibujar zonas y componer reglas sin escribir YAML ni fracciones de coordenadas.
-
-**Depends on:** 32.
-**Requisitos:** OPS-21..OPS-24, RULE-05.
-
-**Success criteria:**
-1. `zoneEditor.js` permite dibujar, mover, editar vértices y borrar polígonos directamente sobre el frame de vídeo, con coordenadas normalizadas (0-1) independientes de la resolución.
-2. Igual para líneas de conteo, con indicador visual de dirección entrada/salida.
-3. Las zonas soportan tipo (`counting`, `restricted`, `exclusion`) y horario propio.
-4. `ruleEditor.js` compone reglas con el esquema de §6.4 mediante formularios; la regla resultante se valida en servidor antes de guardar.
-5. `POST /api/v2/rules/{id}/test` evalúa la regla contra los últimos 500 eventos y devuelve cuántos habrían disparado — permite validar antes de activar.
-6. Cambiar una zona no requiere reiniciar: el pipeline recarga la configuración de zonas en menos de 1 s.
-7. Zonas y líneas dibujadas con la resolución de proceso a 720p siguen siendo correctas si se cambia a 1080p (test de invariancia).
-
 **Ficheros:** `frontend/js/components/{zoneEditor,ruleEditor}.js`; `backend/api/v2/{zones,lines,rules}.py`.
 
 ---
 
 ## Phase 34 — Tests E2E e integración del pipeline 🟡
-
-**Goal:** una red de seguridad que cubra el camino completo, no solo unidades aisladas.
-
-**Depends on:** 33.
-**Requisitos:** TEST-01..TEST-05.
-
-**Success criteria:**
-1. Test de integración del pipeline completo con fuente sintética: `FakeRTSP → DetectionWorker (detector mock) → Tracker → EventEngine → RuleEngine → BD → WebSocket`, sin cámara real, ejecutable en CI.
-2. Playwright cubre: vídeo visible, cámara offline muestra estado degradado, WebSocket reconecta tras corte, evento nuevo aparece en el timeline, filtros funcionan, clip reproduce, modal abre y cierra, PTZ responde, alerta aparece, editor de zonas guarda.
-3. La suite completa (unit + integración + E2E) corre en menos de 5 min.
-4. GitHub Actions ejecuta unit + integración en cada push y E2E en cada PR.
-5. Cobertura de `backend/events/`, `backend/pipeline/` y `backend/perception/` por encima del 80%.
-6. Los endpoints `/api/*` v1 quedan formalmente marcados como deprecados una vez el frontend usa solo v2.
 
 **Ficheros:** `tests/integration/test_pipeline_e2e.py`, `tests/e2e/*.spec.js`, `playwright.config.js`, `.github/workflows/*.yml`.
 
@@ -1203,37 +975,11 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 35 — CameraManager y `camera_id` transversal 🟡
 
-**Goal:** el código deja de asumir una única cámara, aunque solo haya una.
-
-**Depends on:** 34.
-**Requisitos:** SCALE-01..SCALE-04.
-
-**Success criteria:**
-1. `CameraPipeline` encapsula capture + broker + workers de **una** cámara; `CameraManager` gestiona N instancias con arranque/parada independientes.
-2. `camera_id` está presente y es NOT NULL en `events`, `tracks`, `detection_stats`, `recordings`, `zones`, `lines`, `system_metrics`.
-3. Todos los endpoints v2 aceptan `camera_id` (default: la única cámara si solo hay una).
-4. Arrancar dos pipelines contra la misma URL RTSP funciona y produce eventos con `camera_id` distintos (test de integración con fuente sintética duplicada).
-5. Parar una cámara no afecta a la otra ni al servidor.
-6. Sin cambios visibles para un despliegue de una sola cámara (regresión cero).
-
 **Ficheros:** `backend/pipeline/manager.py`, `backend/storage/migrations.py`, `backend/api/v2/cameras.py`.
 
 ---
 
 ## Phase 36 — Multi-cámara en runtime y UI 🟡
-
-**Goal:** añadir, configurar y visualizar varias cámaras desde la interfaz.
-
-**Depends on:** 35.
-**Requisitos:** SCALE-05..SCALE-08.
-
-**Success criteria:**
-1. CRUD de cámaras desde la UI; añadir una cámara la arranca sin reiniciar el servidor.
-2. Selector de cámara en la vista de operaciones + vista mosaico con N streams.
-3. Cada cámara tiene zonas, líneas y reglas propias; las reglas pueden aplicarse a `camera: "*"`.
-4. Presupuesto de recursos: la UI muestra el coste estimado de CPU por cámara y advierte al superar el umbral configurado.
-5. La analítica agrega por cámara y en total.
-6. Prueba con 2 cámaras simultáneas durante 1 h: sin degradación del FPS por debajo del 80% del valor mono-cámara, o degradación documentada y explicada.
 
 **Ficheros:** `frontend/js/views/{operations,settings}.js`, `components/cameraGrid.js`; `backend/api/v2/cameras.py`.
 
@@ -1243,36 +989,11 @@ Leyenda de prioridad según el ranking de `mejoras_inmediatas.md`: 🔴 crítica
 
 ## Phase 37 — Backends opcionales: PostgreSQL y Redis 🟡
 
-**Goal:** permitir escalar el almacenamiento y el bus sin reescribir el código.
-
-**Depends on:** 36.
-**Requisitos:** SCALE-09, SCALE-10.
-
-**Success criteria:**
-1. El acceso a datos pasa exclusivamente por `storage/repositories.py`: `grep -rn "session\.\|select(" backend/ --exclude-dir=storage` no devuelve nada.
-2. Cambiar `DATABASE_URL` a `postgresql+asyncpg://...` funciona sin cambios de código; la suite de tests de repositorio corre contra ambos motores.
-3. `EventBus` tiene dos implementaciones intercambiables (`InProcessBus`, `RedisBus`) tras una interfaz común; con Redis desconfigurado el sistema arranca en modo in-process sin error.
-4. SQLite sigue siendo el **default** y la ruta soportada de primera clase.
-5. Documentado cuándo merece la pena migrar (nº de cámaras, volumen de eventos/día).
-
 **Ficheros:** `backend/storage/repositories.py`, `backend/events/bus.py`, `docs/scaling.md`.
 
 ---
 
 ## Phase 38 — Worker de inferencia en GPU (opcional) 🟡
-
-**Goal:** aprovechar GPU si existe, sin degradar la ruta CPU.
-
-**Depends on:** 37.
-**Requisitos:** SCALE-11, SCALE-12.
-
-**Success criteria:**
-1. Detección automática de GPU disponible (CUDA / DirectML) con log claro del dispositivo elegido.
-2. YOLO, ArcFace y OSNet usan el proveedor ONNX/torch adecuado según el dispositivo, seleccionable por configuración.
-3. Con GPU disponible, el FPS de detección sostenible sube al menos 3× respecto a CPU (medido y documentado).
-4. Sin GPU, el comportamiento es **idéntico** al de la Fase 37 (regresión cero).
-5. Fallback automático a CPU si la inicialización de GPU falla, emitiendo `DEGRADED_MODE`.
-6. Batching opcional de inferencia multi-cámara en GPU, desactivable.
 
 **Ficheros:** `backend/pipeline/detection.py`, `backend/perception/**/engine.py`, `backend/config.py`.
 

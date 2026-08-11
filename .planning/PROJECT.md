@@ -2,17 +2,19 @@
 
 ## What This Is
 
-Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta y reconoce personas en tiempo real con YOLO26n + face-recognition, muestra estadísticas de actividad, graba clips automáticos con subida a Google Drive, lanza alertas por webhook/Telegram y expone métricas de salud del sistema. Todo accesible desde cualquier dispositivo de la red local sin depender de la nube para el funcionamiento básico.
+Dashboard web local que consume el stream RTSP de una cámara Tapo C212, detecta y reconoce personas en tiempo real con YOLO26n + face-recognition, muestra estadísticas de actividad, graba clips automáticos con subida a Google Drive, lanza alertas por webhook/Telegram y expone métricas de salud del sistema. Todo accesible desde cualquier dispositivo de la red local sin depender de la nube para el funcionamiento básico.
 
 ## Core Value
 
 Ver en tiempo real cuántas personas han pasado frente a la cámara, a qué horas hay más actividad y quiénes son, con el vídeo en vivo, las grabaciones y las métricas de sistema integrados en el mismo panel.
 
+**Milestone en curso:** v2.0 — Plataforma de Video Analytics (ver `.planning/STATE.md`).
+
 ## Requirements
 
 ### Validated (v1.2 — 2026-05-01)
 
-- [x] Stream RTSP de la cámara Tapo C220 capturado y retransmitido vía MJPEG al navegador
+- [x] Stream RTSP de la cámara Tapo C212 capturado y retransmitido vía MJPEG al navegador
 - [x] Detección de personas en cada frame usando YOLO26n (38.9 ms CPU)
 - [x] Contador de cruces basado en línea virtual para evitar dobles conteos (ByteTrack + LineZone)
 - [x] Almacenamiento de eventos de detección en SQLite con timestamp y nombre de persona
@@ -39,14 +41,14 @@ Ver en tiempo real cuántas personas han pasado frente a la cámara, a qué hora
 
 ### Out of Scope
 
-- Múltiples cámaras simultáneas — una sola cámara en v1
+- Múltiples cámaras simultáneas — fuera de alcance en v1.2; planeada en v2.0 Bloque D (fases 35-36)
 - WebRTC — MJPEG suficiente para LAN, sin señalización
 - Acceso remoto / túnel — se opera exclusivamente en LAN
 - Autenticación OAuth / multi-usuario — dashboard local de red privada
 
 ## Context
 
-- **Cámara**: Tapo C220, IP local `192.168.1.132`, stream RTSP en `rtsp://192.168.1.132:554/stream2`
+- **Cámara**: Tapo C212, IP local `192.168.1.132`, stream RTSP en `rtsp://192.168.1.132:554/stream2`
 - **Entorno**: Windows 11, red local, sin acceso GPU → YOLO26n (CPU-friendly)
 - **Acceso**: Dashboard en `https://<IP-LAN>:8000` para cualquier dispositivo de la LAN
 - **Drive**: Carpeta «Grabaciones Tapo» (ID: `1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir`); requiere `credentials.json` OAuth2 Desktop

@@ -98,29 +98,49 @@ y la Fase 23 por completamente validados en producción.
 
 | Documento | Contenido |
 |-----------|-----------|
-| `propuesta_mejora/SPEC_v2.md` | Especificación técnica: arquitectura objetivo, 10 ADRs, contratos de módulo, modelo de datos, catálogo de eventos, detalle ejecutable de las 22 fases, trazabilidad de los 25 puntos, riesgos y criterios de aceptación |
+| `propuesta_mejora/SPEC_v2.md` | Referencia técnica: arquitectura objetivo, 10 ADRs, contratos de módulo, modelo de datos, catálogo de eventos, ficheros/riesgo por fase, trazabilidad de los 25 puntos, riesgos y criterios de aceptación del milestone |
 | `.planning/ROADMAP.md` § v2.0 | Fases 17-38 con goal, dependencias, requisitos y criterios de éxito |
+| `.planning/STATE.md` (este) | Estado real de las 22 fases — qué está completo, qué falta y por qué |
 | `.planning/REQUIREMENTS.md` § v2 | 107 requisitos (PIPE, DET, EVT, RULE, DB, CLIP, OBS, SEC, FACE, REID, BEH, OPS, SET, TEST, SCALE) |
 | `propuesta_mejora/mejoras_inmediatas.md` | Propuesta original (25 puntos) |
 | `propuesta_mejora/vulnerabilidades.md` | Análisis de seguridad (12/14 ya corregidas en v1.2) |
 
-## Planes listos para ejecutar — bloque A (COMPLETO)
+## Estado de las 22 fases de v2.0
 
-El bloque A (fases 17-22) tiene CONTEXT, PLAN y SUMMARY escritos, código
-implementado y tests en verde. Solo quedan los checkpoints manuales con
-cámara real.
+Fuente única de verdad sobre qué queda por hacer — sustituye a la extinta
+tabla "Progress Tracking v2.0" de `ROADMAP.md` (quedaba desactualizada por
+duplicación). Para el detalle de cada fase (goal, dependencias, requisitos,
+criterios de éxito) ver `ROADMAP.md` § Phase Details v2.0; para ficheros y
+riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 
-| Fase | Planes | Checkpoints manuales |
-|------|--------|----------------------|
-| 17 — Frame Broker y Capture Worker | 17-01 ✓, 17-02 ✓ | ✓ Comparativa A/B del MJPEG con cámara real |
-| 18 — Workers desacoplados | 18-01 ✓, 18-02 ✓ | ✓ Medición CPU antes/después + crash de worker en vivo |
-| 19 — Event Engine y esquema v2 | 19-01 ✓, 19-02 ✓ | ⧗ Migración de la BD real + validación de reglas en vivo |
-| 20 — Pre/post-buffer | 20-01 ✓, 20-02 ✓ | ⧗ Verificación visual del pre-buffer + prueba sin red |
-| 21 — Observabilidad | 21-01 ✓ | ⧗ Coste de instrumentación + línea base de 30 min |
-| 22 — Seguridad y memoria | 22-01 ✓ | ⧗ Prueba de resistencia de 8 h |
-| 23 — InsightFace/ArcFace | 23-01 ✓, 23-02 ✓ | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
+| Fase | Bloque | Estado | Cerrada | Pendiente |
+|------|--------|--------|---------|-----------|
+| 17 — Frame Broker y Capture Worker | A | ✓ Completa | 2026-08-07 | — (checkpoint superado) |
+| 18 — Workers desacoplados | A | ✓ Completa | 2026-08-08 | — (checkpoint superado) |
+| 19 — Event Engine y esquema v2 | A | ✓ Completa (código) | 2026-08-09 | ⧗ Migración BD real + validación de reglas en vivo |
+| 20 — Pre/post-buffer | A | ✓ Completa (código) | 2026-08-09 | ⧗ Verificación visual del pre-buffer + prueba sin red |
+| 21 — Observabilidad | A | ✓ Completa (código) | 2026-08-09 | ⧗ Coste de instrumentación + línea base de 30 min |
+| 22 — Seguridad y memoria | A | ✓ Completa (código) | 2026-08-09 | ⧗ Prueba de resistencia de 8 h |
+| 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
+| 24 — Identidad temporal | B | — Sin planificar | — | Depende de 23 (ya completa) |
+| 25 — Re-identificación (ReID) | B | — Sin planificar | — | Depende de 24 |
+| 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
+| 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
+| 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
+| 29 — Vista de operaciones | C | — Sin planificar | — | Depende de 28 |
+| 30 — Event Timeline y alertas | C | — Sin planificar | — | Depende de 29 |
+| 31 — Vista de analítica | C | — Sin planificar | — | Depende de 30 |
+| 32 — Vista de cámara y config visual | C | — Sin planificar | — | Depende de 31 |
+| 33 — Editores visuales | C | — Sin planificar | — | Depende de 32 |
+| 34 — Tests E2E | C | — Sin planificar | — | Depende de 33 |
+| 35 — CameraManager | D | — Sin planificar | — | Depende de 34 |
+| 36 — Multi-cámara en runtime | D | — Sin planificar | — | Depende de 35 |
+| 37 — PostgreSQL y Redis | D | — Sin planificar | — | Depende de 36 |
+| 38 — Worker GPU (opcional) | D | — Sin planificar | — | Depende de 37 |
 
-Las fases 24-38 (resto de bloques B, C y D) tienen su detalle ejecutable en `SPEC_v2.md` §9 pero aún no tienen PLAN. Generarlos con `/gsd:plan-phase 24` cuando llegue el momento, o pedirlos en Cowork como se hizo con el bloque A y la Fase 23.
+Las fases sin planificar (24-38) no tienen PLAN todavía. Generarlos con
+`/gsd:plan-phase <N>` cuando llegue el momento, o pedirlos en Cowork como
+se hizo con el bloque A y la Fase 23.
 
 ## Notas de ejecución
 
