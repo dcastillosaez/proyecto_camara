@@ -151,13 +151,9 @@ Las fases 24-38 (resto de bloques B, C y D) tienen su detalle ejecutable en `SPE
 
 ## Test Coverage
 
-| Módulo | Tests | Estado |
-|--------|-------|--------|
-| tests/test_detector.py | — | passing |
-| tests/test_tracker.py | — | passing |
-| tests/test_phase9.py | 15 | passing |
-| tests/test_phase10.py | 14 | passing |
-| **Total** | **38** | **38/38 ✓** |
+Suite completa (39 ficheros en `tests/`): **326/326 passing** (última ejecución 2026-08-11).
+La tabla por módulo de v1.2 (38 tests) quedó obsoleta al crecer la suite en v2.0 —
+ver `pytest tests/ -v` para el desglose actual por fichero.
 
 ## Accumulated Context
 
@@ -183,10 +179,17 @@ Las fases 24-38 (resto de bloques B, C y D) tienen su detalle ejecutable en `SPE
 
 ### Blockers/Concerns
 
-Ninguno — proyecto finalizado. Drive upload requiere credenciales manuales por diseño de seguridad de Google.
+Ninguno bloqueante para el desarrollo de v2.0. Ver "Pendiente sin relacion
+con v2.0" arriba (token OAuth de Google Drive caducado) y los 6 checkpoints
+manuales con cámara real listados en la tabla del bloque A — ninguno bloquea
+avanzar a la Fase 24, pero deben cerrarse antes de dar el bloque A y la
+Fase 23 por completamente validados en producción.
 
 ## Session Continuity
 
-Last session: 2026-05-01
-Stopped at: Phase 16 complete, 38/38 tests passing, commit bd12055
+Last session: 2026-08-11
+Stopped at: Fix de env_file independiente del cwd (backend/config.py),
+  limpieza de .env.example/README y corrección del modelo de cámara a
+  C212 (era C220), fusionado en main (PR #1, commit 3e8cafc). Sin
+  relación con el avance de fases de v2.0.
 Resume file: None
