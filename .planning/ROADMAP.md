@@ -46,7 +46,7 @@ Plans:
 - [x] 01-02-PLAN.md — Crear venv con Python 3.12 e instalar dependencias
 
 ### Phase 2: Captura RTSP y stream MJPEG
-**Goal**: El usuario ve el video en directo de la camara Tapo C220 en su navegador, sin procesamiento de deteccion
+**Goal**: El usuario ve el video en directo de la camara Tapo C212 en su navegador, sin procesamiento de deteccion
 **Depends on**: Phase 1
 **Requirements**: CAP-01, CAP-02, CAP-03
 **Success Criteria** (what must be TRUE):
@@ -273,7 +273,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 
 ### Bloque B — Inteligencia artificial
 
-- [ ] **Phase 23: Migración a InsightFace/ArcFace con quality gating** — Embeddings 512D + filtro de calidad de rostro
+- [x] **Phase 23: Migración a InsightFace/ArcFace con quality gating** — Embeddings 512D + filtro de calidad de rostro (completed 2026-08-10; checkpoint de tasa de aciertos vs dlib pendiente de cámara real)
 - [ ] **Phase 24: Identidad temporal — votación y máquina de estados** — UNKNOWN → CANDIDATE → CONFIRMED → TEMPORARILY_LOST
 - [ ] **Phase 25: Re-identificación de personas (ReID)** — Continuidad de identidad sin cara visible
 - [ ] **Phase 26: Análisis de comportamiento** — Merodeo, carrera, inmovilidad, aglomeración, zonas
@@ -630,32 +630,10 @@ D:                                                35 → 36 → 37 → 38
 
 La Phase 28 solo depende de la 21, por lo que el bloque C puede solaparse con el bloque B si se trabaja en paralelo. Las fases 29-33 asumen que B está completa para mostrar identidad, comportamiento y contexto en la interfaz.
 
-## Progress Tracking v2.0
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 17. Frame Broker y Capture Worker | 2/2 | Complete | 2026-08-07 |
-| 18. Workers desacoplados e inferencia adaptativa | 2/2 | Complete | 2026-08-08 |
-| 19. Event Engine, Rule Engine y esquema de datos v2 | 2/2 | Complete (checkpoints pendientes) | 2026-08-09 |
-| 20. Grabación con pre/post-buffer y metadatos | 2/2 | Complete (checkpoint pendiente) | 2026-08-09 |
-| 21. Observabilidad y latencia end-to-end | 1/1 | Complete (checkpoint pendiente) | 2026-08-09 |
-| 22. Deuda de seguridad y gestión de memoria | 1/1 | Complete (checkpoint pendiente) | 2026-08-09 |
-| 23. Migración a InsightFace/ArcFace con quality gating | 0/? | Not started | — |
-| 24. Identidad temporal — votación y máquina de estados | 0/? | Not started | — |
-| 25. Re-identificación de personas (ReID) | 0/? | Not started | — |
-| 26. Análisis de comportamiento | 0/? | Not started | — |
-| 27. Multi-clase y contexto de escena | 0/? | Not started | — |
-| 28. Refactor del frontend a módulos ES | 0/? | Not started | — |
-| 29. Vista de operaciones | 0/? | Not started | — |
-| 30. Event Timeline y centro de alertas | 0/? | Not started | — |
-| 31. Vista de analítica | 0/? | Not started | — |
-| 32. Vista de cámara y configuración visual | 0/? | Not started | — |
-| 33. Editores visuales de zonas, líneas y reglas | 0/? | Not started | — |
-| 34. Tests E2E e integración del pipeline | 0/? | Not started | — |
-| 35. CameraManager y camera_id transversal | 0/? | Not started | — |
-| 36. Multi-cámara en runtime y UI | 0/? | Not started | — |
-| 37. Backends opcionales — PostgreSQL y Redis | 0/? | Not started | — |
-| 38. Worker de inferencia en GPU (opcional) | 0/? | Not started | — |
+Estado real y detallado de cada fase (completa/pendiente/sin planificar,
+checkpoints, fechas): ver `.planning/STATE.md` § Estado de las 22 fases de
+v2.0 — es la fuente única, para no mantener dos tablas de progreso
+envejeciendo a ritmos distintos.
 
 ---
 *Milestone v2.0 planificado: 2026-08-07*
