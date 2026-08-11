@@ -102,7 +102,7 @@ def TEST_005_build_rtsp_url_injects_user_and_pass():
 
 
 # ─── El path del stream se preserva tras inyectar credenciales ───────────────
-# La cámara Tapo C220 usa /stream1 (alta resolución) y /stream2 (720p).
+# La cámara Tapo C212 usa /stream1 (alta resolución) y /stream2 (720p).
 # urlparse + urlunparse debe preservar el path; si se perdiera, OpenCV
 # no podría conectar al stream correcto.
 # ─────────────────────────────────────────────────────────────────────────────
