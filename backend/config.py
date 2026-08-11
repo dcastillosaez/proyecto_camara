@@ -8,6 +8,10 @@ from pydantic_settings import BaseSettings
 
 _MODEL_PATH_ALLOWED_SUFFIXES = {".pt", ".onnx"}
 
+# Raíz del proyecto (directorio que contiene backend/). Todo lo que deba ser
+# estable frente al cwd del proceso se ancla aquí, no al directorio de trabajo.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment / .env file."""
@@ -41,9 +45,8 @@ class Settings(BaseSettings):
                 f"yolo_model_path extension {p.suffix!r} not allowed. "
                 f"Allowed: {sorted(_MODEL_PATH_ALLOWED_SUFFIXES)}"
             )
-        project_root = Path(__file__).resolve().parent.parent
-        resolved = p.resolve() if p.is_absolute() else (project_root / p).resolve()
-        if not resolved.is_relative_to(project_root):
+        resolved = p.resolve() if p.is_absolute() else (_PROJECT_ROOT / p).resolve()
+        if not resolved.is_relative_to(_PROJECT_ROOT):
             raise ValueError(f"yolo_model_path must be inside the project directory: {resolved}")
         return v
     yolo_confidence: float = 0.45
@@ -160,7 +163,10 @@ class Settings(BaseSettings):
     # borrarlas de persons.db. Las personas con nombre nunca se tocan.
     persons_retention_days: int = 30
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    # env_file anclado a la raíz del proyecto: si fuese la ruta relativa ".env",
+    # arrancar uvicorn desde otro directorio dejaría las credenciales vacías
+    # (RTSP sin auth, PTZ devolviendo 502 "Invalid authentication data").
+    model_config = {"env_file": _PROJECT_ROOT / ".env", "extra": "ignore"}
 
 
 @lru_cache
