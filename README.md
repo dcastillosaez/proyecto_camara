@@ -1,10 +1,10 @@
 # Tapo Dashboard
 
-Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta y reconoce personas en tiempo real con YOLO26n, graba clips automáticos con subida a Google Drive y muestra estadísticas, alertas y métricas de sistema — todo desde un único panel accesible en red local.
+Dashboard web local que consume el stream RTSP de una cámara Tapo C212, detecta y reconoce personas en tiempo real con YOLO26n, graba clips automáticos con subida a Google Drive y muestra estadísticas, alertas y métricas de sistema — todo desde un único panel accesible en red local.
 
 ## Características
 
-- **Stream RTSP en vivo** — Conexión directa a Tapo C220 vía RTSP, retransmisión MJPEG al navegador
+- **Stream RTSP en vivo** — Conexión directa a Tapo C212 vía RTSP, retransmisión MJPEG al navegador
 - **Detección de personas** — YOLO26n (38.9 ms en CPU, 31% más rápido que YOLOv8n)
 - **Conteo por línea virtual** — ByteTrack + LineZone, sin dobles conteos
 - **Reconocimiento facial** — Embeddings 128-dim (face-recognition/dlib) en hilo worker dedicado: no bloquea la captura RTSP. Filtros de calidad (tamaño mínimo, desenfoque, consenso de 3 muestras), ratio test por persona y re-verificación periódica con voto por mayoría
@@ -44,7 +44,7 @@ Dashboard web local que consume el stream RTSP de una cámara Tapo C220, detecta
 ## Requisitos
 
 - Python 3.12+
-- Cámara Tapo C220 con acceso RTSP en red local
+- Cámara Tapo C212 con acceso RTSP en red local
 - Dependencias en `requirements.txt`
 - *(Opcional)* `credentials.json` de Google Cloud Console para subida a Drive
 
@@ -62,10 +62,6 @@ pip install -r requirements.txt
 ## Instalación — Docker
 
 ```bash
-# Copiar y editar configuración
-cp .env.example .env
-
-# Arrancar
 docker-compose up -d
 ```
 
@@ -95,9 +91,9 @@ Sin `credentials.json` el sistema funciona con normalidad pero no sube clips a D
 1. Averigua la IP de tu PC (no la de la cámara) con `ipconfig` → busca `Dirección IPv4` de tu adaptador de red. Ejemplo: `192.168.1.184`.
 2. Navega a `https://192.168.1.184:8000` (sustituye por tu IP).
 3. El navegador mostrará aviso de certificado autofirmado — click en «Avanzado» → «Continuar a [IP] (no seguro)».
-4. Si configuraste `DASHBOARD_USER`/`DASHBOARD_PASS` en `.env`, introduce esas credenciales cuando lo pida.
+4. Si el dashboard tiene autenticación activada, introduce esas credenciales cuando lo pida.
 
-`0.0.0.0` que aparece en los logs de arranque no es una IP navegable — significa "escucha en todas las interfaces". La IP de la cámara (`CAMERA_URL` en `.env`, por defecto `192.168.1.132`) es distinta de la IP del PC que sirve el dashboard; nunca abras la IP de la cámara en el navegador.
+`0.0.0.0` que aparece en los logs de arranque no es una IP navegable — significa "escucha en todas las interfaces". La IP de la cámara es distinta de la IP del PC que sirve el dashboard; nunca abras la IP de la cámara en el navegador.
 
 ### Desarrollo (recarga automática, HTTP)
 
@@ -137,64 +133,6 @@ Abrir en el navegador: `http://<IP-de-tu-PC>:8000` (sin `https`, sin certificado
 | POST | `/api/enroll_face` | Registrar rostro (imagen o frame actual) |
 | GET | `/detections` | Detecciones y bounding boxes del frame actual |
 | GET | `/counts` | Conteos acumulados in/out/total |
-
-## Variables de entorno (`.env`)
-
-```
-# Cámara
-CAMERA_URL=rtsp://192.168.1.132:554/stream2
-RTSP_USER=
-RTSP_PASS=
-CAMERA_DRIVER=tapo
-
-# Detección
-YOLO_MODEL_PATH=yolo26n.pt
-YOLO_CONFIDENCE=0.45
-YOLO_IMGSZ=640
-DETECT_EVERY=2
-TRACKER_FRAME_RATE=15
-
-# Base de datos
-DB_PATH=data/events.db
-
-# Servidor
-HOST=0.0.0.0
-PORT=8000
-
-# Grabación
-CLIPS_DIR=data/clips
-RECORDING_FPS=15.0
-RECORDING_TAIL_SECS=5.0
-
-# Google Drive
-GDRIVE_FOLDER_ID=1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir
-GDRIVE_CREDENTIALS_PATH=credentials.json
-GDRIVE_TOKEN_PATH=data/token.json
-
-# Alertas
-ALERT_WEBHOOK_URL=
-ALERT_TELEGRAM_TOKEN=
-ALERT_TELEGRAM_CHAT_ID=
-ALERT_ON_INTRUSION=true
-ALERT_ON_UNKNOWN=true
-ALERT_COOLDOWN_SECS=60
-
-# Horario (intrusión fuera de rango)
-SCHEDULE_ENABLED=false
-SCHEDULE_START=08:00
-SCHEDULE_END=22:00
-
-# Retención de datos
-EVENTS_RETENTION_DAYS=30
-RECORDINGS_RETENTION_DAYS=30
-PERSONS_RETENTION_DAYS=30
-
-# Seguridad
-DASHBOARD_USER=
-DASHBOARD_PASS=
-SSL_CERTFILE=
-SSL_KEYFILE=
-```
 
 ## Tests
 

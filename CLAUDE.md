@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Dashboard local para monitorizar una Tapo C220:
+Dashboard local para monitorizar una Tapo C212:
 RTSP → captura → detección/tracking → eventos → SQLite/WebSocket → dashboard.
 
 Prioridades: **baja latencia, estabilidad, CPU moderada y simplicidad**.
