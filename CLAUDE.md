@@ -28,6 +28,12 @@ Antes de editar, usar:
 
 No editar fuera de GSD salvo petición explícita.
 
+Para contexto de planificación, leer primero `.planning/STATE.md` — es la
+única fuente de qué está completo y qué falta (fases, checkpoints,
+pendientes). `ROADMAP.md`, `REQUIREMENTS.md` y `propuesta_mejora/SPEC_v2.md`
+tienen cada uno un rol propio sin solapar y solo hace falta abrirlos si
+STATE.md remite a ellos para un detalle concreto.
+
 ## Stack / restricciones
 
 | Área | Decisión |
@@ -195,6 +201,11 @@ Para RTSP, usar `CAMERA_URL` desde configuración; no copiar credenciales al com
 HTML + JS vanilla, sin build step. Chart.js por CDN. WebSocket para eventos y MJPEG para vídeo. Priorizar vídeo, personas, actividad y salud. Evitar dependencias visuales innecesarias.
 
 ## Tests
+
+Durante la iteración: solo el fichero o `-k <patrón>` afectado por el cambio
+en curso. No relanzar `pytest tests/` completo en cada paso — es ~90 s y
+cientos de líneas de salida que no aportan nada hasta que el cambio esté
+terminado.
 
 Antes de terminar:
 1. Tests afectados.
