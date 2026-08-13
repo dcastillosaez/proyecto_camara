@@ -435,12 +435,12 @@ Plans:
   5. La revalidación tras 120 s funciona y tres fallos consecutivos emiten IDENTITY_LOST
   6. Las inferencias faciales por minuto con una persona estática bajan al menos un 70% respecto a la Phase 23
 **Spec**: SPEC_v2.md §5.5
-**Plans:** 2/6 plans complete — `.planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/`
+**Plans:** 3/6 plans complete — `.planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/`
 
 Plans:
 - [x] 24-01-PLAN.md — TemporalVoter + IdentityState y los 5 parámetros de configuración (wave 1)
 - [x] 24-02-PLAN.md — IdentityStateMachine: 4 estados, revalidación, herencia de identidad y gate de FACE-11 (wave 2)
-- [ ] 24-03-PLAN.md — recognizer.py expone el score y retira su votación interna; tests de cota (wave 3)
+- [x] 24-03-PLAN.md — recognizer.py expone el score y retira su votación interna; tests de cota (wave 3)
 - [ ] 24-04-PLAN.md — identity_state en TrackRegistry y EventEngine.emit_identity (wave 3)
 - [ ] 24-05-PLAN.md — Cableado del pipeline: RecognitionWorker, manager y medición del criterio 6 (wave 4)
 - [ ] 24-06-PLAN.md — Puerta de fase: suite completa y trazabilidad de los 6 criterios (wave 5)
