@@ -106,3 +106,250 @@ class TemporalVoter:
         for tid in list(self._votes):
             if tid not in active_track_ids:
                 del self._votes[tid]
+
+
+@dataclass
+class _TrackIdentity:
+    """Estado de identidad de un track (patron `TrackState` de tracking.py)."""
+
+    state: IdentityState = IdentityState.UNKNOWN
+    person_id: int | None = None
+    confidence: float = 0.0
+    last_face_at: float = 0.0            # ultima inferencia facial de este track
+    last_revalidation_at: float = 0.0    # ultima revalidacion CON EXITO (D-06)
+    lost_at: float | None = None         # instante de entrada en TEMPORARILY_LOST
+    failed_revalidations: int = 0
+    recognized_emitted: bool = False     # PERSON_RECOGNIZED ya emitido (una vez)
+    unknown_emitted: bool = False        # UNKNOWN_PERSON ya emitido (una vez, D-02)
+
+
+class IdentityStateMachine:
+    """4 estados de identidad por track y sus transiciones (SPEC_v2.md §5.5, FACE-08).
+
+    Reloj inyectado: ningun metodo llama a time.monotonic(). Un solo hilo
+    (RecognitionWorker._loop), por eso no hay lock.
+
+    No construye Event: devuelve IdentityTransition y EventEngine traduce.
+    """
+
+    MAX_FAILED_REVALIDATIONS = 3   # criterio 5: tres ciclos de revalidacion (D-04)
+
+    def __init__(
+        self,
+        voter: TemporalVoter | None = None,
+        lost_ttl: float = 30.0,
+        revalidate_after: float = 120.0,
+        low_confidence: float = 0.55,
+    ) -> None:
+        self._voter = voter if voter is not None else TemporalVoter()
+        self._lost_ttl = lost_ttl
+        self._revalidate_after = revalidate_after
+        self._low_confidence = low_confidence
+        self._states: dict[int, _TrackIdentity] = {}
+
+    def state_of(self, track_id: int) -> IdentityState:
+        st = self._states.get(track_id)
+        return st.state if st is not None else IdentityState.UNKNOWN
+
+    def identity_of(self, track_id: int) -> tuple[int | None, float]:
+        """(person_id, confianza) solo si el track esta CONFIRMED."""
+        st = self._states.get(track_id)
+        if st is None or st.state is not IdentityState.CONFIRMED:
+            return None, 0.0
+        return st.person_id, st.confidence
+
+    def _claim_lost(self, person_id: int, now: float) -> bool:
+        """Un track nuevo reclama la identidad de un track perdido hace poco.
+
+        ByteTrack nunca reutiliza track_ids: al recuperar a una persona le asigna
+        un id nuevo. Sin esta busqueda POR person_id, cada reaparicion arrancaria
+        en UNKNOWN y emitiria un segundo PERSON_RECOGNIZED (rompe FACE-09 y
+        FACE-10 a la vez) — Pitfall 3 del RESEARCH.
+        """
+        for tid, st in list(self._states.items()):
+            if (
+                st.state is IdentityState.TEMPORARILY_LOST
+                and st.person_id == person_id
+                and st.lost_at is not None
+                and now - st.lost_at <= self._lost_ttl
+            ):
+                del self._states[tid]
+                self._voter.reset(tid)
+                return True
+        return False
+
+    def on_face_result(
+        self, track_id: int, person_id: int | None, score: float, now: float
+    ) -> IdentityTransition | None:
+        st = self._states.setdefault(track_id, _TrackIdentity())
+        st.last_face_at = now
+        self._voter.vote(track_id, person_id, score)
+        winner, conf = self._voter.verdict(track_id)
+        prev = st.state
+
+        if prev is IdentityState.UNKNOWN:
+            if person_id is None:
+                return None
+            # Pitfall 3: un solo match coherente basta para heredar una
+            # identidad perdida hace poco, sin re-votar (FACE-09/FACE-10).
+            if self._claim_lost(person_id, now):
+                st.state = IdentityState.CONFIRMED
+                st.person_id = person_id
+                st.confidence = score
+                st.failed_revalidations = 0
+                st.last_revalidation_at = now
+                st.recognized_emitted = True
+                return IdentityTransition(
+                    track_id,
+                    IdentityState.UNKNOWN,
+                    IdentityState.CONFIRMED,
+                    person_id=person_id,
+                    confidence=score,
+                    votes=self._voter.votes_for(track_id),
+                    window=self._voter.window,
+                    emits=False,
+                )
+            st.state = IdentityState.CANDIDATE
+            return IdentityTransition(
+                track_id,
+                IdentityState.UNKNOWN,
+                IdentityState.CANDIDATE,
+                votes=self._voter.votes_for(track_id),
+                window=self._voter.window,
+                emits=False,
+            )
+
+        if prev is IdentityState.CANDIDATE:
+            if winner is not None:
+                inherited = self._claim_lost(winner, now)
+                emits = False if inherited else not st.recognized_emitted
+                st.state = IdentityState.CONFIRMED
+                st.person_id = winner
+                st.confidence = conf
+                st.failed_revalidations = 0
+                st.last_revalidation_at = now
+                st.recognized_emitted = True
+                return IdentityTransition(
+                    track_id,
+                    IdentityState.CANDIDATE,
+                    IdentityState.CONFIRMED,
+                    person_id=winner,
+                    confidence=conf,
+                    votes=self._voter.votes_for(track_id),
+                    window=self._voter.window,
+                    emits=emits,
+                )
+            if (
+                self._voter.votes_for(track_id) >= self._voter.window
+                and self._voter.matched_votes(track_id) < self._voter.min_votes
+            ):
+                votes_n = self._voter.votes_for(track_id)
+                window_n = self._voter.window
+                emits = not st.unknown_emitted
+                st.state = IdentityState.UNKNOWN
+                st.unknown_emitted = True
+                st.person_id = None
+                self._voter.reset(track_id)
+                return IdentityTransition(
+                    track_id,
+                    IdentityState.CANDIDATE,
+                    IdentityState.UNKNOWN,
+                    votes=votes_n,
+                    window=window_n,
+                    emits=emits,
+                )
+            return None
+
+        if prev is IdentityState.CONFIRMED:
+            # Revalidacion completa (correccion de identidad, cuenta de
+            # fallos, IDENTITY_LOST) se anade en la Task 2. Aqui basta con
+            # refrescar la confianza cuando el veredicto sigue de acuerdo.
+            if winner == st.person_id and conf:
+                st.confidence = conf
+            return None
+
+        # TEMPORARILY_LOST: el MISMO track_id reaparece (ByteTrack no
+        # siempre pierde el id en una oclusion breve). Un solo match
+        # coherente basta: la identidad ya se establecio con N votos.
+        if person_id == st.person_id:
+            st.state = IdentityState.CONFIRMED
+            st.lost_at = None
+            st.failed_revalidations = 0
+            st.last_revalidation_at = now
+            return IdentityTransition(
+                track_id,
+                IdentityState.TEMPORARILY_LOST,
+                IdentityState.CONFIRMED,
+                person_id=st.person_id,
+                confidence=st.confidence,
+                votes=self._voter.votes_for(track_id),
+                window=self._voter.window,
+                emits=False,
+            )
+        return None
+
+    def on_track_lost(self, track_id: int, now: float) -> IdentityTransition | None:
+        st = self._states.get(track_id)
+        if st is None:
+            return None
+
+        if st.state is IdentityState.CONFIRMED:
+            st.state = IdentityState.TEMPORARILY_LOST
+            st.lost_at = now
+            self._voter.reset(track_id)
+            return IdentityTransition(
+                track_id,
+                IdentityState.CONFIRMED,
+                IdentityState.TEMPORARILY_LOST,
+                person_id=st.person_id,
+                confidence=st.confidence,
+                votes=0,
+                window=self._voter.window,
+                emits=False,
+            )
+
+        if st.state is IdentityState.CANDIDATE:
+            votes_n = self._voter.votes_for(track_id)
+            window_n = self._voter.window
+            emits = not st.unknown_emitted
+            del self._states[track_id]
+            self._voter.reset(track_id)
+            return IdentityTransition(
+                track_id,
+                IdentityState.CANDIDATE,
+                IdentityState.UNKNOWN,
+                votes=votes_n,
+                window=window_n,
+                emits=emits,
+            )
+
+        if st.state is IdentityState.UNKNOWN:
+            del self._states[track_id]
+            return None
+
+        return None  # ya estaba TEMPORARILY_LOST
+
+    def on_tick(self, now: float) -> list[IdentityTransition]:
+        out: list[IdentityTransition] = []
+        for tid in list(self._states):
+            st = self._states.get(tid)
+            if st is None:
+                continue
+            if (
+                st.state is IdentityState.TEMPORARILY_LOST
+                and st.lost_at is not None
+                and now - st.lost_at > self._lost_ttl
+            ):
+                person_id = st.person_id
+                del self._states[tid]
+                self._voter.reset(tid)
+                out.append(
+                    IdentityTransition(
+                        tid,
+                        IdentityState.TEMPORARILY_LOST,
+                        IdentityState.UNKNOWN,
+                        person_id=person_id,
+                        emits=True,
+                    )
+                )
+        return out
