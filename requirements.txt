@@ -23,4 +23,5 @@ PyYAML>=6.0
 prometheus-client>=0.21
 insightface>=0.7.3
 onnxruntime>=1.19
+onnx>=1.16
 scikit-image>=0.24

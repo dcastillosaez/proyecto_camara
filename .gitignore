@@ -47,3 +47,6 @@ third_party/
 Thumbs.db
 credentials.json
 data/token.json
+
+# Modelos ONNX descargados por scripts/fetch_models.py (Fase 25) — ~900 KB de binario
+models/
