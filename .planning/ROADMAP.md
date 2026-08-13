@@ -456,9 +456,9 @@ Plans:
   4. Dos personas distintas con ropa similar no se fusionan; tasa de falsos positivos documentada
   5. ReID corre como máximo 1 vez cada 2 s por track
 **Spec**: SPEC_v2.md ADR-04, §5.6
-**Plans**: 6 plans (5 waves)
+**Plans**: 1/6 plans complete (5 waves)
 Plans:
-- [ ] 25-01-PLAN.md — Modelo ONNX de OSNet (descarga + sha256 + eje de batch dinámico) y `ReIDEngine`
+- [x] 25-01-PLAN.md — Modelo ONNX de OSNet (descarga + sha256 + eje de batch dinámico) y `ReIDEngine`
 - [ ] 25-02-PLAN.md — `IdentityStateMachine.on_reid_result()`: herencia de identidad por apariencia
 - [ ] 25-03-PLAN.md — `TrackGallery`: ventana, umbral, conflicto, intervalo y expiración acotada
 - [ ] 25-04-PLAN.md — Vía ReID dentro de `RecognitionWorker` (criterios 3 y 5, modo solo-observación)

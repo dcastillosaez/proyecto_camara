@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Fase 25 (Re-identificacion, ReID) planificada: CONTEXT + RESEARCH (spike real del ONNX de OSNet ejecutado en esta maquina) + PATTERNS + VALIDATION + 6 PLAN.md (25-01..25-06, 5 waves), plan-checker superado sin blockers. Lista para /gsd:execute-phase 25. Fase 24 completa (6/6 planes, suite 377/377). Quedan 6 checkpoints con camara real de fases anteriores, sin relacion con esta planificacion (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
+stopped_at: "Ejecutado 25-01-PLAN.md (wave 1, primer plan de la Fase 25): modelo OSNet descargado con eje de batch dinamico y ReIDEngine verificado (512D L2-normalizado, p50 < 20ms). REID-01 cerrado. Quedan 25-02..25-06. Quedan 6 checkpoints con camara real de fases anteriores, sin relacion con esta fase (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
 last_updated: "2026-08-13"
 last_activity: 2026-08-13
 progress:
   total_phases: 22
   completed_phases: 8
-  total_plans: 19
-  completed_plans: 19
+  total_plans: 25
+  completed_plans: 20
   percent: 36
 previous_milestone:
   name: v1.2
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 + Fase 24 COMPLETOS** en código y tests. **Fase 25 planificada** (6 planes, 5 waves), lista para ejecutar.
+Phase: **Bloque A (17-22) + Fase 23 + Fase 24 COMPLETOS** en código y tests. **Fase 25 en ejecución** (1/6 planes completos, 25-01).
 Status: Bloque A cerrado (310/310), Fase 23 (Migración a InsightFace/
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
@@ -94,14 +94,16 @@ dentro de ese TTL — corregido con `TrackRegistry.frame_ids()`, publicado
 por `DetectionWorker` en cada frame.
 
 La Fase 25 (Re-identificación de personas, ReID) — depende de la Fase 24
-(ya completa) — está **planificada**: `.planning/phases/25-re-identificaci-n-de-personas-reid/`
+(ya completa) — está **en ejecución**: `.planning/phases/25-re-identificaci-n-de-personas-reid/`
 tiene CONTEXT, RESEARCH, PATTERNS, VALIDATION y 6 PLAN.md (25-01..25-06,
-5 waves), verificados por `gsd-plan-checker` sin blockers. El research
-ejecutó un spike real en esta máquina: descargó el ONNX de OSNet
-(`kornia/osnet`, sha256 `e78604f4...`), encontró que el export público
-tiene el eje de batch fijo a 16 (una inferencia suelta cuesta 84,5 ms,
-falla el criterio 1 por 4x) y verificó la reescritura a batch dinámico
-(grafo bit-idéntico, 4,97 ms p50 en batch 1). También resolvió cómo se
+5 waves), verificados por `gsd-plan-checker` sin blockers. `25-01` ya
+está completo: `scripts/fetch_models.py` descargó el ONNX de OSNet
+(`kornia/osnet`, sha256 `e78604f4...` verificado) y reescribió el eje de
+batch fijo (16) a dinámico (grafo bit-idéntico, idempotente), y
+`ReIDEngine` produce embeddings 512D L2-normalizados en ~5-12 ms p50 en
+CPU (criterio 1 del ROADMAP cumplido), degradando con `available=False`
+sin modelo o con batch fijo != 1. REID-01 cerrado — ver `25-01-SUMMARY.md`.
+Queda por ejecutar `25-02`..`25-06`: el research ya resolvió cómo se
 integra `TrackGallery` con `IdentityStateMachine` (método aditivo
 `on_reid_result()` que reutiliza `_claim_lost`, sin tocar
 `TemporalVoter`) y documentó una trampa de test crítica: con vectores de
@@ -154,7 +156,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 22 — Seguridad y memoria | A | ✓ Completa (código) | 2026-08-09 | ⧗ Prueba de resistencia de 8 h |
 | 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
-| 25 — Re-identificación (ReID) | B | — Planificada, lista para ejecutar | — | 6 planes en 5 waves (`25-01`..`25-06`), plan-checker superado sin blockers — ver `/gsd:execute-phase 25` |
+| 25 — Re-identificación (ReID) | B | ⧗ En ejecución (1/6 planes) | — | `25-01` completo (modelo OSNet + `ReIDEngine`, REID-01 cerrado); quedan `25-02`..`25-06` |
 | 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
 | 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
@@ -202,7 +204,7 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa (41 ficheros en `tests/`): **377/377 passing** (última ejecución 2026-08-13, verificada en `24-06` — puerta de fase de la Fase 24, sin cambios de código, misma cifra que tras `24-05`: cableado de `RecognitionWorker` a la FSM, `frame_ids()`/`set_frame_ids()`, recuperación de track por ruta real, reinicio del worker sin perder la FSM, y el criterio 6).
+Suite completa (42 ficheros en `tests/`): **381/381 passing** (última ejecución 2026-08-13, tras `25-01`: +4 tests en `tests/test_reid_engine.py` — 512D L2-normalizado, p50 < 20ms, degradación sin modelo, rechazo de batch fijo. Cifra anterior 377/377 verificada en `24-06`).
 La tabla por módulo de v1.2 (38 tests) quedó obsoleta al crecer la suite en v2.0 —
 ver `pytest tests/ -v` para el desglose actual por fichero.
 
@@ -230,6 +232,8 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - IdentityStateMachine en manager.py (Fase 24, 24-05): se construye FUERA de la factoría `_make_recognition` que registra el `WorkerSupervisor`, para que un reinicio del worker no pierda la identidad ya confirmada — mismo motivo por el que `_make_streaming` rescata `clients`
 - Criterio 6 (Fase 24, 24-05, D-01): medido sobre un track NO confirmado (persona estática cuyo reconocimiento nunca tiene éxito), no sobre uno ya identificado — con baseline real medido en la misma ejecución del test (16 inferencias/s sin FSM → 2 con FSM, 87.5% de reducción, umbral exigido ≥70%)
 - Puerta de fase (Fase 24, 24-06): la suite ya estaba verde (377/377) y FACE-07..FACE-11 ya marcados desde 24-01/24-02 al cierre de `24-05` — `24-06` no requirió ningún fix de código, solo trazabilidad criterio→comando→test en `24-06-SUMMARY.md`
+- ReIDEngine (Fase 25, 25-01): la salida cruda del modelo OSNet NO está L2-normalizada (norma ~52,4 medida) — `embed()` normaliza explícitamente antes de devolver, porque SPEC_v2.md §5.6 y el futuro coseno de `TrackGallery` dan por hecho un vector unitario
+- scripts/fetch_models.py (Fase 25, 25-01): el export público de OSNet trae el eje de batch fijo a 16 (una inferencia suelta costaría 84,5 ms en vez de 4,97 ms, criterio 1 fallado por 4x) — el script reescribe ese eje a simbólico antes de guardar el fichero en `models/` (gitignored), verificando sha256 y tamaño exacto antes de escribir; `ReIDEngine` además se autodeshabilita si detecta batch fijo != 1, por si el script no se ejecutó
 
 ### Pendiente manual (no es código)
 
@@ -248,20 +252,16 @@ Fase 23 por completamente validados en producción.
 ## Session Continuity
 
 Last session: 2026-08-13
-Stopped at: Ejecutado 24-06-PLAN.md (wave 5, puerta de fase — última de
-  la Fase 24). La suite completa ya estaba verde (377/377) y
-  FACE-07..FACE-11 ya estaban marcados `[x]` desde el cierre de `24-05`,
-  así que la puerta no requirió ningún fix de código: solo verificación
-  y trazabilidad. Los 6 criterios de éxito de ROADMAP § Phase 24 tienen
-  cada uno un comando `pytest -k` que los selecciona y pasa (código 0,
-  ninguno "no tests collected"), documentado en `24-06-SUMMARY.md` con
-  el escenario exacto del criterio 6 (D-01: track NO confirmado, 16
-  inferencias/s sin FSM -> 2 con FSM, 87.5% de reducción, umbral ≥70%),
-  el contador usado (`stats["face_inferences"]`, no `face_fps`) y las
-  consecuencias abiertas (regla `persona_desconocida` de
-  `config/rules.yaml`, columna `identity_state` sin persistir, código
-  muerto de `recognizer.py`, desajuste del CI Linux con
-  `python_functions = TEST_*`). **Fase 24 completa: 6/6 planes,
-  FACE-07..FACE-11 cerrados, suite 377/377.** Siguiente: planificar la
-  Fase 25 (Re-identificación de personas, ReID) con `/gsd:plan-phase 25`.
-Resume file: ninguno — Fase 24 cerrada, sin plan en ejecución.
+Stopped at: Ejecutado 25-01-PLAN.md (wave 1 de 5, primer plan de la Fase
+  25). Los 3 tasks completos: `scripts/fetch_models.py` descargó el ONNX
+  de OSNet (kornia/osnet, sha256 `e78604f4...` verificado) y reescribió
+  el eje de batch fijo (16) a dinámico — idempotente, `git status --short
+  models/` vacío (gitignored); `ReIDEngine` (backend/perception/reid/engine.py)
+  produce embeddings 512D float32 L2-normalizados en ~5-12 ms p50 en CPU
+  y se autodeshabilita ante modelo ausente o batch fijo != 1;
+  `tests/test_reid_engine.py` con 4 tests `TEST_*` (criterio 1 completo,
+  degradación, guarda de batch fijo) todos verdes. Suite completa
+  381/381 (377 previos + 4 nuevos). REID-01 cerrado. **Fase 25: 1/6
+  planes completos.** Siguiente: `/gsd:execute-phase 25` continúa con
+  `25-02` (`IdentityStateMachine.on_reid_result()`).
+Resume file: `.planning/phases/25-re-identificaci-n-de-personas-reid/25-02-PLAN.md`
