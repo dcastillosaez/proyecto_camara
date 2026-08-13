@@ -261,11 +261,60 @@ class IdentityStateMachine:
             return None
 
         if prev is IdentityState.CONFIRMED:
-            # Revalidacion completa (correccion de identidad, cuenta de
-            # fallos, IDENTITY_LOST) se anade en la Task 2. Aqui basta con
-            # refrescar la confianza cuando el veredicto sigue de acuerdo.
-            if winner == st.person_id and conf:
+            # OJO: el reset de exito mira el match de ESTE frame
+            # (person_id == st.person_id), no el veredicto agregado del
+            # voter. needs_recognition() solo dispara inferencias
+            # espaciadas por revalidate_after (una cada ~120s), asi que la
+            # ventana del voter conserva votos historicos durante varios
+            # ciclos: si el reset tambien aceptase "winner == st.person_id",
+            # una sola ventana con mayoria antigua enmascararia varios
+            # ciclos reales sin match y el criterio 5 (tres fallos) nunca
+            # se cumpliria con revalidaciones tan espaciadas.
+            if person_id == st.person_id:
+                st.failed_revalidations = 0
+                st.last_revalidation_at = now
+                st.confidence = conf or st.confidence
+                return None
+            if winner is not None and winner != st.person_id:
+                # El voter tiene mayoria para otra persona: corregir la
+                # identidad (preserva la re-verificacion que hoy da
+                # PersonRecognizer._votes, que 24-03 retira).
+                st.person_id = winner
                 st.confidence = conf
+                st.failed_revalidations = 0
+                st.last_revalidation_at = now
+                return IdentityTransition(
+                    track_id,
+                    IdentityState.CONFIRMED,
+                    IdentityState.CONFIRMED,
+                    person_id=winner,
+                    confidence=conf,
+                    votes=self._voter.votes_for(track_id),
+                    window=self._voter.window,
+                    emits=True,
+                )
+            if person_id is not None:
+                # Frame de otra persona aislado, sin mayoria en el voter:
+                # no secuestra el track ni cuenta como fallo de revalidacion.
+                return None
+            revalidation_due = (now - st.last_revalidation_at) >= self._revalidate_after
+            if not revalidation_due:
+                return None
+            st.failed_revalidations += 1
+            st.last_revalidation_at = now
+            if st.failed_revalidations >= self.MAX_FAILED_REVALIDATIONS:
+                st.state = IdentityState.UNKNOWN
+                st.person_id = None
+                st.recognized_emitted = False
+                self._voter.reset(track_id)
+                return IdentityTransition(
+                    track_id,
+                    IdentityState.CONFIRMED,
+                    IdentityState.UNKNOWN,
+                    emits=True,
+                    votes=self._voter.votes_for(track_id),
+                    window=self._voter.window,
+                )
             return None
 
         # TEMPORARILY_LOST: el MISMO track_id reaparece (ByteTrack no
@@ -329,7 +378,52 @@ class IdentityStateMachine:
 
         return None  # ya estaba TEMPORARILY_LOST
 
+    def needs_recognition(self, track_id: int, now: float) -> bool:
+        """A quien merece la pena hacerle inferencia facial ahora mismo (FACE-11).
+
+        Sustituye al filtro `person_id is None` de RecognitionWorker._next_candidate,
+        que reintentaba indefinidamente sobre los tracks que nunca llegan a
+        identificarse (~120 inferencias/min a 2 FPS, para siempre).
+        """
+        st = self._states.get(track_id)
+        if st is None:
+            return True                                    # track nuevo
+        if st.state is IdentityState.CANDIDATE:
+            return True                                    # votacion en curso
+        if st.state is IdentityState.TEMPORARILY_LOST:
+            return True                                    # intentar recuperar la identidad
+        if st.state is IdentityState.UNKNOWN:
+            # Ventana aun sin llenar: seguimos reuniendo evidencia.
+            if self._voter.votes_for(track_id) < self._voter.window:
+                return True
+            # Ventana agotada sin ningun match: backoff (criterio 6).
+            return (now - st.last_face_at) >= self._revalidate_after
+        # CONFIRMED
+        if st.confidence < self._low_confidence:            # D-03: confianza del voter
+            return True
+        return (now - st.last_face_at) >= self._revalidate_after
+
+    def on_active_tracks(self, active_ids: set[int], now: float) -> list[IdentityTransition]:
+        """Detecta tracks caidos comparando con los ids activos del TrackRegistry.
+
+        Los TEMPORARILY_LOST se saltan: existen precisamente para sobrevivir a
+        que el track desaparezca (Pitfall 2 del RESEARCH). El voter SI se poda
+        por active_ids; los estados de la FSM no.
+        """
+        out: list[IdentityTransition] = []
+        for tid in list(self._states):
+            if tid in active_ids:
+                continue
+            if self._states[tid].state is IdentityState.TEMPORARILY_LOST:
+                continue
+            t = self.on_track_lost(tid, now)
+            if t is not None:
+                out.append(t)
+        self._voter.prune(active_ids)
+        return out
+
     def on_tick(self, now: float) -> list[IdentityTransition]:
+        stale_ttl = self._lost_ttl + self._revalidate_after * self.MAX_FAILED_REVALIDATIONS
         out: list[IdentityTransition] = []
         for tid in list(self._states):
             st = self._states.get(tid)
@@ -352,4 +446,12 @@ class IdentityStateMachine:
                         emits=True,
                     )
                 )
+                continue
+            # Seguro de vida (invariante de la Fase 22): una entrada rancia
+            # desaparece aunque nadie llame on_active_tracks a tiempo. Un
+            # CONFIRMED que revalida cada revalidate_after refresca
+            # last_face_at y sobrevive.
+            if now - st.last_face_at > stale_ttl:
+                del self._states[tid]
+                self._voter.reset(tid)
         return out
