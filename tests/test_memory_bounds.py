@@ -23,6 +23,7 @@ from backend.events.bus import EventBus
 from backend.events.rules import RuleEngine
 from backend.events.types import Event, EventType
 from backend.observability.latency import LatencyTracker, Stage
+from backend.perception.face.identity import IdentityStateMachine, TemporalVoter
 from backend.pipeline.broker import Frame, FrameBroker
 from backend.pipeline.recording import RecordingWorker
 from backend.pipeline.tracking import TrackRegistry
@@ -69,7 +70,7 @@ def TEST_centroid_history_bounded():
 
 
 # ─── Las caches de PersonRecognizer indexadas por tracker_id se podan ────────
-# _cache, _last_attempt, _pending y _votes crecerian indefinidamente si no se
+# _cache, _last_attempt y _pending crecerian indefinidamente si no se
 # purgan los tracker_ids que ya no estan activos — ByteTrack nunca reutiliza
 # ids. prune(active_tracker_ids) debe dejar solo las entradas activas.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -79,14 +80,44 @@ def TEST_recognizer_cache_bounded(tmp_path):
         r._cache[tid] = (tid, "Someone")
         r._last_attempt[tid] = 0
         r._pending[tid] = []
-        r._votes[tid] = None
 
     r.prune(active_tracker_ids=set(range(9_990, 10_000)))
 
     assert len(r._cache) == 10
     assert len(r._last_attempt) == 10
     assert len(r._pending) == 10
-    assert len(r._votes) == 10
+
+
+# ─── TemporalVoter no acumula votos de tracks muertos ────────────────────────
+# ByteTrack asigna ids monotonamente crecientes y nunca los reutiliza: sin
+# prune(active_ids), _votes crece sin cota en un proceso 24/7.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_temporal_voter_bounded():
+    voter = TemporalVoter(window=8)
+    for tid in range(10_000):
+        voter.vote(tid, 1, 0.9)
+        voter.prune(set(range(max(0, tid - 5), tid + 1)))
+    assert len(voter._votes) <= 6
+
+
+# ─── IdentityStateMachine expira sus estados por tiempo, no por active_ids ───
+# TEMPORARILY_LOST existe para sobrevivir a que el track desaparezca, asi que no
+# se puede podar contra active_ids; la cota la dan lost_ttl y el TTL de estados
+# rancios de on_tick(). Medido con este mismo bucle: con un solo person_id en
+# juego, _claim_lost reclama la identidad TEMPORARILY_LOST del track anterior
+# en cuanto llega el siguiente track_id, así que _states se queda en 1 entrada
+# viva — el límite de 500 deja margen amplio (orden de magnitud, no el valor
+# exacto) frente a otras combinaciones de parámetros/identidades concurrentes.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_identity_state_machine_bounded():
+    fsm = IdentityStateMachine(TemporalVoter(window=8), lost_ttl=30.0,
+                                revalidate_after=120.0)
+    for tid in range(10_000):
+        now = float(tid)
+        fsm.on_face_result(tid, 1, 0.9, now)
+        fsm.on_active_tracks({tid}, now)
+        fsm.on_tick(now)
+    assert len(fsm._states) <= 500
 
 
 # ─── El debounce del RuleEngine se poda por antigüedad ────────────────────────
@@ -230,7 +261,7 @@ def TEST_no_growth_over_simulated_windows():
     registry = TrackRegistry()
     recognizer = PersonRecognizer.__new__(PersonRecognizer)
     recognizer._cache, recognizer._last_attempt = {}, {}
-    recognizer._pending, recognizer._votes = {}, {}
+    recognizer._pending = {}
     import threading
     recognizer._lock = threading.RLock()
     bus = EventBus(maxsize=1000)

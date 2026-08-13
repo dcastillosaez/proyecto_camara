@@ -245,8 +245,14 @@ def TEST_select_face_prefers_upper_half(tmp_path):
     assert called_cand.bbox == upper.bbox
 
 
-# ─── Re-verificación: el voto mayoritario corrige una identidad cacheada ─────
-def TEST_reverify_majority_vote_corrects_identity(tmp_path):
+# ─── El match es por frame: la evidencia temporal vive fuera del recognizer ───
+# Hasta la Fase 23 PersonRecognizer votaba por mayoria sobre las ultimas
+# VOTE_WINDOW=5 coincidencias. La Fase 24 retira esa capa: encadenarla delante de
+# TemporalVoter haria que los parametros configurados (window/min_votes/min_ratio)
+# no fueran los efectivos y el criterio 3 de la fase pasaria por accidente.
+# La correccion de una identidad equivocada la hace ahora IdentityStateMachine.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_match_is_per_frame_without_internal_vote(tmp_path):
     r, engine, _ = _make_recognizer(tmp_path)
     base = _unit_vec(17)
     other = _unit_vec(18)
@@ -261,12 +267,26 @@ def TEST_reverify_majority_vote_corrects_identity(tmp_path):
 
     engine.embed.return_value = other  # a partir de aqui la cara "es" B
     r2, _, _ = r.process_crop(_FAKE_FRAME, tracker_id=1)
-    assert r2 == pid_a                      # empate [A,B] -> sin flip
-    assert r.get_cached(1) == (pid_a, None)
-
-    r3, _, _ = r.process_crop(_FAKE_FRAME, tracker_id=1)
-    assert r3 == pid_b                      # mayoria [A,B,B] -> corrige
+    assert r2 == pid_b                      # sin voto interno: la 2a llamada ya es B
     assert r.get_cached(1) == (pid_b, None)
+
+
+# ─── process_crop_scored expone el score real del match ──────────────────────
+def TEST_process_crop_scored_returns_similarity(tmp_path):
+    r, engine, _ = _make_recognizer(tmp_path)
+    enc = _unit_vec(23)
+    with r._lock:
+        pid = r._register(enc)
+
+    engine.detect.return_value = [_cand()]
+    engine.embed.return_value = enc
+
+    result = r.process_crop_scored(_FAKE_FRAME, tracker_id=1)
+    assert result.person_id == pid
+    assert 0.0 < result.score <= 1.0
+
+    wrapper_result = r.process_crop(_FAKE_FRAME, tracker_id=1)
+    assert wrapper_result == (result.person_id, result.name, result.is_new)
 
 
 # ─── Cara desconocida durante re-verify no crea persona nueva ────────────────
