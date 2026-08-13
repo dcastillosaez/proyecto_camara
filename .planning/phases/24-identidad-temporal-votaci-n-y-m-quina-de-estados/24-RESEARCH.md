@@ -874,9 +874,15 @@ uno. Verificado ejecutando `pytest --collect-only` con esa ruta.
 | A6 | `on_track_lost` se detecta por diff de `active_ids()` entre iteraciones del worker | Flujo objetivo | `TrackRegistry.prune()` sí devuelve los expirados (`tracking.py:98-106`) pero `DetectionWorker` ignora el retorno (`detection.py:185`), y `recognition.py:161-170` documenta que depender de quién poda primero sería una carrera |
 | A7 | El estado `TEMPORARILY_LOST` se indexa también por `person_id` para permitir herencia entre `track_id`s | Pitfall 3 | Sin esto, FACE-10 no se cumple: ByteTrack nunca reutiliza ids |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Las 5 preguntas quedaron cerradas antes de ejecutar. Ver
+> `24-CONTEXT.md` § "Decisiones resueltas tras el research" (D-01..D-04) y
+> § "Decisiones resueltas tras la verificación de planes" (D-05, D-06).
 
 1. **¿Qué payload llevan los tres eventos de identidad?**
+   **RESOLVED:** se adopta la recomendación de abajo, implementada en `24-04-PLAN.md`
+   (campos de primer nivel + `payload` con estado/votos/ventana). Aditivo, no rompe nada.
    - Lo que sabemos: no hay precedente — ninguno se emite hoy. El `Event` ya tiene
      `track_id`, `person_id`, `person_name`, `confidence`, `bbox`.
    - Lo que falta: si `PERSON_RECOGNIZED` debe llevar el estado y el número de votos
@@ -886,6 +892,8 @@ uno. Verificado ejecutando `pytest --collect-only` con esa ruta.
      aditivo y no rompe nada.
 
 2. **¿`UNKNOWN_PERSON` se emite, y cuándo?**
+   **RESOLVED (D-02):** sí, en la transición `CANDIDATE → UNKNOWN`, una sola vez por
+   track — coincide con la recomendación de abajo.
    - Lo que sabemos: CONTEXT lo lista entre los tipos a usar, pero las transiciones
      locked no dicen en cuál se emite. Los criterios de éxito 1-6 no lo mencionan.
    - Lo que falta: ¿en `CANDIDATE → UNKNOWN`? ¿al primer resultado sin match de un
@@ -896,6 +904,8 @@ uno. Verificado ejecutando `pytest --collect-only` con esa ruta.
      frente a la regla `persona_desconocida` de `config/rules.yaml`.
 
 3. **¿Qué significa "confianza del track es baja" como disparador de FACE-11?**
+   **RESOLVED (D-03):** la confianza agregada del voter (`verdict()[1]`), no la de YOLO
+   — coincide con la recomendación de abajo.
    - Lo que sabemos: `TrackState.confidence` (`tracking.py:24`) es la confianza de
      **detección de YOLO**, no de identidad.
    - Lo que falta: si el disparador mira la confianza de detección o la agregada del
@@ -905,11 +915,15 @@ uno. Verificado ejecutando `pytest --collect-only` con esa ruta.
 
 4. **¿`revalidate_after=120 s` se mide desde la confirmación o desde el último
    `process_crop`?**
-   - Recomendación: desde la última inferencia facial de ese track. Es lo que hace
+   **RESOLVED (D-06):** desde la última revalidación **con éxito**
+   (`last_revalidation_at`); cada match coherente reinicia el contador.
+   - Recomendación original: desde la última inferencia facial de ese track. Es lo que hace
      medible el criterio 6 y evita ráfagas tras una revalidación fallida.
 
 5. **¿Los 3 fallos de revalidación que emiten `IDENTITY_LOST` son consecutivos en
    inferencias o en ciclos de revalidación?**
+   **RESOLVED (D-04):** 3 ciclos de revalidación, no 3 inferencias — coincide con la
+   recomendación de abajo.
    - Lo que sabemos: CONTEXT dice "tras 3 revalidaciones fallidas consecutivas".
    - Recomendación: 3 revalidaciones (≈360 s de reloj), no 3 inferencias. Consistente
      con la literalidad y testeable con reloj simulado.

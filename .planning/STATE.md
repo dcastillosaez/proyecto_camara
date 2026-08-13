@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Fase 23 (Migracion a InsightFace/ArcFace) completa en codigo y tests: 326/326 pasan. Puerta bloqueante superada con evidencia real. Quedan 6 checkpoints con camara real pendientes de accion del usuario (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4). Siguiente: Fase 24 (Identidad temporal), sin CONTEXT/PLAN escritos todavia."
-last_updated: "2026-08-10"
-last_activity: 2026-08-10
+stopped_at: "Fase 24 (Identidad temporal) planificada: CONTEXT + RESEARCH + PATTERNS + VALIDATION + 6 PLAN.md (24-01..24-06, 5 waves), 2 rondas de plan-checker superadas (bug de deteccion de track perdido via TTL de active_ids() corregido con TrackRegistry.frame_ids(); Open Questions de RESEARCH resueltas). Lista para /gsd:execute-phase 24. Quedan 6 checkpoints con camara real de fases anteriores, sin relacion con esta planificacion (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
+last_updated: "2026-08-13"
+last_activity: 2026-08-13
 progress:
   total_phases: 22
   completed_phases: 7
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 COMPLETOS** en código y tests. Siguiente: Fase 24 (bloque B, sin CONTEXT/PLAN).
+Phase: **Bloque A (17-22) + Fase 23 COMPLETOS** en código y tests. **Fase 24 planificada** (6 planes, 5 waves), lista para ejecutar.
 Status: Bloque A cerrado (310/310) y Fase 23 (Migración a InsightFace/
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
@@ -67,16 +67,24 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 ## Siguiente paso
 
 ```
-/gsd:plan-phase 24
+/gsd:execute-phase 24
 ```
 
-La Fase 24 (Identidad temporal — votación y máquina de estados) abre
-con `IdentityStateMachine`/`TemporalVoter` (4 estados: UNKNOWN →
-CANDIDATE → CONFIRMED → TEMPORARILY_LOST) y depende de la Fase 23 en
-código (ya completa), no de su checkpoint de validación en vivo. No
-tiene CONTEXT/PLAN escritos todavía — a diferencia del bloque A y la
-Fase 23, necesita `/gsd:plan-phase` o una sesión de planificación
-dedicada antes de ejecutarse.
+La Fase 24 (Identidad temporal — votación y máquina de estados) introduce
+`IdentityStateMachine`/`TemporalVoter` (4 estados: UNKNOWN → CANDIDATE →
+CONFIRMED → TEMPORARILY_LOST) y depende de la Fase 23 en código (ya
+completa), no de su checkpoint de validación en vivo. Planificación
+completa: `.planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/`
+tiene CONTEXT, RESEARCH, PATTERNS, VALIDATION y 6 PLAN.md (24-01..24-06,
+5 waves), verificados en 2 rondas de plan-checker. El research corrigió
+la lista de ficheros de `SPEC_v2.md` §9 (el fichero real no es
+`perception/face/engine.py` sino `pipeline/recognition.py` +
+`pipeline/manager.py`), y el plan-checker encontró y se corrigió un bug
+real: `_sync_identity` dependía del TTL de 30 s de `TrackRegistry.active_ids()`
+para detectar tracks perdidos, lo que habría producido un segundo
+`PERSON_RECOGNIZED` al recuperar una identidad con un `track_id` nuevo
+dentro de ese TTL — corregido con `TrackRegistry.frame_ids()`, publicado
+por `DetectionWorker` en cada frame.
 
 Nota histórica — la Fase 23 (ya cerrada) abrió con una **puerta
 bloqueante** (verificar que `insightface` + `onnxruntime` instalan y
@@ -122,7 +130,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 21 — Observabilidad | A | ✓ Completa (código) | 2026-08-09 | ⧗ Coste de instrumentación + línea base de 30 min |
 | 22 — Seguridad y memoria | A | ✓ Completa (código) | 2026-08-09 | ⧗ Prueba de resistencia de 8 h |
 | 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
-| 24 — Identidad temporal | B | — Sin planificar | — | Depende de 23 (ya completa) |
+| 24 — Identidad temporal | B | — Planificada, lista para ejecutar | — | 6 planes en 5 waves (`24-01`..`24-06`), 2 rondas de plan-checker superadas — ver `/gsd:execute-phase 24` |
 | 25 — Re-identificación (ReID) | B | — Sin planificar | — | Depende de 24 |
 | 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
 | 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
