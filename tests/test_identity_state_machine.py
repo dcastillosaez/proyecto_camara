@@ -384,3 +384,99 @@ def TEST_stale_states_are_evicted_by_on_tick():
     stale_ttl = 30.0 + 120.0 * IdentityStateMachine.MAX_FAILED_REVALIDATIONS
     fsm.on_tick(stale_ttl + 1.0)
     assert 1 not in fsm._states
+
+
+# ─── Fase 25 — herencia de identidad por apariencia (REID-02/REID-03) ────────
+# ReID entra por la FSM (on_reid_result), nunca por el worker: resolver la
+# herencia fuera de la FSM deja huerfana la entrada TEMPORARILY_LOST en
+# _states, y 30 s despues on_tick() emite un IDENTITY_LOST espurio de una
+# persona que el sistema tiene delante y ya reetiquetada (Pitfall 4 del
+# RESEARCH). Solo _claim_lost() limpia esa entrada y es privado de la FSM.
+
+
+def TEST_reid_inherits_identity_from_lost_track():
+    fsm = _fsm()
+    for t in (0.0, 1.0, 2.0):
+        fsm.on_face_result(1, 7, 0.7, now=t)          # track 1 -> CONFIRMED como persona 7
+    assert fsm.state_of(1) is IdentityState.CONFIRMED
+    fsm.on_track_lost(1, now=10.0)                     # se gira / desaparece
+    tr = fsm.on_reid_result(2, 7, 0.85, now=15.0)      # reaparece con track_id NUEVO, sin cara
+    assert tr is not None
+    assert tr.to_state is IdentityState.CONFIRMED
+    assert tr.person_id == 7
+    assert tr.emits is False, "criterio 3: misma visita, no un 2o PERSON_RECOGNIZED"
+    assert tr.votes == 0
+    assert fsm.identity_of(2) == (7, 0.85)
+    assert fsm.state_of(1) is IdentityState.UNKNOWN    # la entrada vieja fue reclamada
+
+
+def TEST_reid_does_not_vote_in_temporal_voter():
+    fsm = _fsm()
+    for t in (0.0, 1.0, 2.0):
+        fsm.on_face_result(1, 7, 0.7, now=t)
+    fsm.on_track_lost(1, now=10.0)
+    fsm.on_reid_result(2, 7, 0.9, now=15.0)
+    # Un voto de apariencia invalidaria los parametros medidos de FACE-07.
+    assert fsm._voter.votes_for(2) == 0
+
+
+def TEST_reid_does_not_hijack_confirmed_or_candidate_track():
+    fsm = _fsm(min_votes=3)
+    fsm.on_face_result(2, 9, 0.7, now=0.0)
+    fsm.on_face_result(2, 9, 0.7, now=1.0)
+    fsm.on_face_result(2, 9, 0.7, now=2.0)
+    assert fsm.state_of(2) is IdentityState.CONFIRMED
+    tr2 = fsm.on_reid_result(2, 7, 0.99, now=3.0)
+    assert tr2 is None
+    assert fsm.identity_of(2)[0] == 9
+
+    fsm.on_face_result(3, 5, 0.7, now=0.0)   # un solo voto: sigue en votacion
+    assert fsm.state_of(3) is IdentityState.CANDIDATE
+    tr3 = fsm.on_reid_result(3, 7, 0.99, now=1.0)
+    assert tr3 is None
+    assert fsm.state_of(3) is IdentityState.CANDIDATE
+
+
+def TEST_reid_ignored_when_track_has_face_evidence():
+    fsm = _fsm()
+    fsm.on_face_result(4, 7, 0.7, now=0.0)   # UNKNOWN -> CANDIDATE, pero ya con voto facial
+    assert fsm._voter.matched_votes(4) > 0
+    tr = fsm.on_reid_result(4, 7, 0.99, now=1.0)
+    assert tr is None
+
+
+def TEST_reid_without_lost_identity_does_nothing():
+    fsm = _fsm()
+    tr = fsm.on_reid_result(2, 7, 0.85, now=0.0)
+    assert tr is None
+    assert fsm.state_of(2) is IdentityState.UNKNOWN
+
+
+def TEST_reid_no_spurious_identity_lost():
+    """Pitfall 4, el test que justifica todo el diseño."""
+    fsm = _fsm(lost_ttl=30.0)
+    for t in (0.0, 1.0, 2.0):
+        fsm.on_face_result(1, 7, 0.7, now=t)
+    fsm.on_track_lost(1, now=10.0)
+    assert fsm.on_reid_result(2, 7, 0.85, now=15.0) is not None
+    transitions = fsm.on_tick(now=10.0 + 30.0 + 1.0)   # lost_ttl + epsilon
+    assert transitions == [], (
+        "on_tick emitio una transicion tras heredar por ReID: la entrada "
+        "TEMPORARILY_LOST quedo huerfana y produciria un IDENTITY_LOST espurio "
+        "para alguien que esta delante de la camara (Pitfall 4)"
+    )
+    assert fsm.state_of(2) is IdentityState.CONFIRMED
+
+
+def TEST_reid_inherited_track_survives_stale_sweep():
+    """Pitfall 5: last_face_at se fijo al heredar, la entrada no se barre por
+    rancia en el siguiente on_tick cercano."""
+    fsm = _fsm()
+    for t in (0.0, 1.0, 2.0):
+        fsm.on_face_result(1, 7, 0.7, now=t)
+    fsm.on_track_lost(1, now=10.0)
+    fsm.on_reid_result(2, 7, 0.85, now=15.0)
+    assert fsm.state_of(2) is IdentityState.CONFIRMED
+
+    fsm.on_tick(now=16.0)
+    assert fsm.state_of(2) is IdentityState.CONFIRMED
