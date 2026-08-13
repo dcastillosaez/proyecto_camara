@@ -12,6 +12,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from backend.perception.face.identity import IdentityState
+
 
 @dataclass
 class TrackState:
@@ -27,6 +29,9 @@ class TrackState:
     zone_entry_times: dict[str, float] = field(default_factory=dict)
     person_id: int | None = None
     person_name: str | None = None
+    # Estado de identidad de la FSM (Fase 24, FACE-08). Escritor unico:
+    # RecognitionWorker, igual que person_id/person_name.
+    identity_state: IdentityState = IdentityState.UNKNOWN
 
 
 class TrackRegistry:
@@ -35,7 +40,8 @@ class TrackRegistry:
 
     Se prohibe que dos workers escriban el mismo campo: DetectionWorker es
     el unico escritor de bbox/confidence/centroid_history; RecognitionWorker
-    es el unico escritor de person_id/person_name via set_identity.
+    es el unico escritor de person_id/person_name/identity_state via
+    set_identity/set_identity_state.
     """
 
     def __init__(self, history_len: int = 150) -> None:
@@ -94,6 +100,12 @@ class TrackRegistry:
             if ts is not None:
                 ts.person_id = person_id
                 ts.person_name = name
+
+    def set_identity_state(self, track_id: int, state: IdentityState) -> None:
+        with self._lock:
+            ts = self._tracks.get(track_id)
+            if ts is not None:
+                ts.identity_state = state
 
     def prune(self, now: float, ttl: float = 30.0) -> list[int]:
         """Elimina tracks sin actualizar desde hace mas de ttl. Devuelve los ids expirados."""

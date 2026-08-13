@@ -7,6 +7,7 @@ import threading
 import numpy as np
 import pytest
 
+from backend.perception.face.identity import IdentityState
 from backend.pipeline.tracking import TrackRegistry
 
 
@@ -95,3 +96,29 @@ def test_registry_does_not_grow_unbounded():
             reg.prune(now=float(i), ttl=5.0)
     reg.prune(now=1_100.0, ttl=5.0)
     assert len(reg.snapshot()) < 20
+
+
+# ─── identity_state (Fase 24, FACE-08) ────────────────────────────────────────
+def TEST_identity_state_defaults_to_unknown():
+    reg = TrackRegistry()
+    reg.update_from_detections(_FakeTracked([1]), now=0.0)
+    ts = reg.get(1)
+    assert ts.identity_state is IdentityState.UNKNOWN
+
+
+def TEST_set_identity_state_updates_track():
+    reg = TrackRegistry()
+    reg.update_from_detections(_FakeTracked([1]), now=0.0)
+    reg.set_identity_state(1, IdentityState.CONFIRMED)
+    assert reg.snapshot()[1].identity_state is IdentityState.CONFIRMED
+
+
+def TEST_set_identity_state_on_missing_track_is_noop():
+    reg = TrackRegistry()
+    reg.set_identity_state(999, IdentityState.CONFIRMED)
+    assert reg.get(999) is None
+
+
+def TEST_identity_state_serialises_as_string():
+    assert IdentityState.CONFIRMED == "CONFIRMED"
+    assert str(IdentityState.CONFIRMED.value) == "CONFIRMED"
