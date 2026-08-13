@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 COMPLETOS** en código y tests. **Fase 24 en ejecución** (4/6 planes — `24-01`, `24-02`, `24-03`, `24-04` completos).
+Phase: **Bloque A (17-22) + Fase 23 COMPLETOS** en código y tests. **Fase 24 en ejecución** (5/6 planes — `24-01`, `24-02`, `24-03`, `24-04`, `24-05` completos).
 Status: Bloque A cerrado (310/310) y Fase 23 (Migración a InsightFace/
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
@@ -130,7 +130,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 21 — Observabilidad | A | ✓ Completa (código) | 2026-08-09 | ⧗ Coste de instrumentación + línea base de 30 min |
 | 22 — Seguridad y memoria | A | ✓ Completa (código) | 2026-08-09 | ⧗ Prueba de resistencia de 8 h |
 | 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
-| 24 — Identidad temporal | B | ⧗ En ejecución (4/6 planes) | — | `24-01` completo (`TemporalVoter`, `IdentityState`/`IdentityTransition`, 5 parámetros en `Settings`, FACE-07 cerrado); `24-02` completo (`IdentityStateMachine` — 4 estados, 6 transiciones, revalidación, herencia de identidad, `needs_recognition`; FACE-08..FACE-11 cerrados); `24-03` completo (`backend/recognizer.py` expone `FaceResult`/`process_crop_scored()` con el score real, retirada la votación interna `_votes`/`VOTE_WINDOW`, cota de memoria demostrada con 10.000 tracks); `24-04` completo (`TrackState.identity_state`+`TrackRegistry.set_identity_state`, `EventEngine.emit_identity()` — los 3 eventos de identidad, delegando en `_publish`, sin pisar el `WARNING` de `UNKNOWN_PERSON`); quedan `24-05`..`24-06` |
+| 24 — Identidad temporal | B | ⧗ En ejecución (5/6 planes) | — | `24-01` completo (`TemporalVoter`, `IdentityState`/`IdentityTransition`, 5 parámetros en `Settings`, FACE-07 cerrado); `24-02` completo (`IdentityStateMachine` — 4 estados, 6 transiciones, revalidación, herencia de identidad, `needs_recognition`; FACE-08..FACE-11 cerrados); `24-03` completo (`backend/recognizer.py` expone `FaceResult`/`process_crop_scored()` con el score real, retirada la votación interna `_votes`/`VOTE_WINDOW`, cota de memoria demostrada con 10.000 tracks); `24-04` completo (`TrackState.identity_state`+`TrackRegistry.set_identity_state`, `EventEngine.emit_identity()` — los 3 eventos de identidad, delegando en `_publish`, sin pisar el `WARNING` de `UNKNOWN_PERSON`); `24-05` completo (`RecognitionWorker` cableado a la FSM: `needs_recognition()` sustituye el gate ciego, `TrackRegistry.frame_ids()` corrige el bug D-05 de detección de tracks perdidos por TTL, `manager.py`/`main.py` inyectan la FSM y `event_engine`, criterio 6 medido con baseline real: 87.5% de reducción); queda `24-06` (puerta de fase) |
 | 25 — Re-identificación (ReID) | B | — Sin planificar | — | Depende de 24 |
 | 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
 | 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
@@ -179,7 +179,7 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa (41 ficheros en `tests/`): **371/371 passing** (última ejecución 2026-08-13, tras 24-04: +10 tests netos — 4 de `identity_state`/`set_identity_state` en `TrackRegistry`, 6 de `emit_identity` en `EventEngine`).
+Suite completa (41 ficheros en `tests/`): **377/377 passing** (última ejecución 2026-08-13, tras 24-05: +6 tests netos — cableado de `RecognitionWorker` a la FSM, `frame_ids()`/`set_frame_ids()`, recuperación de track por ruta real, reinicio del worker sin perder la FSM, y el criterio 6).
 La tabla por módulo de v1.2 (38 tests) quedó obsoleta al crecer la suite en v2.0 —
 ver `pytest tests/ -v` para el desglose actual por fichero.
 
@@ -203,6 +203,9 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - IdentityStateMachine (Fase 24, 24-02): el reset del contador de fallos de revalidación exige coincidencia del frame actual (`person_id == st.person_id`), no el veredicto agregado del voter — necesario porque `needs_recognition()` espacia las inferencias ~120 s y el voter retiene votos históricos varios ciclos
 - PersonRecognizer (Fase 24, 24-03): retirada por completo la votación interna por mayoría (`_votes`/`VOTE_WINDOW=5`) — mantenerla habría encadenado dos votaciones delante de `TemporalVoter`, invalidando sus parámetros configurados; el match ahora es por frame y `process_crop_scored()` expone el score real para que la agregación temporal viva solo en `TemporalVoter`/`IdentityStateMachine`
 - EventEngine.emit_identity (Fase 24, 24-04): nunca pasa `severity=` explícita, para que `UNKNOWN_PERSON` conserve el `WARNING` por defecto del catálogo (`_apply_default_severity` solo actúa si `severity` no está en `model_fields_set`); las transiciones intermedias (destino `CANDIDATE`/`TEMPORARILY_LOST`) no generan evento — la UI las lee directamente del `TrackRegistry`
+- RecognitionWorker/TrackRegistry (Fase 24, 24-05, D-05 bloqueante): `_sync_identity` detecta tracks perdidos con `TrackRegistry.frame_ids()` (el set exacto de tracks del frame actual, escrito por `DetectionWorker`), nunca con `active_ids()` (TTL de 30s de `prune()`) — con `active_ids()`, un track recuperado con un `track_id` nuevo dentro del TTL habría confirmado como visita nueva en vez de heredar la identidad (segundo `PERSON_RECOGNIZED`, rompe FACE-10). `set_frame_ids()` se publica ANTES de la guarda `if event_engine is None` en `_emit_track_lifecycle`, porque la construcción por defecto de `DetectionWorker` no lleva `event_engine`
+- IdentityStateMachine en manager.py (Fase 24, 24-05): se construye FUERA de la factoría `_make_recognition` que registra el `WorkerSupervisor`, para que un reinicio del worker no pierda la identidad ya confirmada — mismo motivo por el que `_make_streaming` rescata `clients`
+- Criterio 6 (Fase 24, 24-05, D-01): medido sobre un track NO confirmado (persona estática cuyo reconocimiento nunca tiene éxito), no sobre uno ya identificado — con baseline real medido en la misma ejecución del test (16 inferencias/s sin FSM → 2 con FSM, 87.5% de reducción, umbral exigido ≥70%)
 
 ### Pendiente manual (no es código)
 
@@ -221,21 +224,23 @@ Fase 23 por completamente validados en producción.
 ## Session Continuity
 
 Last session: 2026-08-13
-Stopped at: Ejecutado 24-04-PLAN.md (wave 3 de la Fase 24, segundo de dos
-  planes paralelos de esa wave — `24-03` completo previamente). `TrackState`
-  gana `identity_state` (default `IdentityState.UNKNOWN`) con escritor único
-  `RecognitionWorker` vía `TrackRegistry.set_identity_state()`, mismo `RLock`
-  que `set_identity`. `EventEngine.emit_identity()` traduce una
-  `IdentityTransition` a `PERSON_RECOGNIZED`/`UNKNOWN_PERSON`/`IDENTITY_LOST`
-  delegando siempre en `_publish` (nunca construye `Event` a mano), sin pasar
-  `severity=` explícita para conservar el `WARNING` por defecto de
-  `UNKNOWN_PERSON`; las transiciones silenciosas (`emits=False`) e
-  intermedias (destino `CANDIDATE`/`TEMPORARILY_LOST`) no publican nada.
-  10 tests nuevos (4 en `test_track_registry.py`, 6 en `test_event_engine.py`).
-  Suite completa 371/371. Nota lateral documentada sin actuar: `config/
-  rules.yaml` tiene una regla `persona_desconocida` sobre `LINE_CROSSED` +
-  `person: unknown` que duplicaría notificaciones si se añade una regla
-  nueva para `UNKNOWN_PERSON` sin retirar la existente — pendiente para
-  cuando se cablee el pipeline real. Siguiente: 24-05-PLAN.md (cableado del
-  pipeline: RecognitionWorker, manager y medición del criterio 6, wave 4).
-Resume file: .planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/24-05-PLAN.md
+Stopped at: Ejecutado 24-05-PLAN.md (wave 4 de la Fase 24, el plan mas
+  revisado — dos rondas de plan-checker encontraron bugs reales, no solo de
+  calidad de plan). `RecognitionWorker` pasa a ser el dueño del ciclo de vida
+  de la identidad: `needs_recognition()` sustituye el gate ciego `person_id
+  is None` (FACE-11), escribe `identity_state` en el registry y publica los
+  eventos de identidad vía `EventEngine.emit_identity` desde su propio hilo,
+  sin `await`. `TrackRegistry.set_frame_ids()`/`frame_ids()` (D-05,
+  bloqueante): `_sync_identity` detecta tracks perdidos por el set exacto del
+  frame actual, no por el TTL de 30s de `active_ids()` — corregido tras el
+  plan-checker encontrar que la version anterior habria duplicado
+  `PERSON_RECOGNIZED` al recuperar un track con `track_id` nuevo dentro del
+  TTL. `manager.py` construye la `IdentityStateMachine` fuera de la factoria
+  del supervisor (sobrevive a un reinicio del worker) y le pasa el
+  `event_engine` que antes no recibia; `main.py` inyecta 6 parametros desde
+  `Settings`. Criterio 6 medido con baseline real en el mismo test: 16
+  inferencias/s sin FSM -> 2 con FSM (87.5% de reduccion, D-01: sobre un
+  track NO confirmado). 6 tests nuevos. Suite completa 377/377. Siguiente:
+  24-06-PLAN.md (puerta de fase: suite completa y trazabilidad de los 6
+  criterios de exito).
+Resume file: .planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/24-06-PLAN.md
