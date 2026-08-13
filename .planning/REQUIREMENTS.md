@@ -214,10 +214,10 @@
 - [x] **FACE-05**: Existe un procedimiento de re-enrolamiento masivo desde las imágenes de la galería que reporta identidades migradas y fallidas
 - [x] **FACE-06**: `dlib` y `face-recognition` dejan de ser dependencias del proyecto
 - [x] **FACE-07**: Una identidad solo se confirma tras N votos coherentes en una ventana deslizante
-- [ ] **FACE-08**: Cada track tiene un estado de identidad explícito: UNKNOWN, CANDIDATE, CONFIRMED o TEMPORARILY_LOST
-- [ ] **FACE-09**: Una visita de una persona conocida genera un único evento de reconocimiento, no uno por frame
-- [ ] **FACE-10**: La pérdida y recuperación de un track no crea identidades duplicadas
-- [ ] **FACE-11**: El reconocimiento se dispara por evento (track nuevo, confianza baja, revalidación vencida), no ciegamente cada N frames
+- [x] **FACE-08**: Cada track tiene un estado de identidad explícito: UNKNOWN, CANDIDATE, CONFIRMED o TEMPORARILY_LOST
+- [x] **FACE-09**: Una visita de una persona conocida genera un único evento de reconocimiento, no uno por frame
+- [x] **FACE-10**: La pérdida y recuperación de un track no crea identidades duplicadas
+- [x] **FACE-11**: El reconocimiento se dispara por evento (track nuevo, confianza baja, revalidación vencida), no ciegamente cada N frames
 
 ### Re-identificación (REID)
 

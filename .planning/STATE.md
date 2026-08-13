@@ -9,8 +9,8 @@ last_activity: 2026-08-13
 progress:
   total_phases: 22
   completed_phases: 7
-  total_plans: 12
-  completed_plans: 12
+  total_plans: 13
+  completed_plans: 13
   percent: 32
 previous_milestone:
   name: v1.2
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 COMPLETOS** en código y tests. **Fase 24 en ejecución** (1/6 planes — `24-01` completo).
+Phase: **Bloque A (17-22) + Fase 23 COMPLETOS** en código y tests. **Fase 24 en ejecución** (2/6 planes — `24-01`, `24-02` completos).
 Status: Bloque A cerrado (310/310) y Fase 23 (Migración a InsightFace/
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
@@ -130,7 +130,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 21 — Observabilidad | A | ✓ Completa (código) | 2026-08-09 | ⧗ Coste de instrumentación + línea base de 30 min |
 | 22 — Seguridad y memoria | A | ✓ Completa (código) | 2026-08-09 | ⧗ Prueba de resistencia de 8 h |
 | 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
-| 24 — Identidad temporal | B | ⧗ En ejecución (1/6 planes) | — | `24-01` completo (`TemporalVoter`, `IdentityState`/`IdentityTransition`, 5 parámetros en `Settings`, FACE-07 cerrado); quedan `24-02`..`24-06` |
+| 24 — Identidad temporal | B | ⧗ En ejecución (2/6 planes) | — | `24-01` completo (`TemporalVoter`, `IdentityState`/`IdentityTransition`, 5 parámetros en `Settings`, FACE-07 cerrado); `24-02` completo (`IdentityStateMachine` — 4 estados, 6 transiciones, revalidación, herencia de identidad, `needs_recognition`; FACE-08..FACE-11 cerrados); quedan `24-03`..`24-06` |
 | 25 — Re-identificación (ReID) | B | — Sin planificar | — | Depende de 24 |
 | 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
 | 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
@@ -179,7 +179,7 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa (40 ficheros en `tests/`): **337/337 passing** (última ejecución 2026-08-13, tras 24-01: +3 tests de config, +8 de `TemporalVoter`).
+Suite completa (41 ficheros en `tests/`): **358/358 passing** (última ejecución 2026-08-13, tras 24-02: +21 tests de `IdentityStateMachine`).
 La tabla por módulo de v1.2 (38 tests) quedó obsoleta al crecer la suite en v2.0 —
 ver `pytest tests/ -v` para el desglose actual por fichero.
 
@@ -199,6 +199,8 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - Rotación diaria con tarea async (`_purge_loop`) usando `asyncio.sleep(24*3600)`
 - Docker Compose con volúmenes para `data/`, `certs/` y `.env`
 - TemporalVoter (Fase 24): confianza agregada = media de scores del ganador (no el máximo) y el ratio de veredicto se calcula sobre el total de votos de la ventana (incluidos los `None`), para que identidades alternadas no confirmen ninguna
+- IdentityStateMachine (Fase 24, 24-02): `_claim_lost` (herencia de identidad por `person_id`) se consulta también desde la rama UNKNOWN, no solo CANDIDATE — un track nuevo con un primer match ya intenta heredar una identidad `TEMPORARILY_LOST` antes de pasar por votación completa (Pitfall 3 del RESEARCH, FACE-09/FACE-10)
+- IdentityStateMachine (Fase 24, 24-02): el reset del contador de fallos de revalidación exige coincidencia del frame actual (`person_id == st.person_id`), no el veredicto agregado del voter — necesario porque `needs_recognition()` espacia las inferencias ~120 s y el voter retiene votos históricos varios ciclos
 
 ### Pendiente manual (no es código)
 
@@ -217,10 +219,12 @@ Fase 23 por completamente validados en producción.
 ## Session Continuity
 
 Last session: 2026-08-13
-Stopped at: Ejecutado 24-01-PLAN.md (wave 1 de la Fase 24). `TemporalVoter`,
-  `IdentityState`/`IdentityTransition` en `backend/perception/face/identity.py`
-  (dominio puro, sin `time`/`threading`), 5 parámetros de identidad temporal
-  en `Settings` con validación cruzada de rangos. Criterio 3 de la fase
-  (identidades alternadas → sin confirmación) cubierto por test. FACE-07
-  cerrado. Suite completa 337/337. Siguiente: 24-02-PLAN.md (IdentityStateMachine).
-Resume file: .planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/24-02-PLAN.md
+Stopped at: Ejecutado 24-02-PLAN.md (wave 2 de la Fase 24). `IdentityStateMachine`
+  completa en `backend/perception/face/identity.py`: 4 estados, 6 transiciones,
+  herencia de identidad por `person_id` (`_claim_lost`, tambien desde UNKNOWN),
+  revalidación cada 120 s con pérdida de identidad tras 3 ciclos fallidos, y
+  `needs_recognition()` (gate de FACE-11). Criterios 1-5 de la fase cubiertos
+  por 21 tests nuevos. FACE-08..FACE-11 cerrados. Suite completa 358/358.
+  Siguiente: 24-03-PLAN.md (recognizer.py expone el score y retira su
+  votación interna).
+Resume file: .planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/24-03-PLAN.md
