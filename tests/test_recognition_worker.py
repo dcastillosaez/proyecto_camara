@@ -290,3 +290,26 @@ async def TEST_track_recovery_via_real_path_emits_person_recognized_once(broker)
         f"se esperaba 1 PERSON_RECOGNIZED, hubo {len(recognized)} -- "
         "el track nuevo confirmo como visita nueva en vez de heredar la identidad"
     )
+
+
+# ─── La FSM sobrevive a un reinicio del worker por el supervisor ────────────
+def TEST_fsm_survives_worker_restart():
+    """La FSM se construye FUERA de _make_recognition (manager.py): un
+    reinicio del worker (el supervisor la re-ejecuta) no debe perder la
+    identidad ya confirmada, igual que _make_streaming rescata `clients`."""
+    from backend.pipeline.manager import CameraPipeline
+
+    recognizer = MagicMock()
+    recognizer.available = True
+    pipeline = CameraPipeline("cam1", "rtsp://fake", recognizer=recognizer)
+
+    factory = pipeline.supervisor._entries["recognition"].factory
+    worker1 = factory()
+    fsm = pipeline.identity_fsm
+    assert fsm is not None
+    assert worker1._fsm is fsm
+
+    worker2 = factory()
+    assert worker2 is not worker1
+    assert pipeline.identity_fsm is fsm   # misma instancia, no una nueva
+    assert worker2._fsm is fsm
