@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Ejecutado 25-01-PLAN.md (wave 1, primer plan de la Fase 25): modelo OSNet descargado con eje de batch dinamico y ReIDEngine verificado (512D L2-normalizado, p50 < 20ms). REID-01 cerrado. Quedan 25-02..25-06. Quedan 6 checkpoints con camara real de fases anteriores, sin relacion con esta fase (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
+stopped_at: "Ejecutado 25-02-PLAN.md (wave 1, segundo plan de la Fase 25): IdentityStateMachine.on_reid_result() anadido — herencia de identidad por apariencia, aditivo, reutiliza _claim_lost(), no vota en TemporalVoter, emits=False y last_face_at=now para sobrevivir al barrido de on_tick. REID-02 y REID-03 cerrados. Suite 388/388. Quedan 25-03..25-06. Quedan 6 checkpoints con camara real de fases anteriores, sin relacion con esta fase (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
 last_updated: "2026-08-13"
 last_activity: 2026-08-13
 progress:
   total_phases: 22
   completed_phases: 8
   total_plans: 25
-  completed_plans: 20
+  completed_plans: 21
   percent: 36
 previous_milestone:
   name: v1.2
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 + Fase 24 COMPLETOS** en código y tests. **Fase 25 en ejecución** (1/6 planes completos, 25-01).
+Phase: **Bloque A (17-22) + Fase 23 + Fase 24 COMPLETOS** en código y tests. **Fase 25 en ejecución** (2/6 planes completos, 25-01..25-02).
 Status: Bloque A cerrado (310/310), Fase 23 (Migración a InsightFace/
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
@@ -103,13 +103,21 @@ batch fijo (16) a dinámico (grafo bit-idéntico, idempotente), y
 `ReIDEngine` produce embeddings 512D L2-normalizados en ~5-12 ms p50 en
 CPU (criterio 1 del ROADMAP cumplido), degradando con `available=False`
 sin modelo o con batch fijo != 1. REID-01 cerrado — ver `25-01-SUMMARY.md`.
-Queda por ejecutar `25-02`..`25-06`: el research ya resolvió cómo se
-integra `TrackGallery` con `IdentityStateMachine` (método aditivo
-`on_reid_result()` que reutiliza `_claim_lost`, sin tocar
-`TemporalVoter`) y documentó una trampa de test crítica: con vectores de
-ruido aleatorio, el coseno entre dos embeddings independientes de este
-modelo sale 0,991 — los tests de `TrackGallery` deben usar vectores
-construidos a mano, nunca `np.random`.
+`25-02` también está completo: `IdentityStateMachine.on_reid_result()`
+(método aditivo, justo después de `on_face_result`) reutiliza
+`_claim_lost()` para heredar una identidad `TEMPORARILY_LOST` por
+apariencia, sin votar en `TemporalVoter` y con `emits=False` (misma
+visita, sin segundo `PERSON_RECOGNIZED`); fija `last_face_at = now` al
+heredar para que el barrido de rancios de `on_tick` no purgue el estado
+recién heredado (Pitfall 5) y evita el `IDENTITY_LOST` espurio que
+producía resolver la herencia fuera de la FSM (Pitfall 4). 7 tests
+`TEST_reid*` verdes, suite completa 388/388. REID-02 y REID-03 cerrados
+— ver `25-02-SUMMARY.md`. Queda por ejecutar `25-03`..`25-06`: `25-03`
+construye `TrackGallery` (ventana, umbral, conflicto, intervalo y
+expiración acotada) y documentó una trampa de test crítica: con
+vectores de ruido aleatorio, el coseno entre dos embeddings
+independientes de este modelo sale 0,991 — los tests de `TrackGallery`
+deben usar vectores construidos a mano, nunca `np.random`.
 
 Nota histórica — la Fase 23 (ya cerrada) abrió con una **puerta
 bloqueante** (verificar que `insightface` + `onnxruntime` instalan y
@@ -156,7 +164,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 22 — Seguridad y memoria | A | ✓ Completa (código) | 2026-08-09 | ⧗ Prueba de resistencia de 8 h |
 | 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
-| 25 — Re-identificación (ReID) | B | ⧗ En ejecución (1/6 planes) | — | `25-01` completo (modelo OSNet + `ReIDEngine`, REID-01 cerrado); quedan `25-02`..`25-06` |
+| 25 — Re-identificación (ReID) | B | ⧗ En ejecución (2/6 planes) | — | `25-01`..`25-02` completos (modelo OSNet + `ReIDEngine` REID-01; `on_reid_result()` REID-02/REID-03); quedan `25-03`..`25-06` |
 | 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
 | 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
@@ -204,7 +212,7 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa (42 ficheros en `tests/`): **381/381 passing** (última ejecución 2026-08-13, tras `25-01`: +4 tests en `tests/test_reid_engine.py` — 512D L2-normalizado, p50 < 20ms, degradación sin modelo, rechazo de batch fijo. Cifra anterior 377/377 verificada en `24-06`).
+Suite completa (42 ficheros en `tests/`): **388/388 passing** (última ejecución 2026-08-13, tras `25-02`: +7 tests `TEST_reid*` en `tests/test_identity_state_machine.py` — herencia, no-voto, no-secuestro, no-interferencia, ausencia de identidad perdida, `IDENTITY_LOST` espurio y barrido de rancios. Cifra anterior 381/381 tras `25-01` (+4 tests en `tests/test_reid_engine.py`); 377/377 verificada en `24-06`).
 La tabla por módulo de v1.2 (38 tests) quedó obsoleta al crecer la suite en v2.0 —
 ver `pytest tests/ -v` para el desglose actual por fichero.
 
@@ -234,6 +242,7 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - Puerta de fase (Fase 24, 24-06): la suite ya estaba verde (377/377) y FACE-07..FACE-11 ya marcados desde 24-01/24-02 al cierre de `24-05` — `24-06` no requirió ningún fix de código, solo trazabilidad criterio→comando→test en `24-06-SUMMARY.md`
 - ReIDEngine (Fase 25, 25-01): la salida cruda del modelo OSNet NO está L2-normalizada (norma ~52,4 medida) — `embed()` normaliza explícitamente antes de devolver, porque SPEC_v2.md §5.6 y el futuro coseno de `TrackGallery` dan por hecho un vector unitario
 - scripts/fetch_models.py (Fase 25, 25-01): el export público de OSNet trae el eje de batch fijo a 16 (una inferencia suelta costaría 84,5 ms en vez de 4,97 ms, criterio 1 fallado por 4x) — el script reescribe ese eje a simbólico antes de guardar el fichero en `models/` (gitignored), verificando sha256 y tamaño exacto antes de escribir; `ReIDEngine` además se autodeshabilita si detecta batch fijo != 1, por si el script no se ejecutó
+- IdentityStateMachine.on_reid_result (Fase 25, 25-02): la herencia de identidad por apariencia entra por la FSM, nunca por el worker — resolver la herencia fuera de la FSM deja huérfana la entrada `TEMPORARILY_LOST` en `_states`, y 30 s después `on_tick()` emitiría un `IDENTITY_LOST` espurio de una persona ya reetiquetada delante de la cámara (Pitfall 4); el método fija `last_face_at = now` al heredar porque sin eso el barrido de rancios de `on_tick` (`stale_ttl = lost_ttl + revalidate_after * MAX_FAILED_REVALIDATIONS`) purgaría el estado recién heredado (Pitfall 5); nunca vota en `TemporalVoter` para no contaminar los parámetros medidos de FACE-07
 
 ### Pendiente manual (no es código)
 
@@ -252,16 +261,18 @@ Fase 23 por completamente validados en producción.
 ## Session Continuity
 
 Last session: 2026-08-13
-Stopped at: Ejecutado 25-01-PLAN.md (wave 1 de 5, primer plan de la Fase
-  25). Los 3 tasks completos: `scripts/fetch_models.py` descargó el ONNX
-  de OSNet (kornia/osnet, sha256 `e78604f4...` verificado) y reescribió
-  el eje de batch fijo (16) a dinámico — idempotente, `git status --short
-  models/` vacío (gitignored); `ReIDEngine` (backend/perception/reid/engine.py)
-  produce embeddings 512D float32 L2-normalizados en ~5-12 ms p50 en CPU
-  y se autodeshabilita ante modelo ausente o batch fijo != 1;
-  `tests/test_reid_engine.py` con 4 tests `TEST_*` (criterio 1 completo,
-  degradación, guarda de batch fijo) todos verdes. Suite completa
-  381/381 (377 previos + 4 nuevos). REID-01 cerrado. **Fase 25: 1/6
-  planes completos.** Siguiente: `/gsd:execute-phase 25` continúa con
-  `25-02` (`IdentityStateMachine.on_reid_result()`).
-Resume file: `.planning/phases/25-re-identificaci-n-de-personas-reid/25-02-PLAN.md`
+Stopped at: Ejecutado 25-02-PLAN.md (wave 1 de 5, segundo plan de la Fase
+  25). Los 2 tasks completos: `IdentityStateMachine.on_reid_result()`
+  (backend/perception/face/identity.py) añadido justo después de
+  `on_face_result`, reutilizando `_claim_lost()` para heredar una
+  identidad `TEMPORARILY_LOST` por apariencia, sin votar en
+  `TemporalVoter`, con `emits=False` (misma visita) y `last_face_at = now`
+  fijado al heredar para sobrevivir al barrido de rancios de `on_tick`;
+  7 tests `TEST_reid*` en `tests/test_identity_state_machine.py` cubren
+  herencia, no-voto, no-secuestro de tracks `CANDIDATE`/`CONFIRMED`,
+  no-interferencia con evidencia facial propia, ausencia de identidad
+  perdida, `IDENTITY_LOST` espurio (Pitfall 4) y barrido de rancios
+  (Pitfall 5). Suite completa 388/388 (381 previos + 7 nuevos). REID-02
+  y REID-03 cerrados. **Fase 25: 2/6 planes completos.** Siguiente:
+  `/gsd:execute-phase 25` continúa con `25-03` (`TrackGallery`).
+Resume file: `.planning/phases/25-re-identificaci-n-de-personas-reid/25-03-PLAN.md`
