@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Ejecutado 25-02-PLAN.md (wave 1, segundo plan de la Fase 25): IdentityStateMachine.on_reid_result() anadido — herencia de identidad por apariencia, aditivo, reutiliza _claim_lost(), no vota en TemporalVoter, emits=False y last_face_at=now para sobrevivir al barrido de on_tick. REID-02 y REID-03 cerrados. Suite 388/388. Quedan 25-03..25-06. Quedan 6 checkpoints con camara real de fases anteriores, sin relacion con esta fase (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
+stopped_at: "Ejecutado 25-03-PLAN.md (wave 2, tercer plan de la Fase 25): TrackGallery construido en backend/perception/reid/gallery.py — memoria de embeddings de apariencia de tracks recientes, resolve() con las 4 reglas de REID-02 (candidatos, frescura, similitud maxima por coseno, umbral estricto + conflicto), needs_embedding() para el gate del criterio 5, y doble guarda de expiracion (TTL 15s + cota dura 256 aplicada tambien desde update()). 12 tests en test_track_gallery.py con vectores 512D de coseno exacto (nunca ruido aleatorio) + 2 tests de cota en test_memory_bounds.py. REID-02 y REID-04 cerrados (REID-04 completado junto a REID-02 de 25-02). Suite 402/402. Quedan 25-04..25-06. Quedan 6 checkpoints con camara real de fases anteriores, sin relacion con esta fase (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
 last_updated: "2026-08-13"
 last_activity: 2026-08-13
 progress:
   total_phases: 22
   completed_phases: 8
   total_plans: 25
-  completed_plans: 21
+  completed_plans: 22
   percent: 36
 previous_milestone:
   name: v1.2
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 + Fase 24 COMPLETOS** en código y tests. **Fase 25 en ejecución** (2/6 planes completos, 25-01..25-02).
+Phase: **Bloque A (17-22) + Fase 23 + Fase 24 COMPLETOS** en código y tests. **Fase 25 en ejecución** (3/6 planes completos, 25-01..25-03).
 Status: Bloque A cerrado (310/310), Fase 23 (Migración a InsightFace/
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
@@ -112,12 +112,22 @@ heredar para que el barrido de rancios de `on_tick` no purgue el estado
 recién heredado (Pitfall 5) y evita el `IDENTITY_LOST` espurio que
 producía resolver la herencia fuera de la FSM (Pitfall 4). 7 tests
 `TEST_reid*` verdes, suite completa 388/388. REID-02 y REID-03 cerrados
-— ver `25-02-SUMMARY.md`. Queda por ejecutar `25-03`..`25-06`: `25-03`
-construye `TrackGallery` (ventana, umbral, conflicto, intervalo y
-expiración acotada) y documentó una trampa de test crítica: con
-vectores de ruido aleatorio, el coseno entre dos embeddings
-independientes de este modelo sale 0,991 — los tests de `TrackGallery`
-deben usar vectores construidos a mano, nunca `np.random`.
+— ver `25-02-SUMMARY.md`. `25-03` también está completo: `TrackGallery`
+(`backend/perception/reid/gallery.py`) implementa las 4 reglas de
+`resolve()` (candidatos con identidad de otro track, frescura dentro de
+la ventana de 15 s, similitud máxima por coseno directo, umbral
+estricto + comprobación de conflicto contra `active_identities`),
+devolviendo siempre `(candidato, similitud)` reales — la política de si
+aplicar la herencia queda para `25-04`. `needs_embedding()` implementa
+el gate del criterio 5 y `prune()`/`_enforce_cap()` replican la doble
+guarda TTL + cota dura de `IdentityStateMachine`. 12 tests con vectores
+512D de coseno exacto construidos a mano (nunca `np.random`: el research
+midió coseno 0,991 entre dos ruidos independientes con OSNet real) más
+2 tests de cota de memoria (con y sin `prune()`). Suite completa
+402/402. REID-04 cerrado (REID-02 ya cerrado en 25-02) — ver
+`25-03-SUMMARY.md`. Queda por ejecutar `25-04`..`25-06`: `25-04` cablea
+la vía ReID dentro de `RecognitionWorker` (criterios 3 y 5, modo
+solo-observación).
 
 Nota histórica — la Fase 23 (ya cerrada) abrió con una **puerta
 bloqueante** (verificar que `insightface` + `onnxruntime` instalan y
@@ -164,7 +174,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 22 — Seguridad y memoria | A | ✓ Completa (código) | 2026-08-09 | ⧗ Prueba de resistencia de 8 h |
 | 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
-| 25 — Re-identificación (ReID) | B | ⧗ En ejecución (2/6 planes) | — | `25-01`..`25-02` completos (modelo OSNet + `ReIDEngine` REID-01; `on_reid_result()` REID-02/REID-03); quedan `25-03`..`25-06` |
+| 25 — Re-identificación (ReID) | B | ⧗ En ejecución (3/6 planes) | — | `25-01`..`25-03` completos (modelo OSNet + `ReIDEngine` REID-01; `on_reid_result()` REID-02/REID-03; `TrackGallery` REID-04); quedan `25-04`..`25-06` |
 | 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
 | 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
@@ -212,7 +222,7 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa (42 ficheros en `tests/`): **388/388 passing** (última ejecución 2026-08-13, tras `25-02`: +7 tests `TEST_reid*` en `tests/test_identity_state_machine.py` — herencia, no-voto, no-secuestro, no-interferencia, ausencia de identidad perdida, `IDENTITY_LOST` espurio y barrido de rancios. Cifra anterior 381/381 tras `25-01` (+4 tests en `tests/test_reid_engine.py`); 377/377 verificada en `24-06`).
+Suite completa (43 ficheros en `tests/`): **402/402 passing** (última ejecución 2026-08-13, tras `25-03`: +12 tests `TEST_*` en `tests/test_track_gallery.py` (nuevo fichero, `TrackGallery` con vectores 512D de coseno exacto) + 2 tests de cota en `tests/test_memory_bounds.py`. Cifra anterior 388/388 tras `25-02` (+7 tests `TEST_reid*` en `tests/test_identity_state_machine.py` — herencia, no-voto, no-secuestro, no-interferencia, ausencia de identidad perdida, `IDENTITY_LOST` espurio y barrido de rancios). 381/381 tras `25-01` (+4 tests en `tests/test_reid_engine.py`); 377/377 verificada en `24-06`).
 La tabla por módulo de v1.2 (38 tests) quedó obsoleta al crecer la suite en v2.0 —
 ver `pytest tests/ -v` para el desglose actual por fichero.
 
@@ -243,6 +253,9 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - ReIDEngine (Fase 25, 25-01): la salida cruda del modelo OSNet NO está L2-normalizada (norma ~52,4 medida) — `embed()` normaliza explícitamente antes de devolver, porque SPEC_v2.md §5.6 y el futuro coseno de `TrackGallery` dan por hecho un vector unitario
 - scripts/fetch_models.py (Fase 25, 25-01): el export público de OSNet trae el eje de batch fijo a 16 (una inferencia suelta costaría 84,5 ms en vez de 4,97 ms, criterio 1 fallado por 4x) — el script reescribe ese eje a simbólico antes de guardar el fichero en `models/` (gitignored), verificando sha256 y tamaño exacto antes de escribir; `ReIDEngine` además se autodeshabilita si detecta batch fijo != 1, por si el script no se ejecutó
 - IdentityStateMachine.on_reid_result (Fase 25, 25-02): la herencia de identidad por apariencia entra por la FSM, nunca por el worker — resolver la herencia fuera de la FSM deja huérfana la entrada `TEMPORARILY_LOST` en `_states`, y 30 s después `on_tick()` emitiría un `IDENTITY_LOST` espurio de una persona ya reetiquetada delante de la cámara (Pitfall 4); el método fija `last_face_at = now` al heredar porque sin eso el barrido de rancios de `on_tick` (`stale_ttl = lost_ttl + revalidate_after * MAX_FAILED_REVALIDATIONS`) purgaría el estado recién heredado (Pitfall 5); nunca vota en `TemporalVoter` para no contaminar los parámetros medidos de FACE-07
+- TrackGallery.resolve (Fase 25, 25-03): calcula SIEMPRE el candidato real `(person_id, similitud)`, incluso cuando no se hereda por umbral no superado o conflicto — la política de si aplicar la herencia (modo solo-observación vs aplicar) vive en el flag del worker, cableado en `25-04`; el umbral es estricto (`sim > 0.7`, no `>=`), coherente con la redacción del criterio 2 del ROADMAP
+- TrackGallery._enforce_cap (Fase 25, 25-03): la cota dura de 256 entradas se invoca tanto desde `update()` como desde `prune()` — mismo patrón "seguro de vida" de la Fase 22, verificado con un test que nunca llama a `prune()`
+- tests/test_track_gallery.py (Fase 25, 25-03): vectores 512D construidos a mano con coseno exacto (`cos*e_base + sqrt(1-cos^2)*e_other`), nunca ruido aleatorio — el research midió coseno 0,991 entre dos embeddings de OSNet alimentados con ruido independiente (colapso fuera de distribución) que invalidaría cualquier test de umbral
 
 ### Pendiente manual (no es código)
 
@@ -261,18 +274,20 @@ Fase 23 por completamente validados en producción.
 ## Session Continuity
 
 Last session: 2026-08-13
-Stopped at: Ejecutado 25-02-PLAN.md (wave 1 de 5, segundo plan de la Fase
-  25). Los 2 tasks completos: `IdentityStateMachine.on_reid_result()`
-  (backend/perception/face/identity.py) añadido justo después de
-  `on_face_result`, reutilizando `_claim_lost()` para heredar una
-  identidad `TEMPORARILY_LOST` por apariencia, sin votar en
-  `TemporalVoter`, con `emits=False` (misma visita) y `last_face_at = now`
-  fijado al heredar para sobrevivir al barrido de rancios de `on_tick`;
-  7 tests `TEST_reid*` en `tests/test_identity_state_machine.py` cubren
-  herencia, no-voto, no-secuestro de tracks `CANDIDATE`/`CONFIRMED`,
-  no-interferencia con evidencia facial propia, ausencia de identidad
-  perdida, `IDENTITY_LOST` espurio (Pitfall 4) y barrido de rancios
-  (Pitfall 5). Suite completa 388/388 (381 previos + 7 nuevos). REID-02
-  y REID-03 cerrados. **Fase 25: 2/6 planes completos.** Siguiente:
-  `/gsd:execute-phase 25` continúa con `25-03` (`TrackGallery`).
-Resume file: `.planning/phases/25-re-identificaci-n-de-personas-reid/25-03-PLAN.md`
+Stopped at: Ejecutado 25-03-PLAN.md (wave 2 de 5, tercer plan de la Fase
+  25). Los 3 tasks completos: `TrackGallery`
+  (backend/perception/reid/gallery.py) — `resolve()` con las 4 reglas de
+  REID-02 (candidatos con identidad de otro track, frescura dentro de la
+  ventana de 15 s, similitud máxima por coseno directo, umbral estricto +
+  comprobación de conflicto), devolviendo siempre `(candidato, similitud)`
+  reales; `needs_embedding()` (gate del criterio 5); `prune()`/
+  `_enforce_cap()` con la doble guarda TTL + cota dura de 256 entradas,
+  aplicada también desde `update()`. 12 tests `TEST_*` en
+  `tests/test_track_gallery.py` con vectores 512D de coseno exacto
+  construidos a mano (nunca ruido aleatorio) + 2 tests de cota en
+  `tests/test_memory_bounds.py` (con y sin `prune()`). Suite completa
+  402/402 (388 previos + 14 nuevos). REID-04 cerrado (REID-02 ya cerrado
+  en 25-02). **Fase 25: 3/6 planes completos.** Siguiente:
+  `/gsd:execute-phase 25` continúa con `25-04` (vía ReID dentro de
+  `RecognitionWorker`, criterios 3 y 5, modo solo-observación).
+Resume file: `.planning/phases/25-re-identificaci-n-de-personas-reid/25-04-PLAN.md`

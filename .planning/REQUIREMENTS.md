@@ -224,7 +224,7 @@
 - [x] **REID-01**: Se genera un embedding de apariencia por track mediante OSNet en ONNX
 - [x] **REID-02**: Un track nuevo puede heredar la identidad de un track cerrado recientemente si la similitud supera el umbral y no hay conflicto con un track activo
 - [x] **REID-03**: Una persona identificada que deja de mostrar la cara conserva su identidad
-- [ ] **REID-04**: El coste de ReID está acotado a una inferencia por track cada N segundos
+- [x] **REID-04**: El coste de ReID está acotado a una inferencia por track cada N segundos
 
 ### Comprensión de escena (BEH)
 
