@@ -24,6 +24,7 @@ from backend.events.rules import RuleEngine
 from backend.events.types import Event, EventType
 from backend.observability.latency import LatencyTracker, Stage
 from backend.perception.face.identity import IdentityStateMachine, TemporalVoter
+from backend.perception.reid.gallery import TrackGallery
 from backend.pipeline.broker import Frame, FrameBroker
 from backend.pipeline.recording import RecordingWorker
 from backend.pipeline.tracking import TrackRegistry
@@ -280,3 +281,32 @@ def TEST_no_growth_over_simulated_windows():
         f"Crecimiento de {growth / 1e6:.1f} MB entre dos ventanas equivalentes:\n"
         + "\n".join(map(str, top))
     )
+
+
+# ─── TrackGallery no acumula embeddings de tracks muertos ─────────────────────
+# ByteTrack asigna ids monotonamente crecientes y nunca los reutiliza. Cada
+# entrada son 512 float32 = 2 KB; sin doble guarda (TTL de inherit_window +
+# cota dura max_entries) un proceso 24/7 la haria crecer sin limite. La cota
+# dura es el "seguro de vida" de la Fase 22: actua aunque nadie llame a prune()
+# a tiempo. Techo: 256 x 2 KB = 512 KB.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_track_gallery_bounded():
+    gallery = TrackGallery(inherit_window=15.0, similarity_threshold=0.7,
+                           interval=2.0, max_entries=256)
+    emb = np.zeros(512, dtype=np.float32)
+    emb[0] = 1.0
+    for tid in range(10_000):
+        now = float(tid)
+        gallery.update(tid, emb, tid % 7, now)
+        gallery.prune(now, frame_ids={tid})
+    assert len(gallery._entries) <= 256
+
+
+def TEST_track_gallery_bounded_without_prune():
+    """La cota dura actua aunque el mantenimiento periodico nunca se ejecute."""
+    gallery = TrackGallery(max_entries=256)
+    emb = np.zeros(512, dtype=np.float32)
+    emb[0] = 1.0
+    for tid in range(10_000):
+        gallery.update(tid, emb, 1, now=float(tid))
+    assert len(gallery._entries) <= 256
