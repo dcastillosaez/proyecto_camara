@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 COMPLETOS** en código y tests. **Fase 24 planificada** (6 planes, 5 waves), lista para ejecutar.
+Phase: **Bloque A (17-22) + Fase 23 COMPLETOS** en código y tests. **Fase 24 en ejecución** (1/6 planes — `24-01` completo).
 Status: Bloque A cerrado (310/310) y Fase 23 (Migración a InsightFace/
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
@@ -130,7 +130,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 21 — Observabilidad | A | ✓ Completa (código) | 2026-08-09 | ⧗ Coste de instrumentación + línea base de 30 min |
 | 22 — Seguridad y memoria | A | ✓ Completa (código) | 2026-08-09 | ⧗ Prueba de resistencia de 8 h |
 | 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
-| 24 — Identidad temporal | B | — Planificada, lista para ejecutar | — | 6 planes en 5 waves (`24-01`..`24-06`), 2 rondas de plan-checker superadas — ver `/gsd:execute-phase 24` |
+| 24 — Identidad temporal | B | ⧗ En ejecución (1/6 planes) | — | `24-01` completo (`TemporalVoter`, `IdentityState`/`IdentityTransition`, 5 parámetros en `Settings`, FACE-07 cerrado); quedan `24-02`..`24-06` |
 | 25 — Re-identificación (ReID) | B | — Sin planificar | — | Depende de 24 |
 | 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
 | 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
@@ -179,7 +179,7 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa (39 ficheros en `tests/`): **326/326 passing** (última ejecución 2026-08-11).
+Suite completa (40 ficheros en `tests/`): **337/337 passing** (última ejecución 2026-08-13, tras 24-01: +3 tests de config, +8 de `TemporalVoter`).
 La tabla por módulo de v1.2 (38 tests) quedó obsoleta al crecer la suite en v2.0 —
 ver `pytest tests/ -v` para el desglose actual por fichero.
 
@@ -198,6 +198,7 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - psutil para métricas de salud (CPU/RAM) sin dependencias extra
 - Rotación diaria con tarea async (`_purge_loop`) usando `asyncio.sleep(24*3600)`
 - Docker Compose con volúmenes para `data/`, `certs/` y `.env`
+- TemporalVoter (Fase 24): confianza agregada = media de scores del ganador (no el máximo) y el ratio de veredicto se calcula sobre el total de votos de la ventana (incluidos los `None`), para que identidades alternadas no confirmen ninguna
 
 ### Pendiente manual (no es código)
 
@@ -215,9 +216,11 @@ Fase 23 por completamente validados en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-11
-Stopped at: Fix de env_file independiente del cwd (backend/config.py),
-  limpieza de .env.example/README y corrección del modelo de cámara a
-  C212 (era C220), fusionado en main (PR #1, commit 3e8cafc). Sin
-  relación con el avance de fases de v2.0.
-Resume file: None
+Last session: 2026-08-13
+Stopped at: Ejecutado 24-01-PLAN.md (wave 1 de la Fase 24). `TemporalVoter`,
+  `IdentityState`/`IdentityTransition` en `backend/perception/face/identity.py`
+  (dominio puro, sin `time`/`threading`), 5 parámetros de identidad temporal
+  en `Settings` con validación cruzada de rangos. Criterio 3 de la fase
+  (identidades alternadas → sin confirmación) cubierto por test. FACE-07
+  cerrado. Suite completa 337/337. Siguiente: 24-02-PLAN.md (IdentityStateMachine).
+Resume file: .planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/24-02-PLAN.md

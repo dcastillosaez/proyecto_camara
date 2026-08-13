@@ -213,7 +213,7 @@
 - [x] **FACE-04**: La búsqueda de identidad sobre 1.000 personas se resuelve en menos de 5 ms
 - [x] **FACE-05**: Existe un procedimiento de re-enrolamiento masivo desde las imágenes de la galería que reporta identidades migradas y fallidas
 - [x] **FACE-06**: `dlib` y `face-recognition` dejan de ser dependencias del proyecto
-- [ ] **FACE-07**: Una identidad solo se confirma tras N votos coherentes en una ventana deslizante
+- [x] **FACE-07**: Una identidad solo se confirma tras N votos coherentes en una ventana deslizante
 - [ ] **FACE-08**: Cada track tiene un estado de identidad explícito: UNKNOWN, CANDIDATE, CONFIRMED o TEMPORARILY_LOST
 - [ ] **FACE-09**: Una visita de una persona conocida genera un único evento de reconocimiento, no uno por frame
 - [ ] **FACE-10**: La pérdida y recuperación de un track no crea identidades duplicadas
