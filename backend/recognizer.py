@@ -2,9 +2,14 @@
 
 Fase 23: orquesta backend/perception/face/{engine,quality,index}.py
 (ArcFace/buffalo_s via insightface) instead of calling face_recognition/dlib
-directly. The business logic below (consensus buffering, majority-vote
-re-verification, ratio-test ambiguity handling) is unchanged from the dlib
-era — only the underlying detection/embedding/matching primitives changed.
+directly. The business logic below (consensus buffering, ratio-test
+ambiguity handling) is unchanged from the dlib era — only the underlying
+detection/embedding/matching primitives changed.
+
+Fase 24: el match ahora es por frame — la agregacion temporal (voto por
+mayoria, confirmacion/perdida de identidad) la hacen TemporalVoter e
+IdentityStateMachine (backend/perception/face/identity.py) fuera de esta
+clase, consumiendo el score que process_crop_scored() expone.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from collections import Counter, deque
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +30,22 @@ logger = logging.getLogger(__name__)
 
 _EMBEDDING_DIM = 512
 _EMBEDDING_DTYPE = np.float32
+
+
+@dataclass
+class FaceResult:
+    """Resultado de una pasada de reconocimiento sobre un crop (Fase 24).
+
+    `score` es la similitud coseno del mejor match (0.0 si no hubo match). La
+    IdentityStateMachine lo necesita para votar; antes de la Fase 24 se calculaba
+    en _best_match y se descartaba.
+    """
+
+    person_id: int | None
+    name: str | None
+    is_new: bool
+    score: float = 0.0
+    ambiguous: bool = False
 
 
 class PersonRecognizer:
@@ -46,7 +67,6 @@ class PersonRecognizer:
     MATCH_MARGIN = 0.10     # min similarity gap over the runner-up person (ratio test)
     RECOG_INTERVAL = 30     # frames between attempts for unidentified tracker IDs
     REVERIFY_INTERVAL = 300  # frames between identity re-checks for identified tracks
-    VOTE_WINDOW = 5         # majority vote over the last N decisive matches per track
     MAX_EMBEDDINGS_PER_PERSON = 20  # cap to keep matching fast
     VISIT_GAP_MINUTES = 5   # min gap since last_seen for a match to count as a new visit
 
@@ -71,11 +91,9 @@ class PersonRecognizer:
         self._last_attempt: dict[int, int] = {}
         # tracker_id → embeddings pending consensus before registering a new person
         self._pending: dict[int, list[np.ndarray]] = {}
-        # tracker_id → last VOTE_WINDOW matched person_ids (identity majority vote)
-        self._votes: dict[int, deque[int]] = {}
 
         self._match_threshold = match_threshold
-        self._confirm_threshold = confirm_threshold  # reserved for Fase 24's TemporalVoter
+        self._confirm_threshold = confirm_threshold  # umbral de confianza de identidad usado por IdentityStateMachine (Fase 24)
 
         self._engine = FaceEngine()
         self._quality = FaceQualityAssessor(
@@ -149,19 +167,21 @@ class PersonRecognizer:
             return None, None, False
         return self.process_crop(crop, tracker_id)
 
-    def process_crop(
+    def process_crop_scored(
         self, crop_bgr: np.ndarray, tracker_id: int
-    ) -> tuple[int | None, str | None, bool]:
+    ) -> FaceResult:
         """
         Run face detection + matching on a person crop (the ArcFace path).
         Safe to call from a worker thread.
 
-        Returns (person_id, name, is_new):
+        Returns a FaceResult(person_id, name, is_new, score, ambiguous):
           - person_id=None  → no usable face yet (none detected, failed a
                               quality gate, or still gathering consensus
                               samples) — try again later
           - is_new=True     → consensus reached, person just registered
           - is_new=False    → recognised an existing person
+          - score           → cosine similarity of the best match (0.0 when
+                              no match was attempted)
 
         Quality gates (MEJORAS.md punto 4, now FaceQualityAssessor): faces
         smaller than face_min_size_px or blurrier than face_max_blur are
@@ -170,61 +190,51 @@ class PersonRecognizer:
         frames of the same track. Matching against already-known persons
         needs a single good sample, as before.
 
-        Identified tracks are re-verified every REVERIFY_INTERVAL frames
-        (MEJORAS.md punto 8): each decisive match casts a vote, and the
-        majority of the last VOTE_WINDOW votes wins — a wrong first match
-        no longer sticks to the track forever. Callers get the corrected
-        identity through the normal return value.
+        The match below is per-frame (Fase 24): temporal evidence — majority
+        vote across frames, identity confirmation/loss — lives outside this
+        class, in TemporalVoter/IdentityStateMachine, which consume the
+        score this method returns.
         """
         if not self._available or crop_bgr.size == 0:
-            return None, None, False
+            return FaceResult(None, None, False)
 
         candidates = self._engine.detect(crop_bgr)
         if not candidates:
-            return None, None, False
+            return FaceResult(None, None, False)
         cand = self._select_face(candidates, crop_bgr.shape[0])
 
         x1, y1, x2, y2 = cand.bbox
         face_crop = crop_bgr[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
         if face_crop.size == 0:
-            return None, None, False
+            return FaceResult(None, None, False)
         local_kps = cand.kps - np.array([x1, y1], dtype=cand.kps.dtype)
         quality = self._quality.assess(face_crop, local_kps)
         if not quality.passed:
-            return None, None, False
+            return FaceResult(None, None, False)
 
         enc = self._engine.embed(crop_bgr, cand)
         if enc is None:
-            return None, None, False
+            return FaceResult(None, None, False)
 
         with self._lock:
             cached = self._cache.get(tracker_id)
-            pid, name, ambiguous = self._best_match(enc)
+            pid, name, ambiguous, score = self._best_match(enc)
             if pid is not None:
-                # Majority vote over the last VOTE_WINDOW decisive matches:
-                # the winner — not necessarily this sample — is the identity.
-                votes = self._votes.setdefault(
-                    tracker_id, deque(maxlen=self.VOTE_WINDOW)
-                )
-                votes.append(pid)
-                winner = Counter(votes).most_common(1)[0][0]
-                winner_name = name if winner == pid else self._name_of(winner)
-                if cached is not None and cached[0] != winner:
-                    logger.info(
-                        "PersonRecognizer: re-verify corrected tracker %d: "
-                        "person %d → %d", tracker_id, cached[0], winner,
-                    )
-                self._touch(winner)
-                self._cache[tracker_id] = (winner, winner_name)
+                # Sin voto por mayoria aqui: el match es por frame y la evidencia
+                # temporal la acumula TemporalVoter (Fase 24, FACE-07). Encadenar dos
+                # votaciones haria que los parametros configurados no fueran los
+                # efectivos.
+                self._touch(pid)
+                self._cache[tracker_id] = (pid, name)
                 self._pending.pop(tracker_id, None)
-                return winner, winner_name, False
+                return FaceResult(pid, name, False, score, ambiguous)
             if ambiguous or cached is not None:
                 # Ambiguous: deciding now risks a wrong identity, and
                 # buffering risks registering a duplicate of a known person.
                 # Cached: the track already has an identity — an unknown face
                 # during re-verify must never seed a NEW person.
                 # Either way, skip the sample and wait for a better frame.
-                return None, None, False
+                return FaceResult(None, None, False, score, ambiguous)
 
             # Gate 3 — consensus buffer before registering a new person.
             # An inconsistent sample resets the buffer: it was either an
@@ -234,7 +244,7 @@ class PersonRecognizer:
                 buf.clear()
             buf.append(enc)
             if len(buf) < self.NEW_PERSON_CONSENSUS:
-                return None, None, False
+                return FaceResult(None, None, False, score, ambiguous)
 
             pid = self._register(buf[0])
             for extra in buf[1:]:
@@ -249,7 +259,18 @@ class PersonRecognizer:
             self._conn.commit()
             del self._pending[tracker_id]
             self._cache[tracker_id] = (pid, None)
-            return pid, None, True
+            return FaceResult(pid, None, True, score, ambiguous)
+
+    def process_crop(
+        self, crop_bgr: np.ndarray, tracker_id: int
+    ) -> tuple[int | None, str | None, bool]:
+        """Compatibilidad: process_crop_scored() sin el score ni el flag de ambiguedad.
+
+        El pipeline (RecognitionWorker) usa process_crop_scored desde la Fase 24; esta
+        forma se conserva para los llamadores que no necesitan el score.
+        """
+        r = self.process_crop_scored(crop_bgr, tracker_id)
+        return r.person_id, r.name, r.is_new
 
     def enroll_named_face(self, image_bgr: np.ndarray, name: str) -> int | None:
         """Register or update a person from *image_bgr* with *name*.
@@ -341,11 +362,11 @@ class PersonRecognizer:
         """
         Drop per-track state for tracker_ids no longer active (MEJORAS.md
         punto 12). ByteTrack ids grow monotonically, so without pruning
-        ``_cache``, ``_last_attempt``, ``_pending`` and ``_votes`` leak
-        slowly on a 24/7 process.
+        ``_cache``, ``_last_attempt`` and ``_pending`` leak slowly on a
+        24/7 process.
         """
         with self._lock:
-            for d in (self._cache, self._last_attempt, self._pending, self._votes):
+            for d in (self._cache, self._last_attempt, self._pending):
                 for tid in list(d):
                     if tid not in active_tracker_ids:
                         del d[tid]
@@ -421,16 +442,20 @@ class PersonRecognizer:
                 return name
         return None
 
-    def _best_match(self, enc: np.ndarray) -> tuple[int | None, str | None, bool]:
+    def _best_match(
+        self, enc: np.ndarray
+    ) -> tuple[int | None, str | None, bool, float]:
         """
         Match *enc* against known persons. Must be called with ``_lock`` held.
 
-        Returns ``(person_id, name, ambiguous)``:
+        Returns ``(person_id, name, ambiguous, score)``:
           - person_id set   → decisive match
           - ambiguous=True  → a candidate exists above match_threshold but the
                               runner-up person is within MATCH_MARGIN — too
                               risky to decide either way
           - both falsy      → genuinely unknown face
+          - score           → cosine similarity of the best match (0.0 if
+                              ``ranked`` was empty — no known persons yet)
 
         Similarities are grouped per person (MEJORAS.md punto 6): a person's
         score is the MAXIMUM similarity among their embeddings, so a person
@@ -439,19 +464,21 @@ class PersonRecognizer:
         same person.
         """
         if not self._person_ids:
-            return None, None, False
+            return None, None, False, 0.0
         results = self._index.search(enc, top_k=len(self._person_ids))
         best_per_person: dict[int, float] = {}
         for pid, sim in results:
             if sim > best_per_person.get(pid, float("-inf")):
                 best_per_person[pid] = sim
         ranked = sorted(best_per_person.items(), key=lambda kv: -kv[1])
+        if not ranked:
+            return None, None, False, 0.0
         best_pid, best_sim = ranked[0]
         if best_sim < self._match_threshold:
-            return None, None, False
+            return None, None, False, float(best_sim)
         if len(ranked) > 1 and (best_sim - ranked[1][1]) < self.MATCH_MARGIN:
-            return None, None, True
-        return best_pid, self._name_of(best_pid), False
+            return None, None, True, float(best_sim)
+        return best_pid, self._name_of(best_pid), False, float(best_sim)
 
     def _init_db(self) -> None:
         self._conn.executescript("""

@@ -13,7 +13,8 @@ PIPELINE_DIR = Path("backend/pipeline")
 BACKEND_DIR = Path("backend")
 
 INFERENCE_CALLS = {
-    "detect_sv", "detect", "embed", "process_crop", "identify_or_register",
+    "detect_sv", "detect", "embed", "process_crop", "process_crop_scored",
+    "identify_or_register",
 }
 
 
