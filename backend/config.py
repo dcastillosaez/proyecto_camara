@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 _MODEL_PATH_ALLOWED_SUFFIXES = {".pt", ".onnx"}
@@ -134,6 +134,18 @@ class Settings(BaseSettings):
     face_match_threshold: float = 0.45
     face_confirm_threshold: float = 0.55
 
+    # --- Identidad temporal (Fase 24 — FACE-07..FACE-11) ---
+    # Defaults de SPEC_v2.md §5.5. `face_confirm_threshold` (arriba, Fase 23) se
+    # reutiliza como umbral de "confianza de identidad baja": por debajo de el, un
+    # track CONFIRMED vuelve a pasar por reconocimiento sin esperar a la
+    # revalidacion periodica (FACE-11). Es la confianza agregada del
+    # TemporalVoter, no la confianza de deteccion de YOLO.
+    identity_vote_window: int = 8
+    identity_min_votes: int = 3
+    identity_min_ratio: float = 0.6
+    identity_lost_ttl_secs: float = 30.0
+    identity_revalidate_after_secs: float = 120.0
+
     # Horario de acceso — fuera de este rango los crossing events se marcan como intrusión.
     # Requiere schedule_enabled=True; si está en False todos los eventos son "normales".
     schedule_enabled: bool = False
@@ -167,6 +179,24 @@ class Settings(BaseSettings):
     # arrancar uvicorn desde otro directorio dejaría las credenciales vacías
     # (RTSP sin auth, PTZ devolviendo 502 "Invalid authentication data").
     model_config = {"env_file": _PROJECT_ROOT / ".env", "extra": "ignore"}
+
+    @model_validator(mode="after")
+    def validate_identity_params(self) -> "Settings":
+        if self.identity_min_votes < 1:
+            raise ValueError("identity_min_votes debe ser >= 1")
+        if self.identity_vote_window < self.identity_min_votes:
+            raise ValueError(
+                f"identity_vote_window ({self.identity_vote_window}) no puede ser menor "
+                f"que identity_min_votes ({self.identity_min_votes}): la votacion nunca "
+                f"alcanzaria el minimo"
+            )
+        if not 0.0 < self.identity_min_ratio <= 1.0:
+            raise ValueError("identity_min_ratio debe estar en (0, 1]")
+        if self.identity_lost_ttl_secs <= 0:
+            raise ValueError("identity_lost_ttl_secs debe ser > 0")
+        if self.identity_revalidate_after_secs <= 0:
+            raise ValueError("identity_revalidate_after_secs debe ser > 0")
+        return self
 
 
 @lru_cache

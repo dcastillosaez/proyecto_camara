@@ -172,3 +172,46 @@ def TEST_010_mask_rtsp_url_round_trip_consistency():
         result = mask_rtsp_url(url)
         assert isinstance(result, str)
         assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# Identidad temporal (Fase 24 — FACE-07..FACE-11)
+# ---------------------------------------------------------------------------
+
+# ─── Defaults de SPEC_v2.md §5.5 ──────────────────────────────────────────────
+# Los 5 parámetros de la fase deben tener exactamente los defaults documentados
+# en el SPEC para que TemporalVoter/IdentityStateMachine se comporten como se
+# especificó sin necesidad de configuración explícita.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_identity_defaults_match_spec():
+    """Settings() expone los 5 parámetros de identidad con los defaults del SPEC."""
+    s = Settings()
+    assert s.identity_vote_window == 8
+    assert s.identity_min_votes == 3
+    assert s.identity_min_ratio == 0.6
+    assert s.identity_lost_ttl_secs == 30.0
+    assert s.identity_revalidate_after_secs == 120.0
+
+
+# ─── Ventana menor que el mínimo de votos es rechazada ────────────────────────
+# Si identity_vote_window < identity_min_votes, la votación nunca podría
+# alcanzar el mínimo requerido: es una configuración imposible que debe abortar
+# el arranque en vez de dejar la FSM sin confirmar nunca (ASVS V5).
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_identity_window_smaller_than_min_votes_rejected():
+    """identity_vote_window < identity_min_votes lanza ValueError."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(identity_vote_window=2, identity_min_votes=3)
+
+
+# ─── Ratio fuera de (0, 1] es rechazado ────────────────────────────────────────
+# identity_min_ratio es una proporción sobre el total de votos: 0.0 permitiría
+# que cualquier voto (incluso ninguno) ganase, y valores > 1.0 harían que
+# ninguna identidad pudiera confirmarse nunca.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_identity_ratio_out_of_range_rejected():
+    """identity_min_ratio fuera de (0, 1] lanza ValueError."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(identity_min_ratio=0.0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(identity_min_ratio=1.5)
