@@ -274,7 +274,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 ### Bloque B — Inteligencia artificial
 
 - [x] **Phase 23: Migración a InsightFace/ArcFace con quality gating** — Embeddings 512D + filtro de calidad de rostro (completed 2026-08-10; checkpoint de tasa de aciertos vs dlib pendiente de cámara real)
-- [ ] **Phase 24: Identidad temporal — votación y máquina de estados** — UNKNOWN → CANDIDATE → CONFIRMED → TEMPORARILY_LOST
+- [x] **Phase 24: Identidad temporal — votación y máquina de estados** — UNKNOWN → CANDIDATE → CONFIRMED → TEMPORARILY_LOST
 - [ ] **Phase 25: Re-identificación de personas (ReID)** — Continuidad de identidad sin cara visible
 - [ ] **Phase 26: Análisis de comportamiento** — Merodeo, carrera, inmovilidad, aglomeración, zonas
 - [ ] **Phase 27: Multi-clase y contexto de escena** — Objetos abandonados/retirados + estado agregado de la escena
@@ -435,7 +435,7 @@ Plans:
   5. La revalidación tras 120 s funciona y tres fallos consecutivos emiten IDENTITY_LOST
   6. Las inferencias faciales por minuto con una persona estática bajan al menos un 70% respecto a la Phase 23
 **Spec**: SPEC_v2.md §5.5
-**Plans:** 5/6 plans complete — `.planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/`
+**Plans:** 6/6 plans complete — `.planning/phases/24-identidad-temporal-votaci-n-y-m-quina-de-estados/`
 
 Plans:
 - [x] 24-01-PLAN.md — TemporalVoter + IdentityState y los 5 parámetros de configuración (wave 1)
@@ -443,7 +443,7 @@ Plans:
 - [x] 24-03-PLAN.md — recognizer.py expone el score y retira su votación interna; tests de cota (wave 3)
 - [x] 24-04-PLAN.md — identity_state en TrackRegistry y EventEngine.emit_identity (wave 3)
 - [x] 24-05-PLAN.md — Cableado del pipeline: RecognitionWorker, manager y medición del criterio 6 (wave 4)
-- [ ] 24-06-PLAN.md — Puerta de fase: suite completa y trazabilidad de los 6 criterios (wave 5)
+- [x] 24-06-PLAN.md — Puerta de fase: suite completa y trazabilidad de los 6 criterios (wave 5)
 
 ### Phase 25: Re-identificación de personas (ReID)
 **Goal**: El sistema mantiene la identidad cuando la cara no es visible
