@@ -316,26 +316,23 @@ def TEST_106_should_attempt_gates_and_marks(tmp_path):
 
 # ─── Punto 12: prune elimina estado de tracks inactivos ──────────────────────
 # Los tracker_id de ByteTrack crecen de forma monótona: sin poda, los dicts
-# por track (_cache, _last_attempt, _pending, _votes) crecen sin límite en un
+# por track (_cache, _last_attempt, _pending) crecen sin límite en un
 # proceso 24/7. prune debe borrar los ids ausentes y conservar los activos.
 # ─────────────────────────────────────────────────────────────────────────────
 def TEST_107_prune_drops_inactive_track_state(tmp_path):
     """prune removes per-track dicts for ids not in the active set."""
-    from collections import deque as _deque
     r = _recog(tmp_path)
     r._cache[1] = (1, None)
     r._cache[2] = (2, None)
     r._last_attempt[1] = 10
     r._last_attempt[2] = 20
     r._pending[2] = [np.zeros(512, dtype=np.float32)]
-    r._votes[2] = _deque([2], maxlen=r.VOTE_WINDOW)
 
     r.prune({1})
 
     assert r._cache == {1: (1, None)}
     assert r._last_attempt == {1: 10}
     assert r._pending == {}
-    assert r._votes == {}
 
 
 # ─── Punto 15: purge_unnamed borra anónimos de paso, respeta el resto ─────────

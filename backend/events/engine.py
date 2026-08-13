@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from backend.events.bus import EventBus
 from backend.events.types import Event, EventType, Severity
+from backend.perception.face.identity import IdentityState, IdentityTransition
 from backend.storage.repositories import DetectionStatRepo
 
 if TYPE_CHECKING:
@@ -154,6 +155,66 @@ class EventEngine:
 
     def degraded_mode(self, now: datetime.datetime, reason: str) -> None:
         self._publish(EventType.DEGRADED_MODE, ts=now, severity=Severity.WARNING, payload={"reason": reason})
+
+    # ------------------------------------------------------------------
+    # Identidad (Fase 24)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _identity_event_type(transition: IdentityTransition) -> EventType | None:
+        """Traduce una transicion de la FSM al catalogo de SPEC_v2.md §6.1.
+
+        No hay tipo de evento para CANDIDATE ni para TEMPORARILY_LOST: son estados
+        intermedios que la UI leera del TrackRegistry (bloque C), no eventos.
+        """
+        if transition.to_state is IdentityState.CONFIRMED:
+            return EventType.PERSON_RECOGNIZED
+        if transition.to_state is IdentityState.UNKNOWN:
+            if transition.from_state is IdentityState.CANDIDATE:
+                return EventType.UNKNOWN_PERSON
+            if transition.from_state in (IdentityState.CONFIRMED,
+                                         IdentityState.TEMPORARILY_LOST):
+                return EventType.IDENTITY_LOST
+        return None
+
+    def emit_identity(
+        self,
+        transition: IdentityTransition,
+        now: datetime.datetime,
+        person_name: str | None = None,
+        bbox: tuple[int, int, int, int] | None = None,
+        captured_at: float | None = None,
+        processed_at: float | None = None,
+    ) -> None:
+        """Publica el evento de identidad correspondiente a *transition*, si lo hay.
+
+        FACE-09: una visita genera un unico evento de reconocimiento. La guarda de
+        idempotencia vive en la FSM, que marca `emits=False` cuando el cambio de estado
+        es continuacion de la misma visita (recuperacion de un track dentro de
+        lost_ttl) o cuando el evento ya se emitio para ese track.
+        """
+        if not transition.emits:
+            return
+        event_type = self._identity_event_type(transition)
+        if event_type is None:
+            return
+        self._publish(
+            event_type,
+            ts=now,
+            captured_at=captured_at,
+            processed_at=processed_at,
+            track_id=transition.track_id,
+            person_id=transition.person_id,
+            person_name=person_name,
+            confidence=transition.confidence or None,
+            bbox=bbox,
+            payload={
+                "state": transition.to_state.value,
+                "previous_state": transition.from_state.value,
+                "votes": transition.votes,
+                "window": transition.window,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Detection aggregation — one row per minute, never per detection (ADR-06)

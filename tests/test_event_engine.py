@@ -9,7 +9,8 @@ import pytest
 
 from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
-from backend.events.types import EventType
+from backend.events.types import EventType, Severity
+from backend.perception.face.identity import IdentityState, IdentityTransition
 
 
 async def wait_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> None:
@@ -189,3 +190,99 @@ async def TEST_captured_at_reaches_payload_and_latency_tracker():
 
     assert received[0].payload["_captured_at"] == captured_at
     tracker.mark_event.assert_called_once_with(captured_at, processed_at)
+
+
+# ─── emit_identity (Fase 24, FACE-09) ─────────────────────────────────────────
+
+async def TEST_identity_confirmed_emits_person_recognized():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+    transition = IdentityTransition(
+        track_id=1, from_state=IdentityState.CANDIDATE, to_state=IdentityState.CONFIRMED,
+        person_id=7, confidence=0.82, votes=3, window=8,
+    )
+
+    engine.emit_identity(transition, now, person_name="David")
+    await wait_until(lambda: len(received) == 1)
+
+    event = received[0]
+    assert event.type == EventType.PERSON_RECOGNIZED
+    assert event.track_id == 1
+    assert event.person_id == 7
+    assert event.person_name == "David"
+    assert event.payload["state"] == "CONFIRMED"
+    assert event.payload["votes"] == 3
+    assert event.severity == Severity.INFO
+
+
+async def TEST_identity_candidate_to_unknown_emits_unknown_person():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+    transition = IdentityTransition(
+        track_id=2, from_state=IdentityState.CANDIDATE, to_state=IdentityState.UNKNOWN,
+    )
+
+    engine.emit_identity(transition, now)
+    await wait_until(lambda: len(received) == 1)
+
+    assert received[0].type == EventType.UNKNOWN_PERSON
+    assert received[0].severity == Severity.WARNING
+
+
+async def TEST_identity_confirmed_to_unknown_emits_identity_lost():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+    transition = IdentityTransition(
+        track_id=3, from_state=IdentityState.CONFIRMED, to_state=IdentityState.UNKNOWN,
+        person_id=7,
+    )
+
+    engine.emit_identity(transition, now)
+    await wait_until(lambda: len(received) == 1)
+
+    assert received[0].type == EventType.IDENTITY_LOST
+
+
+async def TEST_identity_temporarily_lost_to_unknown_emits_identity_lost():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+    transition = IdentityTransition(
+        track_id=4, from_state=IdentityState.TEMPORARILY_LOST, to_state=IdentityState.UNKNOWN,
+        person_id=7,
+    )
+
+    engine.emit_identity(transition, now)
+    await wait_until(lambda: len(received) == 1)
+
+    assert received[0].type == EventType.IDENTITY_LOST
+
+
+async def TEST_identity_silent_transition_emits_nothing():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+    transition = IdentityTransition(
+        track_id=5, from_state=IdentityState.CONFIRMED, to_state=IdentityState.UNKNOWN,
+        person_id=7, emits=False,
+    )
+
+    engine.emit_identity(transition, now)
+    await asyncio.sleep(0.2)
+
+    assert received == []
+
+
+async def TEST_identity_intermediate_states_emit_nothing():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.emit_identity(
+        IdentityTransition(track_id=6, from_state=IdentityState.UNKNOWN, to_state=IdentityState.CANDIDATE),
+        now,
+    )
+    engine.emit_identity(
+        IdentityTransition(track_id=6, from_state=IdentityState.CONFIRMED, to_state=IdentityState.TEMPORARILY_LOST),
+        now,
+    )
+    await asyncio.sleep(0.2)
+
+    assert received == []

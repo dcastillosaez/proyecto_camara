@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
+from backend.perception.face.identity import IdentityStateMachine, TemporalVoter
 from backend.pipeline.broker import FrameBroker
 from backend.pipeline.capture import CaptureHealth, CaptureWorker
 from backend.pipeline.detection import DetectionWorker
@@ -52,6 +53,12 @@ class CameraPipeline:
         detection_fps: tuple[float, float, float] = (8.0, 3.0, 12.0),
         recognition_fps: float = 2.0,
         supervisor_interval: float = 5.0,
+        identity_vote_window: int = 8,
+        identity_min_votes: int = 3,
+        identity_min_ratio: float = 0.6,
+        identity_lost_ttl: float = 30.0,
+        identity_revalidate_after: float = 120.0,
+        identity_low_confidence: float = 0.55,
     ) -> None:
         self.camera_id = camera_id
         self.broker = FrameBroker()
@@ -72,6 +79,7 @@ class CameraPipeline:
         self.streaming: StreamingWorker | None = None
         self.recording: RecordingWorker | None = None
         self.recognition: RecognitionWorker | None = None
+        self.identity_fsm: IdentityStateMachine | None = None
 
         if detector is not None and tracker is not None:
             def _make_detection() -> DetectionWorker:
@@ -112,12 +120,28 @@ class CameraPipeline:
             self.supervisor.register("recording", _make_recording)
 
         if recognizer is not None and getattr(recognizer, "available", False):
+            # La FSM vive FUERA de la factoria: WorkerSupervisor la re-ejecuta en cada
+            # reinicio del worker, y construirla dentro perderia toda la identidad ya
+            # confirmada. Mismo motivo por el que _make_streaming rescata `clients`.
+            self.identity_fsm = IdentityStateMachine(
+                TemporalVoter(
+                    window=identity_vote_window,
+                    min_votes=identity_min_votes,
+                    min_ratio=identity_min_ratio,
+                ),
+                lost_ttl=identity_lost_ttl,
+                revalidate_after=identity_revalidate_after,
+                low_confidence=identity_low_confidence,
+            )
+
             def _make_recognition() -> RecognitionWorker:
                 self.recognition = RecognitionWorker(
                     self.broker.subscribe("recognition", replace=True),
                     self.registry, recognizer,
                     AdaptiveRate(target_fps=recognition_fps,
                                  min_fps=recognition_fps, max_fps=recognition_fps),
+                    identity_fsm=self.identity_fsm,
+                    event_engine=event_engine,
                     on_identified=on_identified,
                 )
                 return self.recognition

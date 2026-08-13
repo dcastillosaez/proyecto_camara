@@ -428,6 +428,12 @@ async def lifespan(app: FastAPI):
             settings.detection_max_fps,
         ),
         recognition_fps=settings.recognition_target_fps,
+        identity_vote_window=settings.identity_vote_window,
+        identity_min_votes=settings.identity_min_votes,
+        identity_min_ratio=settings.identity_min_ratio,
+        identity_lost_ttl=settings.identity_lost_ttl_secs,
+        identity_revalidate_after=settings.identity_revalidate_after_secs,
+        identity_low_confidence=settings.face_confirm_threshold,
     )
     rtsp_stream = pipeline  # fachada consumida por los endpoints
 

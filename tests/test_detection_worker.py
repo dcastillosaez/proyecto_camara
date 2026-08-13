@@ -300,3 +300,22 @@ def test_heatmap_accumulates_and_renders():
     assert heat is not None
     assert heat.shape == frame.shape
     assert heat[380:420, 620:660].any()   # hay calor alrededor de los pies
+
+
+# ─── D-05: frame_ids() se publica exista o no event_engine ──────────────────
+# Sin esto, la construccion por defecto de DetectionWorker (event_engine=None,
+# la que usa la mayoria de tests de este fichero y CameraPipeline si no se
+# configuran alertas) dejaria frame_ids() vacio para siempre, y
+# RecognitionWorker._sync_identity reportaria todo track como perdido en
+# cada ciclo -- el mismo bug que D-05 corrige, pero de vuelta y sin aviso.
+# ───────────────────────────────────────────────────────────────────────────
+def TEST_frame_ids_published_without_event_engine(broker):
+    registry = TrackRegistry()
+    detector = MagicMock()
+    tracker = MagicMock()
+    rate = AdaptiveRate(target_fps=5.0, min_fps=5.0, max_fps=5.0)
+    worker = DetectionWorker(broker.subscribe("detector"), detector, tracker, registry, rate)
+
+    worker._emit_track_lifecycle(_tracked([1, 2]), captured_at=0.0, processed_at=0.0)
+
+    assert registry.frame_ids() == {1, 2}
