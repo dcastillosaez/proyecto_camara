@@ -39,15 +39,18 @@ class TrackRegistry:
     Estado compartido de tracks, protegido por un unico RLock.
 
     Se prohibe que dos workers escriban el mismo campo: DetectionWorker es
-    el unico escritor de bbox/confidence/centroid_history; RecognitionWorker
-    es el unico escritor de person_id/person_name/identity_state via
-    set_identity/set_identity_state.
+    el unico escritor de bbox/confidence/centroid_history/_frame_ids (via
+    set_frame_ids); RecognitionWorker es el unico escritor de
+    person_id/person_name/identity_state via set_identity/set_identity_state.
     """
 
     def __init__(self, history_len: int = 150) -> None:
         self._history_len = history_len
         self._lock = threading.RLock()
         self._tracks: dict[int, TrackState] = {}
+        # Ids vistos en el ultimo frame procesado por DetectionWorker (Fase 24,
+        # D-05). Distinto de active_ids(): ese es el TTL de 30s de prune().
+        self._frame_ids: frozenset[int] = frozenset()
 
     def update_from_detections(self, tracked: Any, now: float) -> list[int]:
         """Actualiza el estado desde una pasada de tracking. Devuelve los track_ids nuevos."""
@@ -93,6 +96,23 @@ class TrackRegistry:
     def active_ids(self) -> set[int]:
         with self._lock:
             return set(self._tracks.keys())
+
+    def set_frame_ids(self, ids: set[int]) -> None:
+        """Ids de tracks vistos en el frame actual (D-05, Fase 24, FACE-10).
+
+        A diferencia de active_ids() (todas las claves vivas, incluidas las que
+        llevan hasta `ttl` segundos sin verse), esto es exacto e inmediato. Lo
+        escribe DetectionWorker en cada frame; IdentityStateMachine.on_active_tracks
+        lo necesita para detectar la perdida de un track sin esperar al TTL de
+        prune() -- de lo contrario un track_id nuevo (ByteTrack nunca reutiliza
+        ids) confirmaria como visita nueva mientras el viejo sigue "activo".
+        """
+        with self._lock:
+            self._frame_ids = frozenset(ids)
+
+    def frame_ids(self) -> set[int]:
+        with self._lock:
+            return set(self._frame_ids)
 
     def set_identity(self, track_id: int, person_id: int, name: str | None) -> None:
         with self._lock:

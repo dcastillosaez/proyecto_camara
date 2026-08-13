@@ -185,11 +185,21 @@ class DetectionWorker:
             self._registry.prune(now)
 
     def _emit_track_lifecycle(self, tracked: Any, captured_at: float, processed_at: float) -> None:
+        """Publica el estado de tracks del frame actual y, si hay event_engine,
+        los eventos de ciclo de vida. Son dos cosas distintas (Fase 24, D-05):
+        la publicacion en el registry siempre ocurre; la emision de eventos,
+        solo si hay event_engine configurado (CameraPipeline lo tiene a None por
+        defecto en la mayoria de tests de este fichero). Si set_frame_ids
+        quedara detras de la guarda de event_engine, RecognitionWorker.
+        _sync_identity veria frame_ids() vacio en cada ciclo y reportaria todo
+        track CONFIRMED como perdido de inmediato.
+        """
+        ids = tracked.tracker_id
+        active_ids = {int(tid) for tid in ids} if ids is not None else set()
+        self._registry.set_frame_ids(active_ids)
         if self._event_engine is None:
             return
         wall_now = datetime.datetime.now()
-        ids = tracked.tracker_id
-        active_ids = {int(tid) for tid in ids} if ids is not None else set()
         self._event_engine.process_tracks(active_ids, wall_now, captured_at, processed_at)
         confidences = list(tracked.confidence) if tracked.confidence is not None else []
         self._event_engine.accumulate_detections(wall_now, active_ids, confidences)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime
 from unittest.mock import MagicMock
@@ -9,10 +10,15 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from backend.events.bus import EventBus
+from backend.events.engine import EventEngine
+from backend.events.types import EventType
+from backend.perception.face.identity import IdentityState, IdentityStateMachine, TemporalVoter
 from backend.pipeline.broker import Frame, FrameBroker
 from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.recognition import RecognitionWorker
 from backend.pipeline.tracking import TrackRegistry
+from backend.recognizer import FaceResult
 
 
 def _make_frame(seq: int) -> Frame:
@@ -39,6 +45,33 @@ def _publish_for(broker: FrameBroker, seconds: float, interval: float = 0.02) ->
         time.sleep(interval)
 
 
+def _face(person_id=None, name=None, is_new=False, score=0.0, ambiguous=False) -> FaceResult:
+    return FaceResult(person_id, name, is_new, score, ambiguous)
+
+
+def make_engine():
+    """Mismo patron que tests/test_event_engine.py: EventBus real sobre el loop
+    en marcha + un subscriptor que acumula los eventos recibidos."""
+    bus = EventBus(loop=asyncio.get_event_loop())
+    received: list = []
+
+    async def capture(event):
+        received.append(event)
+
+    bus.subscribe("capture", capture)
+    engine = EventEngine(bus, camera_id="cam1")
+    return engine, received
+
+
+async def wait_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> None:
+    elapsed = 0.0
+    while not predicate():
+        await asyncio.sleep(interval)
+        elapsed += interval
+        if elapsed >= timeout:
+            raise AssertionError(f"condition not met within {timeout}s")
+
+
 @pytest.fixture
 def broker():
     return FrameBroker()
@@ -51,7 +84,7 @@ def test_recognition_respects_target_fps(broker):
 
     recognizer = MagicMock()
     recognizer.available = True
-    recognizer.process_crop.return_value = (None, None, False)  # nunca identifica
+    recognizer.process_crop_scored.return_value = _face()  # nunca identifica
 
     sub = broker.subscribe("recognition")
     rate = AdaptiveRate(target_fps=3.0, min_fps=3.0, max_fps=3.0)
@@ -62,7 +95,7 @@ def test_recognition_respects_target_fps(broker):
     worker.stop()
 
     # a 3 FPS objetivo durante ~1 s: ni 1 ni 50
-    assert 1 <= recognizer.process_crop.call_count <= 8
+    assert 1 <= recognizer.process_crop_scored.call_count <= 8
 
 
 # ─── Los tracks ya identificados no se reprocesan ───────────────────────────
@@ -74,7 +107,7 @@ def test_recognition_skips_identified_tracks(broker):
 
     recognizer = MagicMock()
     recognizer.available = True
-    recognizer.process_crop.return_value = (None, None, False)
+    recognizer.process_crop_scored.return_value = _face()
 
     sub = broker.subscribe("recognition")
     rate = AdaptiveRate(target_fps=12.0, min_fps=12.0, max_fps=12.0)
@@ -84,7 +117,7 @@ def test_recognition_skips_identified_tracks(broker):
     _publish_for(broker, seconds=0.6)
     worker.stop()
 
-    recognizer.process_crop.assert_not_called()
+    recognizer.process_crop_scored.assert_not_called()
 
 
 # ─── Al identificar, escribe la identidad en el registry ────────────────────
@@ -94,7 +127,7 @@ def test_recognition_sets_identity_on_match(broker):
 
     recognizer = MagicMock()
     recognizer.available = True
-    recognizer.process_crop.return_value = (42, "David", False)
+    recognizer.process_crop_scored.return_value = _face(42, "David")
 
     sub = broker.subscribe("recognition")
     rate = AdaptiveRate(target_fps=12.0, min_fps=12.0, max_fps=12.0)
@@ -125,9 +158,9 @@ def test_recognition_failure_does_not_kill_worker(broker):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")
-        return (None, None, False)
+        return _face()
 
-    recognizer.process_crop.side_effect = _flaky
+    recognizer.process_crop_scored.side_effect = _flaky
 
     sub = broker.subscribe("recognition")
     rate = AdaptiveRate(target_fps=12.0, min_fps=12.0, max_fps=12.0)
@@ -149,7 +182,7 @@ def test_recognition_prunes_cache_on_track_expiry(broker):
 
     recognizer = MagicMock()
     recognizer.available = True
-    recognizer.process_crop.return_value = (None, None, False)
+    recognizer.process_crop_scored.return_value = _face()
 
     sub = broker.subscribe("recognition")
     rate = AdaptiveRate(target_fps=12.0, min_fps=12.0, max_fps=12.0)
@@ -185,4 +218,75 @@ def test_unavailable_recognizer_is_noop(broker):
     _publish_for(broker, seconds=0.3, interval=0.03)
     worker.stop()
 
-    recognizer.process_crop.assert_not_called()
+    recognizer.process_crop_scored.assert_not_called()
+
+
+# ─── D-05: recuperar un track por la ruta real no duplica el reconocimiento ──
+# Reproduce el bug que active_ids() (TTL=30s) producia: sin frame_ids(), un
+# track_id nuevo reapareciendo antes del TTL global confirmaria como visita
+# nueva porque el track viejo seguia "activo" en la FSM. Aqui se pasa por
+# TrackRegistry real + _sync_identity real, no por on_track_lost() directo.
+# ───────────────────────────────────────────────────────────────────────────
+async def TEST_track_recovery_via_real_path_emits_person_recognized_once(broker):
+    registry = TrackRegistry()
+    recognizer = MagicMock()
+    recognizer.available = True
+    # El mock solo "reconoce cara" del track activo en cada fase: una persona
+    # ocluida no deja un crop reconocible, igual que en produccion.
+    match_track = {"id": 1}
+
+    def _scored(crop, track_id):
+        if track_id == match_track["id"]:
+            return _face(7, "Juan", score=0.8)
+        return _face()
+
+    recognizer.process_crop_scored.side_effect = _scored
+
+    fsm = IdentityStateMachine(TemporalVoter(window=3, min_votes=3), lost_ttl=30.0)
+    engine, received = make_engine()
+    sub = broker.subscribe("recognition")
+    rate = AdaptiveRate(target_fps=20.0, min_fps=20.0, max_fps=20.0)
+    worker = RecognitionWorker(sub, registry, recognizer, rate, min_track_age=0.0,
+                               identity_fsm=fsm, event_engine=engine)
+    worker.start()
+
+    # Track 1 aparece y se confirma (3 votos coherentes).
+    registry.update_from_detections(_FakeTracked([1]), now=time.monotonic())
+    registry.set_frame_ids({1})
+    _publish_for(broker, seconds=0.3)
+    await wait_until(lambda: fsm.state_of(1) is IdentityState.CONFIRMED, timeout=2.0)
+
+    # Track 1 desaparece del frame (oclusion): _sync_identity real lo marca
+    # perdido, y el mock deja de "verle" cara (nadie coincide con match_track).
+    match_track["id"] = None
+    registry.set_frame_ids(set())
+    _publish_for(broker, seconds=0.2)
+    await wait_until(lambda: fsm.state_of(1) is IdentityState.TEMPORARILY_LOST, timeout=2.0)
+
+    # El TrackRegistry termina soltando el track viejo (lo que haria
+    # DetectionWorker.prune() pasado su ttl) -- sin esto seguiria ganando el
+    # turno de inferencia sobre el track nuevo por ser el mas antiguo.
+    registry.prune(now=time.monotonic(), ttl=0.01)
+
+    # Reaparece con un track_id NUEVO (como haria ByteTrack), misma persona.
+    match_track["id"] = 99
+    registry.update_from_detections(_FakeTracked([99]), now=time.monotonic())
+    registry.set_frame_ids({99})
+    _publish_for(broker, seconds=0.3)
+    await wait_until(
+        lambda: registry.get(99) is not None
+        and registry.get(99).identity_state is IdentityState.CONFIRMED,
+        timeout=2.0,
+    )
+
+    worker.stop()
+    # wait_until puede salir sin haber cedido el control al loop ni una sola
+    # vez si el predicado ya era cierto en la primera comprobacion (aqui, tras
+    # los _publish_for bloqueantes, es lo habitual) -- sin este respiro el
+    # EventBus nunca llega a drenar la cola hacia `received`.
+    await asyncio.sleep(0.1)
+    recognized = [e for e in received if e.type is EventType.PERSON_RECOGNIZED]
+    assert len(recognized) == 1, (
+        f"se esperaba 1 PERSON_RECOGNIZED, hubo {len(recognized)} -- "
+        "el track nuevo confirmo como visita nueva en vez de heredar la identidad"
+    )
