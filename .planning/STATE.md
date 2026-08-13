@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Fase 24 (Identidad temporal) COMPLETA: 6/6 planes (24-01..24-06) ejecutados, FACE-07..FACE-11 cerrados, suite 377/377, los 6 criterios de exito del ROADMAP verificados con comando pytest -k en 24-06-SUMMARY.md. Siguiente: planificar Fase 25 (ReID) con /gsd:plan-phase 25. Quedan 6 checkpoints con camara real de fases anteriores, sin relacion con esta fase (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
+stopped_at: "Fase 25 (Re-identificacion, ReID) planificada: CONTEXT + RESEARCH (spike real del ONNX de OSNet ejecutado en esta maquina) + PATTERNS + VALIDATION + 6 PLAN.md (25-01..25-06, 5 waves), plan-checker superado sin blockers. Lista para /gsd:execute-phase 25. Fase 24 completa (6/6 planes, suite 377/377). Quedan 6 checkpoints con camara real de fases anteriores, sin relacion con esta planificacion (19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
 last_updated: "2026-08-13"
 last_activity: 2026-08-13
 progress:
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 + Fase 24 COMPLETOS** en código y tests (6/6 planes de la Fase 24 — `24-01`..`24-06`).
+Phase: **Bloque A (17-22) + Fase 23 + Fase 24 COMPLETOS** en código y tests. **Fase 25 planificada** (6 planes, 5 waves), lista para ejecutar.
 Status: Bloque A cerrado (310/310), Fase 23 (Migración a InsightFace/
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
@@ -75,7 +75,7 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 ## Siguiente paso
 
 ```
-/gsd:plan-phase 25
+/gsd:execute-phase 25
 ```
 
 La Fase 24 (Identidad temporal — votación y máquina de estados) está
@@ -93,9 +93,21 @@ para detectar tracks perdidos, lo que habría producido un segundo
 dentro de ese TTL — corregido con `TrackRegistry.frame_ids()`, publicado
 por `DetectionWorker` en cada frame.
 
-La Fase 25 (Re-identificación de personas, ReID) depende de la Fase 24
-(ya completa) y aún no está planificada — generar su plan con
-`/gsd:plan-phase 25`.
+La Fase 25 (Re-identificación de personas, ReID) — depende de la Fase 24
+(ya completa) — está **planificada**: `.planning/phases/25-re-identificaci-n-de-personas-reid/`
+tiene CONTEXT, RESEARCH, PATTERNS, VALIDATION y 6 PLAN.md (25-01..25-06,
+5 waves), verificados por `gsd-plan-checker` sin blockers. El research
+ejecutó un spike real en esta máquina: descargó el ONNX de OSNet
+(`kornia/osnet`, sha256 `e78604f4...`), encontró que el export público
+tiene el eje de batch fijo a 16 (una inferencia suelta cuesta 84,5 ms,
+falla el criterio 1 por 4x) y verificó la reescritura a batch dinámico
+(grafo bit-idéntico, 4,97 ms p50 en batch 1). También resolvió cómo se
+integra `TrackGallery` con `IdentityStateMachine` (método aditivo
+`on_reid_result()` que reutiliza `_claim_lost`, sin tocar
+`TemporalVoter`) y documentó una trampa de test crítica: con vectores de
+ruido aleatorio, el coseno entre dos embeddings independientes de este
+modelo sale 0,991 — los tests de `TrackGallery` deben usar vectores
+construidos a mano, nunca `np.random`.
 
 Nota histórica — la Fase 23 (ya cerrada) abrió con una **puerta
 bloqueante** (verificar que `insightface` + `onnxruntime` instalan y
@@ -142,7 +154,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 22 — Seguridad y memoria | A | ✓ Completa (código) | 2026-08-09 | ⧗ Prueba de resistencia de 8 h |
 | 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
-| 25 — Re-identificación (ReID) | B | — Sin planificar | — | Depende de 24 |
+| 25 — Re-identificación (ReID) | B | — Planificada, lista para ejecutar | — | 6 planes en 5 waves (`25-01`..`25-06`), plan-checker superado sin blockers — ver `/gsd:execute-phase 25` |
 | 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
 | 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |

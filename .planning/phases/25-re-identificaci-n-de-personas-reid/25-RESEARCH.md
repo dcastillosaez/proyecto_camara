@@ -950,26 +950,30 @@ publicado; no merece la pena re-exportar (haría falta PyTorch).
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Las 3 preguntas quedaron cerradas antes de planificar — los 6 `PLAN.md` siguen la
+> recomendación de cada una (verificado por `gsd-plan-checker`).
 
 1. **¿Cuál es la tasa real de falsos positivos con dos personas de ropa parecida?**
+   **RESOLVED:** no bloquea la fase. El criterio 4 se cierra con (a) un test
+     determinista sobre vectores sintéticos (25-03) que demuestra que el umbral y la
+     comprobación de conflicto funcionan, y (b) un checkpoint manual con cámara real
+     (25-06) que documenta el histograma de similitudes — mismo formato que los 6
+     checkpoints abiertos de fases anteriores (`STATE.md`).
    - Lo que sabemos: la misma persona da ≥0,93; contenido no relacionado llega a 0,71.
    - Lo que falta: pares de personas reales de esta cámara.
-   - Recomendación: **no bloquear la fase**. El criterio 4 se cierra con (a) un test
-     determinista sobre vectores sintéticos que demuestra que el umbral y la comprobación
-     de conflicto funcionan, y (b) un **checkpoint manual con cámara real** que documente el
-     histograma de similitudes — mismo formato que los 6 checkpoints abiertos de fases
-     anteriores (`STATE.md`).
 
 2. **¿Dónde vive el modelo, `models/reid/` o `data/`?**
+   **RESOLVED:** `models/reid/` + entrada en `.gitignore`, como dice SPEC — implementado
+   en 25-01.
    - SPEC §4.3 dice `models/reid/`; `.gitignore` no lo contempla y `insightface` usa
      `~/.insightface/models/`.
-   - Recomendación: `models/reid/` + entrada en `.gitignore`, como dice SPEC.
 
 3. **¿Se persiste `reid_embedding` en la tabla `tracks`?**
+   **RESOLVED:** no, en esta fase — ningún plan lo hace.
    - SPEC §7 lo tiene en el esquema; ningún requisito REID-01..04 lo pide y el pipeline
      no escribe `tracks` hoy.
-   - Recomendación: **no**, en esta fase.
 
 ---
 
