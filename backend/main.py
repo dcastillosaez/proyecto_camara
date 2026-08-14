@@ -434,6 +434,13 @@ async def lifespan(app: FastAPI):
         identity_lost_ttl=settings.identity_lost_ttl_secs,
         identity_revalidate_after=settings.identity_revalidate_after_secs,
         identity_low_confidence=settings.face_confirm_threshold,
+        reid_enabled=settings.reid_enabled,
+        reid_model_path=settings.reid_model_path,
+        reid_inherit_window=settings.reid_inherit_window_secs,
+        reid_similarity_threshold=settings.reid_similarity_threshold,
+        reid_interval=settings.reid_interval_secs,
+        reid_inherit=settings.reid_inherit_identity,
+        reid_max_gallery_entries=settings.reid_max_gallery_entries,
     )
     rtsp_stream = pipeline  # fachada consumida por los endpoints
 
