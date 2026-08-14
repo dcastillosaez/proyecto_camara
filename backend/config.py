@@ -146,6 +146,36 @@ class Settings(BaseSettings):
     identity_lost_ttl_secs: float = 30.0
     identity_revalidate_after_secs: float = 120.0
 
+    # --- Re-identificacion por apariencia (Fase 25 — REID-01..REID-04) ---
+    # Defaults de SPEC_v2.md §5.6 / ADR-04. reid_inherit_window_secs es MAS CORTA
+    # que identity_lost_ttl_secs (30 s) a proposito: la apariencia es menos fiable
+    # que la votacion facial y debe caducar antes. reid_inherit_identity arranca en
+    # False (modo solo-observacion): ReID calcula y registra la decision de herencia
+    # sin aplicarla, para poder auditar la tasa de falsos positivos con datos reales
+    # antes de activarla. El modelo lo produce scripts/fetch_models.py; si falta,
+    # ReIDEngine.available queda a False y la via ReID es no-op.
+    reid_enabled: bool = True
+    reid_model_path: str = "models/reid/osnet_x0_25_msmt17_dyn.onnx"
+    reid_inherit_window_secs: float = 15.0
+    reid_similarity_threshold: float = 0.7
+    reid_interval_secs: float = 2.0
+    reid_inherit_identity: bool = False
+    reid_max_gallery_entries: int = 256
+
+    @field_validator("reid_model_path")
+    @classmethod
+    def validate_reid_model_path(cls, v: str) -> str:
+        p = Path(v)
+        if p.suffix.lower() not in _MODEL_PATH_ALLOWED_SUFFIXES:
+            raise ValueError(
+                f"reid_model_path extension {p.suffix!r} not allowed. "
+                f"Allowed: {sorted(_MODEL_PATH_ALLOWED_SUFFIXES)}"
+            )
+        resolved = p.resolve() if p.is_absolute() else (_PROJECT_ROOT / p).resolve()
+        if not resolved.is_relative_to(_PROJECT_ROOT):
+            raise ValueError(f"reid_model_path must be inside the project directory: {resolved}")
+        return v
+
     # Horario de acceso — fuera de este rango los crossing events se marcan como intrusión.
     # Requiere schedule_enabled=True; si está en False todos los eventos son "normales".
     schedule_enabled: bool = False
@@ -196,6 +226,25 @@ class Settings(BaseSettings):
             raise ValueError("identity_lost_ttl_secs debe ser > 0")
         if self.identity_revalidate_after_secs <= 0:
             raise ValueError("identity_revalidate_after_secs debe ser > 0")
+        return self
+
+    @model_validator(mode="after")
+    def validate_reid_params(self) -> "Settings":
+        if not 0.0 < self.reid_similarity_threshold <= 1.0:
+            raise ValueError(
+                "reid_similarity_threshold debe estar en (0, 1]: es un coseno entre "
+                "embeddings normalizados; 0.0 heredaria identidad de cualquier "
+                "apariencia y valores > 1.0 no heredarian nunca"
+            )
+        if self.reid_inherit_window_secs <= 0:
+            raise ValueError("reid_inherit_window_secs debe ser > 0")
+        if self.reid_interval_secs <= 0:
+            raise ValueError(
+                "reid_interval_secs debe ser > 0: es el minimo entre inferencias "
+                "ReID de un mismo track (criterio 5); 0 dejaria correr ReID en cada tick"
+            )
+        if self.reid_max_gallery_entries < 1:
+            raise ValueError("reid_max_gallery_entries debe ser >= 1")
         return self
 
 
