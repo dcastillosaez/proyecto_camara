@@ -554,3 +554,81 @@ def TEST_worker_without_reid_behaves_as_phase_24(broker):
 
     assert worker.stats["reid_inferences"] == 0
     assert recognizer.process_crop_scored.call_count >= 1
+
+
+# ─── Criterio 3 end-to-end: identidad conservada sin cara visible ───────────
+# Una persona identificada que se gira de espaldas 10 s y vuelve (track_id
+# nuevo asignado por ByteTrack) conserva su person_id, con exactamente 1
+# PERSON_RECOGNIZED y 0 UNKNOWN_PERSON intermedio.
+# ───────────────────────────────────────────────────────────────────────────
+async def TEST_reid_recovers_identity_without_face(broker):
+    registry = TrackRegistry()
+    recognizer = MagicMock()
+    recognizer.available = True
+    # El mock solo "reconoce cara" del track activo mientras sea el 1; en
+    # cuanto el track pasa a ser el 99 (reaparicion de espaldas) la cara ya
+    # no esta disponible -- lo que diferencia este test del de la Fase 24.
+    match_track = {"id": 1}
+
+    def _scored(crop, track_id):
+        if track_id == match_track["id"]:
+            return _face(7, "Juan", score=0.8)
+        return _face()
+
+    recognizer.process_crop_scored.side_effect = _scored
+
+    reid_engine = _reid_mock()   # mismo vector para cualquier crop: misma persona
+    gallery = TrackGallery(inherit_window=15.0, similarity_threshold=0.7, interval=0.1)
+    fsm = IdentityStateMachine(TemporalVoter(window=3, min_votes=3), lost_ttl=30.0)
+    event_engine, received = make_engine()
+    sub = broker.subscribe("recognition")
+    rate = AdaptiveRate(target_fps=20.0, min_fps=20.0, max_fps=20.0)
+    worker = RecognitionWorker(sub, registry, recognizer, rate, min_track_age=0.0,
+                               identity_fsm=fsm, event_engine=event_engine,
+                               reid_engine=reid_engine, reid_gallery=gallery, reid_inherit=True)
+    worker.start()
+
+    # Track 1 visible: se confirma con 3 votos coherentes.
+    registry.update_from_detections(_FakeTracked([1]), now=time.monotonic())
+    registry.set_frame_ids({1})
+    _publish_for(broker, seconds=0.3)
+    await wait_until(lambda: fsm.state_of(1) is IdentityState.CONFIRMED, timeout=2.0)
+
+    # Desaparicion: _sync_identity real lo marca perdido, y el mock deja de
+    # "verle" cara (nadie coincide con match_track).
+    match_track["id"] = None
+    registry.set_frame_ids(set())
+    _publish_for(broker, seconds=0.2)
+    await wait_until(lambda: fsm.state_of(1) is IdentityState.TEMPORARILY_LOST, timeout=2.0)
+
+    # El TrackRegistry termina soltando el track viejo (lo que haria
+    # DetectionWorker.prune() pasado su ttl).
+    registry.prune(now=time.monotonic(), ttl=0.01)
+
+    # Reaparece con un track_id NUEVO (como haria ByteTrack), de espaldas: la
+    # cara sigue sin estar disponible, pero la apariencia es la misma.
+    registry.update_from_detections(_FakeTracked([99]), now=time.monotonic())
+    registry.set_frame_ids({99})
+    _publish_for(broker, seconds=0.3)
+    await wait_until(lambda: fsm.identity_of(99)[0] == 7, timeout=2.0)
+
+    worker.stop()
+    # wait_until puede salir sin haber cedido el control al loop ni una sola
+    # vez si el predicado ya era cierto en la primera comprobacion -- sin este
+    # respiro el EventBus nunca llega a drenar la cola hacia `received`.
+    await asyncio.sleep(0.1)
+
+    assert fsm.identity_of(99)[0] == 7, (
+        "criterio 3: el track reaparecido no heredo el person_id por apariencia"
+    )
+    recognized = [e for e in received if e.type is EventType.PERSON_RECOGNIZED]
+    assert len(recognized) == 1, (
+        f"se esperaba 1 PERSON_RECOGNIZED, hubo {len(recognized)} -- la herencia "
+        "por ReID debe llevar emits=False (misma visita)"
+    )
+    unknown = [e for e in received if e.type is EventType.UNKNOWN_PERSON]
+    assert unknown == [], (
+        "criterio 3: hubo UNKNOWN_PERSON intermedio; la persona nunca dejo de estar "
+        "identificada"
+    )
+    assert worker.stats["reid_inherited"] >= 1

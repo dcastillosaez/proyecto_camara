@@ -282,10 +282,21 @@ class RecognitionWorker:
         pleno, y con mas tracks el intervalo efectivo por track se degrada por
         encima de 2 s — degradacion segura (menos coste, nunca mas) que sigue
         cumpliendo el criterio 5.
+
+        Solo candidatos en frame_ids() (bug encontrado en 25-04, Task 3): un
+        track fuera del frame actual no tiene bbox fiable -- recortar sobre su
+        posicion vieja en el frame ACTUAL captura fondo/oclusion, no a la
+        persona. Ademas, si se re-embebiera de todos modos, gallery.update()
+        escribiria identity_of(tid)==None (identity.py:155-159 solo devuelve
+        person_id si el track esta CONFIRMED) y borraria la identidad que el
+        propio ReID necesita conservar en ese track para que otro lo reclame
+        despues -- justo lo contrario del criterio 3.
         """
+        visible = self._registry.frame_ids()
         tracks = [
             ts for ts in self._registry.snapshot().values()
-            if (now - ts.first_seen) >= self._min_track_age
+            if ts.track_id in visible
+            and (now - ts.first_seen) >= self._min_track_age
             and self._gallery.needs_embedding(ts.track_id, now)
         ]
         if not tracks:
