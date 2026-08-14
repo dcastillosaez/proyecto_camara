@@ -316,6 +316,48 @@ def TEST_fsm_survives_worker_restart():
     assert worker2._fsm is fsm
 
 
+# ─── Motor y galeria ReID sobreviven a un reinicio del worker por el supervisor ─
+def TEST_reid_engine_and_gallery_survive_worker_restart():
+    """Motor y galeria se construyen FUERA de _make_recognition (manager.py): un
+    reinicio del worker no debe vaciar la galeria de apariencia, igual que no
+    debe perder la identidad ya confirmada."""
+    from backend.pipeline.manager import CameraPipeline
+
+    recognizer = MagicMock()
+    recognizer.available = True
+    pipeline = CameraPipeline("cam1", "rtsp://fake", recognizer=recognizer)
+
+    factory = pipeline.supervisor._entries["recognition"].factory
+    worker1 = factory()
+    gallery = pipeline.reid_gallery
+    assert gallery is not None
+    assert worker1._gallery is gallery
+
+    worker2 = factory()
+    assert worker2 is not worker1
+    assert pipeline.reid_gallery is gallery      # misma instancia, no una nueva
+    assert worker2._gallery is gallery
+
+
+# ─── reid_enabled=False deja el pipeline sin galeria (via ReID no-op) ───────────
+def TEST_reid_disabled_leaves_worker_without_gallery():
+    """Con reid_enabled=False no se construyen ReIDEngine/TrackGallery y el
+    worker sigue siendo funcional (Fase 24 intacta, via ReID no-op)."""
+    from backend.pipeline.manager import CameraPipeline
+
+    recognizer = MagicMock()
+    recognizer.available = True
+    pipeline = CameraPipeline("cam1", "rtsp://fake", recognizer=recognizer, reid_enabled=False)
+
+    assert pipeline.reid_gallery is None
+    assert pipeline.reid_engine is None
+
+    factory = pipeline.supervisor._entries["recognition"].factory
+    worker = factory()
+    assert worker is not None
+    assert worker._gallery is None
+
+
 # ─── Criterio 6: presupuesto de inferencias sobre un track no confirmado ─────
 # Escenario medido (24-CONTEXT.md, decision del usuario D-01): UNA persona
 # estatica cuyo reconocimiento NUNCA tiene exito (cara no detectable / calidad

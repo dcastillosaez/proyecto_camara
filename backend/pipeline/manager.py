@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, Callable
 import numpy as np
 
 from backend.perception.face.identity import IdentityStateMachine, TemporalVoter
+from backend.perception.reid.engine import ReIDEngine
+from backend.perception.reid.gallery import TrackGallery
 from backend.pipeline.broker import FrameBroker
 from backend.pipeline.capture import CaptureHealth, CaptureWorker
 from backend.pipeline.detection import DetectionWorker
@@ -59,6 +61,13 @@ class CameraPipeline:
         identity_lost_ttl: float = 30.0,
         identity_revalidate_after: float = 120.0,
         identity_low_confidence: float = 0.55,
+        reid_enabled: bool = True,
+        reid_model_path: str = "models/reid/osnet_x0_25_msmt17_dyn.onnx",
+        reid_inherit_window: float = 15.0,
+        reid_similarity_threshold: float = 0.7,
+        reid_interval: float = 2.0,
+        reid_inherit: bool = False,
+        reid_max_gallery_entries: int = 256,
     ) -> None:
         self.camera_id = camera_id
         self.broker = FrameBroker()
@@ -80,6 +89,8 @@ class CameraPipeline:
         self.recording: RecordingWorker | None = None
         self.recognition: RecognitionWorker | None = None
         self.identity_fsm: IdentityStateMachine | None = None
+        self.reid_engine: "ReIDEngine | None" = None
+        self.reid_gallery: "TrackGallery | None" = None
 
         if detector is not None and tracker is not None:
             def _make_detection() -> DetectionWorker:
@@ -134,6 +145,20 @@ class CameraPipeline:
                 low_confidence=identity_low_confidence,
             )
 
+            if reid_enabled:
+                # Motor y galeria viven FUERA de la factoria por el mismo motivo que
+                # la FSM: el WorkerSupervisor re-ejecuta la factoria en cada reinicio
+                # del worker, y construirlos dentro vaciaria la galeria de apariencia
+                # (perdiendo la continuidad de identidad justo tras un reinicio) y
+                # recargaria el ONNX cada vez.
+                self.reid_engine = ReIDEngine(reid_model_path)
+                self.reid_gallery = TrackGallery(
+                    inherit_window=reid_inherit_window,
+                    similarity_threshold=reid_similarity_threshold,
+                    interval=reid_interval,
+                    max_entries=reid_max_gallery_entries,
+                )
+
             def _make_recognition() -> RecognitionWorker:
                 self.recognition = RecognitionWorker(
                     self.broker.subscribe("recognition", replace=True),
@@ -143,6 +168,9 @@ class CameraPipeline:
                     identity_fsm=self.identity_fsm,
                     event_engine=event_engine,
                     on_identified=on_identified,
+                    reid_engine=self.reid_engine,
+                    reid_gallery=self.reid_gallery,
+                    reid_inherit=reid_inherit,
                 )
                 return self.recognition
 
