@@ -14,6 +14,7 @@ from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
 from backend.events.types import EventType
 from backend.perception.face.identity import IdentityState, IdentityStateMachine, TemporalVoter
+from backend.perception.reid.gallery import TrackGallery
 from backend.pipeline.broker import Frame, FrameBroker
 from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.recognition import RecognitionWorker
@@ -420,3 +421,136 @@ async def TEST_confirmed_track_emits_person_recognized_once(broker):
     recognized = [e for e in received if e.type is EventType.PERSON_RECOGNIZED]
     assert len(recognized) == 1
     assert registry.snapshot()[1].identity_state is IdentityState.CONFIRMED
+
+
+# ─── Fase 25 — via de apariencia (ReID) ──────────────────────────────────────
+
+def _emb(i: int = 0) -> np.ndarray:
+    """Vector 512D unitario determinista. NUNCA el generador aleatorio de numpy:
+    el research midio coseno 0,991 entre dos ruidos independientes con OSNet."""
+    v = np.zeros(512, dtype=np.float32)
+    v[i] = 1.0
+    return v
+
+
+def _reid_mock(vec: np.ndarray | None = None) -> MagicMock:
+    engine = MagicMock()
+    engine.available = True
+    engine.embed.return_value = _emb(0) if vec is None else vec
+    return engine
+
+
+# ─── Criterio 5: max 1 inferencia ReID cada reid_interval_secs por track ─────
+def TEST_reid_inference_budget(broker):
+    # Escalado del reloj: los 2 s de produccion se comprimen a 0.5 s en el test,
+    # con el tick del worker a 20 FPS para que el limite NO sea el tick sino el
+    # gate de TrackGallery.needs_embedding.
+    registry = TrackRegistry()
+    registry.update_from_detections(_FakeTracked([1]), now=time.monotonic() - 10)
+    registry.set_frame_ids({1})
+    recognizer = MagicMock()
+    recognizer.available = True
+    recognizer.process_crop_scored.return_value = _face()
+    engine = _reid_mock()
+    gallery = TrackGallery(inherit_window=15.0, similarity_threshold=0.7, interval=0.5)
+    fsm = IdentityStateMachine(TemporalVoter(window=2, min_votes=2))
+    sub = broker.subscribe("recognition")
+    worker = RecognitionWorker(sub, registry, recognizer,
+                               AdaptiveRate(target_fps=20.0, min_fps=20.0, max_fps=20.0),
+                               min_track_age=0.0, identity_fsm=fsm,
+                               reid_engine=engine, reid_gallery=gallery, reid_inherit=False)
+    worker.start()
+    _publish_for(broker, seconds=1.0)
+    worker.stop()
+    calls = engine.embed.call_count
+    assert calls >= 1, "la via ReID no se ejecuto: el test no mide nada"
+    assert calls <= 4, (
+        f"criterio 5: {calls} inferencias ReID en 1 s con intervalo de 0.5 s "
+        f"(se admite hasta 4 por jitter del planificador); a 20 FPS de tick "
+        f"habria 20 sin el gate de needs_embedding"
+    )
+
+
+# ─── Modo solo-observacion: calcula y cuenta, no transiciona (criterio 4) ────
+def TEST_reid_observation_only(broker):
+    registry = TrackRegistry()
+    now = time.monotonic()
+    recognizer = MagicMock()
+    recognizer.available = True
+    recognizer.process_crop_scored.return_value = _face()
+    engine = _reid_mock()
+    gallery = TrackGallery(inherit_window=15.0, similarity_threshold=0.7, interval=0.1)
+    fsm = IdentityStateMachine(TemporalVoter(window=2, min_votes=2), lost_ttl=30.0)
+
+    # Confirmar la persona 7 sobre el track 1, poblar la galeria con su
+    # apariencia y marcarlo perdido -- exactamente el escenario en el que
+    # resolve() SI devolveria candidato para el track 2.
+    fsm.on_face_result(1, 7, 0.9, now - 5)
+    fsm.on_face_result(1, 7, 0.9, now - 4)
+    assert fsm.state_of(1) is IdentityState.CONFIRMED
+    gallery.update(1, _emb(0), 7, now - 4)
+    fsm.on_track_lost(1, now - 3)
+
+    registry.update_from_detections(_FakeTracked([2]), now=now - 1)
+    registry.set_frame_ids({2})
+
+    sub = broker.subscribe("recognition")
+    worker = RecognitionWorker(sub, registry, recognizer,
+                               AdaptiveRate(target_fps=20.0, min_fps=20.0, max_fps=20.0),
+                               min_track_age=0.0, identity_fsm=fsm,
+                               reid_engine=engine, reid_gallery=gallery, reid_inherit=False)
+    worker.start()
+    _publish_for(broker, seconds=1.0)
+    worker.stop()
+
+    assert worker.stats["reid_matches"] >= 1, (
+        "resolve() deberia haber calculado el candidato aun en modo observacion"
+    )
+    assert worker.stats["reid_inherited"] == 0, (
+        "criterio 4: en modo observacion la herencia NO debe aplicarse"
+    )
+    assert fsm.state_of(2) is IdentityState.UNKNOWN, (
+        "criterio 4: el modo observacion debe recorrer el mismo camino hasta el "
+        "punto de decision, con un solo `if` de diferencia respecto a aplicar -- "
+        "la FSM del track 2 no debe cambiar de estado"
+    )
+
+
+# ─── Los 4 contadores ReID salen por stats (canal de auditoria) ─────────────
+def TEST_reid_counters_exposed_in_stats(broker):
+    registry = TrackRegistry()
+    registry.update_from_detections(_FakeTracked([1]), now=time.monotonic() - 10)
+    recognizer = MagicMock()
+    recognizer.available = True
+    recognizer.process_crop_scored.return_value = _face()
+    engine = _reid_mock()
+    gallery = TrackGallery(inherit_window=15.0, similarity_threshold=0.7, interval=0.5)
+    fsm = IdentityStateMachine(TemporalVoter(window=2, min_votes=2))
+    sub = broker.subscribe("recognition")
+    worker = RecognitionWorker(sub, registry, recognizer, AdaptiveRate(),
+                               min_track_age=0.0, identity_fsm=fsm,
+                               reid_engine=engine, reid_gallery=gallery)
+
+    for key in ("reid_inferences", "reid_matches", "reid_inherited", "reid_conflicts"):
+        assert key in worker.stats
+
+
+# ─── Sin ReID, el worker se comporta exactamente como en la Fase 24 ─────────
+def TEST_worker_without_reid_behaves_as_phase_24(broker):
+    registry = TrackRegistry()
+    registry.update_from_detections(_FakeTracked([1]), now=time.monotonic() - 10)
+    registry.set_frame_ids({1})
+    recognizer = MagicMock()
+    recognizer.available = True
+    recognizer.process_crop_scored.return_value = _face()
+    fsm = IdentityStateMachine(TemporalVoter(window=2, min_votes=2))
+    sub = broker.subscribe("recognition")
+    worker = RecognitionWorker(sub, registry, recognizer,
+                               AdaptiveRate(target_fps=20.0, min_fps=20.0, max_fps=20.0),
+                               min_track_age=0.0, identity_fsm=fsm)
+    worker.start()
+    _publish_for(broker, seconds=1.0)
+    worker.stop()
+
+    assert worker.stats["reid_inferences"] == 0
+    assert recognizer.process_crop_scored.call_count >= 1
