@@ -275,7 +275,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 
 - [x] **Phase 23: Migración a InsightFace/ArcFace con quality gating** — Embeddings 512D + filtro de calidad de rostro (completed 2026-08-10; checkpoint de tasa de aciertos vs dlib pendiente de cámara real)
 - [x] **Phase 24: Identidad temporal — votación y máquina de estados** — UNKNOWN → CANDIDATE → CONFIRMED → TEMPORARILY_LOST
-- [ ] **Phase 25: Re-identificación de personas (ReID)** — Continuidad de identidad sin cara visible
+- [x] **Phase 25: Re-identificación de personas (ReID)** — Continuidad de identidad sin cara visible (completed 2026-08-15; checkpoint de tasa de falsos positivos con cámara real pendiente)
 - [ ] **Phase 26: Análisis de comportamiento** — Merodeo, carrera, inmovilidad, aglomeración, zonas
 - [ ] **Phase 27: Multi-clase y contexto de escena** — Objetos abandonados/retirados + estado agregado de la escena
 
@@ -454,16 +454,18 @@ Plans:
   2. TrackGallery hereda identidad de un track cerrado hace menos de 15 s con similitud > 0.7, y no la hereda si hay conflicto con un track activo
   3. Una persona identificada que se gira de espaldas 10 s y vuelve conserva su person_id sin UNKNOWN_PERSON intermedio
   4. Dos personas distintas con ropa similar no se fusionan; tasa de falsos positivos documentada
+     — **verificado en su parte determinista** (`TEST_gallery_does_not_merge_distinct_identities`);
+     la tasa real con personas reales queda pendiente del checkpoint manual de cámara (25-06 Task 2)
   5. ReID corre como máximo 1 vez cada 2 s por track
 **Spec**: SPEC_v2.md ADR-04, §5.6
-**Plans**: 5/6 plans complete (5 waves)
+**Plans**: 6/6 plans complete (5 waves)
 Plans:
 - [x] 25-01-PLAN.md — Modelo ONNX de OSNet (descarga + sha256 + eje de batch dinámico) y `ReIDEngine`
 - [x] 25-02-PLAN.md — `IdentityStateMachine.on_reid_result()`: herencia de identidad por apariencia
 - [x] 25-03-PLAN.md — `TrackGallery`: ventana, umbral, conflicto, intervalo y expiración acotada
 - [x] 25-04-PLAN.md — Vía ReID dentro de `RecognitionWorker` (criterios 3 y 5, modo solo-observación)
 - [x] 25-05-PLAN.md — Parámetros `reid_*` en `config.py` + cableado en `manager.py` y `main.py`
-- [ ] 25-06-PLAN.md — Puerta de fase: trazabilidad de los 5 criterios + checkpoint del criterio 4
+- [x] 25-06-PLAN.md — Puerta de fase: trazabilidad de los 5 criterios + checkpoint del criterio 4 (diferido, ver 25-06-SUMMARY.md)
 
 ### Phase 26: Análisis de comportamiento
 **Goal**: El sistema responde a qué está ocurriendo, no solo a si hay alguien
