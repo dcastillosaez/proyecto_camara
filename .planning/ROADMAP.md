@@ -478,6 +478,13 @@ Plans:
   4. El historial por track está acotado y no crece con el tiempo de sesión
   5. Los eventos de comportamiento son usables como `when.event` en rules.yaml sin cambios en el RuleEngine
 **Spec**: SPEC_v2.md §5.7
+**Plans**: 5 plans (4 waves)
+Plans:
+- [ ] 26-01-PLAN.md — `BehaviorAnalyzer` (dominio puro): agregados O(1), las 4 reglas con latch por episodio y doble guarda de expiración
+- [ ] 26-02-PLAN.md — 10 umbrales `behavior_*`/`loiter_*`/`run_*`/`immobile_*`/`crowd_*` en `config.py` + `validate_behavior_params`
+- [ ] 26-03-PLAN.md — `EventEngine.emit_behavior()` + tiempo de permanencia (`duration_s`) en `ZONE_EXITED`
+- [ ] 26-04-PLAN.md — Cableado: `DetectionWorker._analyze_behavior`, construcción fuera de la factoría en `manager.py`, propagación en `main.py`
+- [ ] 26-05-PLAN.md — Criterio 5 (`when.event` desde YAML real) + puerta de fase + checkpoint de calibración con cámara
 
 ### Phase 27: Multi-clase y contexto de escena
 **Goal**: Capa semántica: además de personas, el sistema entiende objetos y describe el estado de la escena
