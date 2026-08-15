@@ -215,3 +215,65 @@ def TEST_identity_ratio_out_of_range_rejected():
         Settings(identity_min_ratio=0.0)
     with pytest.raises((ValidationError, ValueError)):
         Settings(identity_min_ratio=1.5)
+
+
+# ---------------------------------------------------------------------------
+# Re-identificacion por apariencia (Fase 25 — REID-01..REID-04)
+# ---------------------------------------------------------------------------
+
+# ─── Defaults de SPEC_v2.md §5.6 / ADR-04 ─────────────────────────────────────
+# reid_inherit_identity=False es el fail-safe de la fase: sin decision explicita
+# del operador, ReID calcula y registra pero no altera identidades. No es una
+# omision del plan, es la condicion de arranque exigida por T-25-17.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_reid_defaults_match_spec():
+    """Settings() expone los 7 parametros reid_* con los defaults del SPEC."""
+    s = Settings()
+    assert s.reid_enabled is True
+    assert s.reid_model_path == "models/reid/osnet_x0_25_msmt17_dyn.onnx"
+    assert s.reid_inherit_window_secs == 15.0
+    assert s.reid_similarity_threshold == 0.7
+    assert s.reid_interval_secs == 2.0
+    assert s.reid_inherit_identity is False
+    assert s.reid_max_gallery_entries == 256
+
+
+# ─── Umbral de similitud fuera de (0, 1] es rechazado ──────────────────────────
+# 0.0 heredaria identidad de cualquier apariencia (falso positivo garantizado,
+# criterio 2) y > 1.0 no la heredaria nunca (via ReID inutil).
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_reid_similarity_threshold_out_of_range_rejected():
+    """reid_similarity_threshold fuera de (0, 1] lanza ValueError."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(reid_similarity_threshold=0.0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(reid_similarity_threshold=1.5)
+
+
+# ─── Parametros temporales/de cota deben ser positivos ────────────────────────
+# reid_interval_secs<=0 dejaria correr ReID en cada tick (criterio 5 roto);
+# reid_inherit_window_secs<=0 invalidaria toda ventana de herencia; una cota de
+# galeria menor que 1 dejaria la galeria inutilizable.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_reid_time_params_must_be_positive():
+    """reid_inherit_window_secs, reid_interval_secs y reid_max_gallery_entries fuera de rango lanzan."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(reid_inherit_window_secs=0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(reid_interval_secs=-1)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(reid_max_gallery_entries=0)
+
+
+# ─── reid_model_path: extension permitida y contencion en el proyecto (SEC-16) ─
+# Misma politica que yolo_model_path: solo .pt/.onnx y nunca fuera de
+# _PROJECT_ROOT, para que la variable de entorno REID_MODEL_PATH no pueda
+# apuntar a un fichero arbitrario del sistema (T-25-16).
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_reid_model_path_rejects_bad_extension_and_traversal():
+    """Extension no permitida y traversal fuera del proyecto lanzan; una ruta valida no."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(reid_model_path="models/reid/x.txt")
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(reid_model_path="../../etc/passwd.onnx")
+    Settings(reid_model_path="models/reid/otro.onnx")

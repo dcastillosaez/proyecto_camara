@@ -7,8 +7,9 @@ del reloj lo reciben como parametro `now: float` (monotonico), igual que
 AdaptiveRate.should_process(now) en backend/pipeline/rate.py.
 
 Fuera de alcance aqui: publicar eventos (lo hace EventEngine traduciendo
-IdentityTransition), persistir el estado y la re-identificacion por apariencia
-sin cara visible (Fase 25).
+IdentityTransition) y persistir el estado. La re-identificacion por apariencia
+(Fase 25) entra por on_reid_result(), que reutiliza _claim_lost() y NO vota en
+el TemporalVoter: la votacion sigue siendo exclusivamente facial.
 """
 
 from __future__ import annotations
@@ -336,6 +337,46 @@ class IdentityStateMachine:
                 emits=False,
             )
         return None
+
+    def on_reid_result(
+        self, track_id: int, person_id: int | None, similarity: float, now: float
+    ) -> IdentityTransition | None:
+        """Segunda via de recuperacion de identidad: apariencia, sin cara visible (Fase 25).
+
+        NO vota en el TemporalVoter: la votacion es facial y la Fase 25 no la toca.
+        Solo actua sobre tracks sin evidencia facial propia; un track CANDIDATE con
+        votacion en curso o CONFIRMED nunca es secuestrado por apariencia.
+        """
+        if person_id is None:
+            return None
+        st = self._states.get(track_id)
+        if st is not None and st.state is not IdentityState.UNKNOWN:
+            return None                       # la cara manda; ReID no interfiere
+        if st is not None and self._voter.matched_votes(track_id) > 0:
+            return None                       # ya hay evidencia facial de este track
+        if not self._claim_lost(person_id, now):
+            return None                       # nadie perdido con esa identidad
+        st = self._states.setdefault(track_id, _TrackIdentity())
+        st.state = IdentityState.CONFIRMED
+        st.person_id = person_id
+        st.confidence = similarity
+        st.failed_revalidations = 0
+        st.last_revalidation_at = now
+        # Pitfall 5: sin refrescar last_face_at, on_tick borraria este estado por
+        # rancio (now - last_face_at > stale_ttl). Consecuencia deliberada: el track
+        # heredado por apariencia no revalida con cara hasta revalidate_after (120 s).
+        st.last_face_at = now
+        st.recognized_emitted = True
+        return IdentityTransition(
+            track_id,
+            IdentityState.UNKNOWN,
+            IdentityState.CONFIRMED,
+            person_id=person_id,
+            confidence=similarity,
+            votes=0,
+            window=self._voter.window,
+            emits=False,                      # misma visita: no hay 2o PERSON_RECOGNIZED
+        )
 
     def on_track_lost(self, track_id: int, now: float) -> IdentityTransition | None:
         st = self._states.get(track_id)

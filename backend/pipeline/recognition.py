@@ -33,6 +33,8 @@ from backend.pipeline.tracking import TrackRegistry
 
 if TYPE_CHECKING:
     from backend.events.engine import EventEngine
+    from backend.perception.reid.engine import ReIDEngine
+    from backend.perception.reid.gallery import TrackGallery
     from backend.pipeline.broker import Subscription
     from backend.recognizer import PersonRecognizer
 
@@ -55,6 +57,9 @@ class RecognitionWorker:
         on_identified: Callable[[np.ndarray, int], None] | None = None,
         identity_fsm: IdentityStateMachine | None = None,
         event_engine: EventEngine | None = None,
+        reid_engine: "ReIDEngine | None" = None,
+        reid_gallery: "TrackGallery | None" = None,
+        reid_inherit: bool = False,
     ) -> None:
         self._sub = sub
         self._registry = registry
@@ -67,6 +72,13 @@ class RecognitionWorker:
         self._on_identified = on_identified
         self._fsm = identity_fsm
         self._event_engine = event_engine
+        self._reid_engine = reid_engine
+        self._gallery = reid_gallery
+        # El flag de politica vive AQUI, no en TrackGallery. resolve() calcula
+        # siempre el candidato real; si lo hiciera la galeria devolviendo None
+        # en modo observacion se perderia justo el dato que se quiere auditar
+        # (que identidad se habria heredado) — RESEARCH §Q7, criterio 4.
+        self._reid_inherit = reid_inherit
 
         self._running = False
         self._thread: threading.Thread | None = None
@@ -74,6 +86,10 @@ class RecognitionWorker:
         self._identified = 0
         self._exceptions = 0
         self._face_inferences = 0
+        self._reid_inferences = 0
+        self._reid_matches = 0
+        self._reid_inherited = 0
+        self._reid_conflicts = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -104,6 +120,10 @@ class RecognitionWorker:
             "identified": self._identified,
             "exceptions": self._exceptions,
             "face_inferences": self._face_inferences,
+            "reid_inferences": self._reid_inferences,
+            "reid_matches": self._reid_matches,
+            "reid_inherited": self._reid_inherited,
+            "reid_conflicts": self._reid_conflicts,
             **self._rate.stats,
         }
 
@@ -126,60 +146,176 @@ class RecognitionWorker:
             if not self._rate.should_process(now):
                 continue
 
-            target = self._next_candidate(now)
-            if target is None:
-                continue
+            self._face_pass(frame, now)
+            self._reid_pass(frame, time.monotonic())
 
+    def _face_pass(self, frame, now: float) -> None:
+        """Via facial (Fase 23/24), extraida de `_loop` (Fase 25): la ausencia de
+        candidato facial no debe impedir la pasada ReID (persona de espaldas, el
+        caso que `_next_candidate`/`needs_recognition()` no cubre)."""
+        target = self._next_candidate(now)
+        if target is None:
+            return
+
+        crop = self._crop_for(frame.image, target.bbox)
+        if crop is None:
+            return
+
+        t0 = time.monotonic()
+        try:
+            result = self._recognizer.process_crop_scored(crop, target.track_id)
+        except Exception:
+            self._exceptions += 1
+            logger.exception(
+                "RecognitionWorker: fallo de reconocimiento (track %d)", target.track_id
+            )
+            return
+        self._face_inferences += 1
+        face_latency = time.monotonic() - t0
+        self._rate.observe(face_latency)
+        _metrics.inference_latency_seconds.labels(stage="face").observe(face_latency)
+
+        if self._fsm is None:
+            # Comportamiento Fase 23 — baseline del criterio 6.
+            if result.person_id is None:
+                return
+            self._registry.set_identity(target.track_id, result.person_id, result.name)
+            self._identified += 1
+            self._notify_identified(crop, result.person_id)
+            return
+
+        now2 = time.monotonic()
+        transition = self._fsm.on_face_result(
+            target.track_id, result.person_id, result.score, now2
+        )
+        self._registry.set_identity_state(target.track_id, self._fsm.state_of(target.track_id))
+        pid, _conf = self._fsm.identity_of(target.track_id)
+        if pid is not None:
+            # El nombre solo es fiable si corresponde al pid que la FSM ha
+            # fijado: el ganador de la votacion puede no ser el match de
+            # ESTE frame.
+            name = result.name if result.person_id == pid else None
+            self._registry.set_identity(target.track_id, pid, name)
+        if transition is not None:
+            self._emit_identity(
+                transition,
+                person_name=result.name if result.person_id == transition.person_id else None,
+                bbox=target.bbox,
+                captured_at=frame.captured_at,
+                processed_at=now2,
+            )
+        if transition is not None and transition.to_state is IdentityState.CONFIRMED:
+            self._identified += 1
+            self._notify_identified(crop, pid)
+
+    def _reid_pass(self, frame, now: float) -> None:
+        """Via de apariencia (Fase 25). Corre en el mismo tick que la facial y en
+        el mismo hilo: la FSM es single-thread sin lock (identity.py:130)."""
+        if self._reid_engine is None or self._gallery is None or self._fsm is None:
+            return
+        if not getattr(self._reid_engine, "available", False):
+            return
+        try:
+            target = self._next_reid_candidate(now)
+            if target is None:
+                return
             crop = self._crop_for(frame.image, target.bbox)
             if crop is None:
-                continue
-
+                return
             t0 = time.monotonic()
-            try:
-                result = self._recognizer.process_crop_scored(crop, target.track_id)
-            except Exception:
-                self._exceptions += 1
-                logger.exception(
-                    "RecognitionWorker: fallo de reconocimiento (track %d)", target.track_id
-                )
-                continue
-            self._face_inferences += 1
-            face_latency = time.monotonic() - t0
-            self._rate.observe(face_latency)
-            _metrics.inference_latency_seconds.labels(stage="face").observe(face_latency)
+            emb = self._reid_engine.embed(crop)
+            reid_latency = time.monotonic() - t0
+            if emb is None:
+                return
+            self._reid_inferences += 1
+            # Pitfall 6: NUNCA self._rate.observe(reid_latency). Ese AdaptiveRate
+            # esta fijado a 2 FPS (min=max) y no cambiaria el ritmo, pero si
+            # contaminaria avg_latency en /api/v2/cameras/{id}/health, que
+            # significa "latencia facial".
+            _metrics.inference_latency_seconds.labels(stage="reid").observe(reid_latency)
 
-            if self._fsm is None:
-                # Comportamiento Fase 23 — baseline del criterio 6.
-                if result.person_id is None:
-                    continue
-                self._registry.set_identity(target.track_id, result.person_id, result.name)
-                self._identified += 1
-                self._notify_identified(crop, result.person_id)
-                continue
+            pid_now, _conf = self._fsm.identity_of(target.track_id)
+            self._gallery.update(target.track_id, emb, pid_now, now)
 
-            now2 = time.monotonic()
-            transition = self._fsm.on_face_result(
-                target.track_id, result.person_id, result.score, now2
+            pid, sim = self._gallery.resolve(
+                target.track_id, emb, now, self._active_identities()
             )
-            self._registry.set_identity_state(target.track_id, self._fsm.state_of(target.track_id))
-            pid, _conf = self._fsm.identity_of(target.track_id)
+            if pid is None:
+                return
+            self._reid_matches += 1
+            logger.info(
+                "ReID: track %d -> person %d (sim %.3f, inherit=%s)",
+                target.track_id, pid, sim, self._reid_inherit,
+            )
+            if not self._reid_inherit:
+                return                      # modo solo-observacion (criterio 4)
+            now2 = time.monotonic()
+            transition = self._fsm.on_reid_result(target.track_id, pid, sim, now2)
+            if transition is None:
+                self._reid_conflicts += 1   # la FSM rechazo la herencia
+                return
+            self._reid_inherited += 1
+            self._registry.set_identity_state(
+                target.track_id, self._fsm.state_of(target.track_id)
+            )
+            self._registry.set_identity(target.track_id, pid, None)
+            self._emit_identity(
+                transition,
+                bbox=target.bbox,
+                captured_at=frame.captured_at,
+                processed_at=now2,
+            )
+        except Exception:
+            self._exceptions += 1
+            logger.exception("RecognitionWorker: via ReID fallo")
+
+    def _next_reid_candidate(self, now: float):
+        """Track mas antiguo que toca re-embeber ahora, o None.
+
+        Deliberadamente NO usa fsm.needs_recognition(): el caso que ReID cubre
+        (persona de espaldas, TEMPORARILY_LOST, UNKNOWN en backoff de 120 s) es
+        justo donde ese gate dice que no. El unico limite es reid_interval_secs
+        (criterio 5, dentro de TrackGallery.needs_embedding) y min_track_age.
+
+        Cota agregada (RESEARCH §Q4): como mucho un track por tick; a 2 FPS y
+        reid_interval_secs=2.0 eso sostiene hasta 4 tracks concurrentes a ritmo
+        pleno, y con mas tracks el intervalo efectivo por track se degrada por
+        encima de 2 s — degradacion segura (menos coste, nunca mas) que sigue
+        cumpliendo el criterio 5.
+
+        Solo candidatos en frame_ids() (bug encontrado en 25-04, Task 3): un
+        track fuera del frame actual no tiene bbox fiable -- recortar sobre su
+        posicion vieja en el frame ACTUAL captura fondo/oclusion, no a la
+        persona. Ademas, si se re-embebiera de todos modos, gallery.update()
+        escribiria identity_of(tid)==None (identity.py:155-159 solo devuelve
+        person_id si el track esta CONFIRMED) y borraria la identidad que el
+        propio ReID necesita conservar en ese track para que otro lo reclame
+        despues -- justo lo contrario del criterio 3.
+        """
+        visible = self._registry.frame_ids()
+        tracks = [
+            ts for ts in self._registry.snapshot().values()
+            if ts.track_id in visible
+            and (now - ts.first_seen) >= self._min_track_age
+            and self._gallery.needs_embedding(ts.track_id, now)
+        ]
+        if not tracks:
+            return None
+        return min(tracks, key=lambda ts: ts.first_seen)
+
+    def _active_identities(self) -> set[int]:
+        """Identidades CONFIRMED sobre tracks visibles en el frame actual (REID-02).
+
+        frame_ids(), no active_ids(): active_ids() tarda hasta 30 s (ttl de prune)
+        en dejar de ver un track desaparecido — el bug D-05 de la Fase 24.
+        identity_of() ya devuelve identidad solo si el track esta CONFIRMED.
+        """
+        out: set[int] = set()
+        for tid in self._registry.frame_ids():
+            pid, _ = self._fsm.identity_of(tid)
             if pid is not None:
-                # El nombre solo es fiable si corresponde al pid que la FSM ha
-                # fijado: el ganador de la votacion puede no ser el match de
-                # ESTE frame.
-                name = result.name if result.person_id == pid else None
-                self._registry.set_identity(target.track_id, pid, name)
-            if transition is not None:
-                self._emit_identity(
-                    transition,
-                    person_name=result.name if result.person_id == transition.person_id else None,
-                    bbox=target.bbox,
-                    captured_at=frame.captured_at,
-                    processed_at=now2,
-                )
-            if transition is not None and transition.to_state is IdentityState.CONFIRMED:
-                self._identified += 1
-                self._notify_identified(crop, pid)
+                out.add(pid)
+        return out
 
     def _next_candidate(self, now: float):
         """Track mas antiguo que merece una inferencia facial ahora, o None.
@@ -230,6 +366,8 @@ class RecognitionWorker:
         try:
             transitions = self._fsm.on_active_tracks(self._registry.frame_ids(), now)
             transitions += self._fsm.on_tick(now)
+            if self._gallery is not None:
+                self._gallery.prune(now, self._registry.frame_ids())
         except Exception:
             self._exceptions += 1
             logger.exception("RecognitionWorker: mantenimiento de la FSM de identidad fallo")

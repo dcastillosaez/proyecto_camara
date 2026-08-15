@@ -14,6 +14,7 @@ from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
 from backend.events.types import EventType
 from backend.perception.face.identity import IdentityState, IdentityStateMachine, TemporalVoter
+from backend.perception.reid.gallery import TrackGallery
 from backend.pipeline.broker import Frame, FrameBroker
 from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.recognition import RecognitionWorker
@@ -315,6 +316,48 @@ def TEST_fsm_survives_worker_restart():
     assert worker2._fsm is fsm
 
 
+# ─── Motor y galeria ReID sobreviven a un reinicio del worker por el supervisor ─
+def TEST_reid_engine_and_gallery_survive_worker_restart():
+    """Motor y galeria se construyen FUERA de _make_recognition (manager.py): un
+    reinicio del worker no debe vaciar la galeria de apariencia, igual que no
+    debe perder la identidad ya confirmada."""
+    from backend.pipeline.manager import CameraPipeline
+
+    recognizer = MagicMock()
+    recognizer.available = True
+    pipeline = CameraPipeline("cam1", "rtsp://fake", recognizer=recognizer)
+
+    factory = pipeline.supervisor._entries["recognition"].factory
+    worker1 = factory()
+    gallery = pipeline.reid_gallery
+    assert gallery is not None
+    assert worker1._gallery is gallery
+
+    worker2 = factory()
+    assert worker2 is not worker1
+    assert pipeline.reid_gallery is gallery      # misma instancia, no una nueva
+    assert worker2._gallery is gallery
+
+
+# ─── reid_enabled=False deja el pipeline sin galeria (via ReID no-op) ───────────
+def TEST_reid_disabled_leaves_worker_without_gallery():
+    """Con reid_enabled=False no se construyen ReIDEngine/TrackGallery y el
+    worker sigue siendo funcional (Fase 24 intacta, via ReID no-op)."""
+    from backend.pipeline.manager import CameraPipeline
+
+    recognizer = MagicMock()
+    recognizer.available = True
+    pipeline = CameraPipeline("cam1", "rtsp://fake", recognizer=recognizer, reid_enabled=False)
+
+    assert pipeline.reid_gallery is None
+    assert pipeline.reid_engine is None
+
+    factory = pipeline.supervisor._entries["recognition"].factory
+    worker = factory()
+    assert worker is not None
+    assert worker._gallery is None
+
+
 # ─── Criterio 6: presupuesto de inferencias sobre un track no confirmado ─────
 # Escenario medido (24-CONTEXT.md, decision del usuario D-01): UNA persona
 # estatica cuyo reconocimiento NUNCA tiene exito (cara no detectable / calidad
@@ -420,3 +463,214 @@ async def TEST_confirmed_track_emits_person_recognized_once(broker):
     recognized = [e for e in received if e.type is EventType.PERSON_RECOGNIZED]
     assert len(recognized) == 1
     assert registry.snapshot()[1].identity_state is IdentityState.CONFIRMED
+
+
+# ─── Fase 25 — via de apariencia (ReID) ──────────────────────────────────────
+
+def _emb(i: int = 0) -> np.ndarray:
+    """Vector 512D unitario determinista. NUNCA el generador aleatorio de numpy:
+    el research midio coseno 0,991 entre dos ruidos independientes con OSNet."""
+    v = np.zeros(512, dtype=np.float32)
+    v[i] = 1.0
+    return v
+
+
+def _reid_mock(vec: np.ndarray | None = None) -> MagicMock:
+    engine = MagicMock()
+    engine.available = True
+    engine.embed.return_value = _emb(0) if vec is None else vec
+    return engine
+
+
+# ─── Criterio 5: max 1 inferencia ReID cada reid_interval_secs por track ─────
+def TEST_reid_inference_budget(broker):
+    # Escalado del reloj: los 2 s de produccion se comprimen a 0.5 s en el test,
+    # con el tick del worker a 20 FPS para que el limite NO sea el tick sino el
+    # gate de TrackGallery.needs_embedding.
+    registry = TrackRegistry()
+    registry.update_from_detections(_FakeTracked([1]), now=time.monotonic() - 10)
+    registry.set_frame_ids({1})
+    recognizer = MagicMock()
+    recognizer.available = True
+    recognizer.process_crop_scored.return_value = _face()
+    engine = _reid_mock()
+    gallery = TrackGallery(inherit_window=15.0, similarity_threshold=0.7, interval=0.5)
+    fsm = IdentityStateMachine(TemporalVoter(window=2, min_votes=2))
+    sub = broker.subscribe("recognition")
+    worker = RecognitionWorker(sub, registry, recognizer,
+                               AdaptiveRate(target_fps=20.0, min_fps=20.0, max_fps=20.0),
+                               min_track_age=0.0, identity_fsm=fsm,
+                               reid_engine=engine, reid_gallery=gallery, reid_inherit=False)
+    worker.start()
+    _publish_for(broker, seconds=1.0)
+    worker.stop()
+    calls = engine.embed.call_count
+    assert calls >= 1, "la via ReID no se ejecuto: el test no mide nada"
+    assert calls <= 4, (
+        f"criterio 5: {calls} inferencias ReID en 1 s con intervalo de 0.5 s "
+        f"(se admite hasta 4 por jitter del planificador); a 20 FPS de tick "
+        f"habria 20 sin el gate de needs_embedding"
+    )
+
+
+# ─── Modo solo-observacion: calcula y cuenta, no transiciona (criterio 4) ────
+def TEST_reid_observation_only(broker):
+    registry = TrackRegistry()
+    now = time.monotonic()
+    recognizer = MagicMock()
+    recognizer.available = True
+    recognizer.process_crop_scored.return_value = _face()
+    engine = _reid_mock()
+    gallery = TrackGallery(inherit_window=15.0, similarity_threshold=0.7, interval=0.1)
+    fsm = IdentityStateMachine(TemporalVoter(window=2, min_votes=2), lost_ttl=30.0)
+
+    # Confirmar la persona 7 sobre el track 1, poblar la galeria con su
+    # apariencia y marcarlo perdido -- exactamente el escenario en el que
+    # resolve() SI devolveria candidato para el track 2.
+    fsm.on_face_result(1, 7, 0.9, now - 5)
+    fsm.on_face_result(1, 7, 0.9, now - 4)
+    assert fsm.state_of(1) is IdentityState.CONFIRMED
+    gallery.update(1, _emb(0), 7, now - 4)
+    fsm.on_track_lost(1, now - 3)
+
+    registry.update_from_detections(_FakeTracked([2]), now=now - 1)
+    registry.set_frame_ids({2})
+
+    sub = broker.subscribe("recognition")
+    worker = RecognitionWorker(sub, registry, recognizer,
+                               AdaptiveRate(target_fps=20.0, min_fps=20.0, max_fps=20.0),
+                               min_track_age=0.0, identity_fsm=fsm,
+                               reid_engine=engine, reid_gallery=gallery, reid_inherit=False)
+    worker.start()
+    _publish_for(broker, seconds=1.0)
+    worker.stop()
+
+    assert worker.stats["reid_matches"] >= 1, (
+        "resolve() deberia haber calculado el candidato aun en modo observacion"
+    )
+    assert worker.stats["reid_inherited"] == 0, (
+        "criterio 4: en modo observacion la herencia NO debe aplicarse"
+    )
+    assert fsm.state_of(2) is IdentityState.UNKNOWN, (
+        "criterio 4: el modo observacion debe recorrer el mismo camino hasta el "
+        "punto de decision, con un solo `if` de diferencia respecto a aplicar -- "
+        "la FSM del track 2 no debe cambiar de estado"
+    )
+
+
+# ─── Los 4 contadores ReID salen por stats (canal de auditoria) ─────────────
+def TEST_reid_counters_exposed_in_stats(broker):
+    registry = TrackRegistry()
+    registry.update_from_detections(_FakeTracked([1]), now=time.monotonic() - 10)
+    recognizer = MagicMock()
+    recognizer.available = True
+    recognizer.process_crop_scored.return_value = _face()
+    engine = _reid_mock()
+    gallery = TrackGallery(inherit_window=15.0, similarity_threshold=0.7, interval=0.5)
+    fsm = IdentityStateMachine(TemporalVoter(window=2, min_votes=2))
+    sub = broker.subscribe("recognition")
+    worker = RecognitionWorker(sub, registry, recognizer, AdaptiveRate(),
+                               min_track_age=0.0, identity_fsm=fsm,
+                               reid_engine=engine, reid_gallery=gallery)
+
+    for key in ("reid_inferences", "reid_matches", "reid_inherited", "reid_conflicts"):
+        assert key in worker.stats
+
+
+# ─── Sin ReID, el worker se comporta exactamente como en la Fase 24 ─────────
+def TEST_worker_without_reid_behaves_as_phase_24(broker):
+    registry = TrackRegistry()
+    registry.update_from_detections(_FakeTracked([1]), now=time.monotonic() - 10)
+    registry.set_frame_ids({1})
+    recognizer = MagicMock()
+    recognizer.available = True
+    recognizer.process_crop_scored.return_value = _face()
+    fsm = IdentityStateMachine(TemporalVoter(window=2, min_votes=2))
+    sub = broker.subscribe("recognition")
+    worker = RecognitionWorker(sub, registry, recognizer,
+                               AdaptiveRate(target_fps=20.0, min_fps=20.0, max_fps=20.0),
+                               min_track_age=0.0, identity_fsm=fsm)
+    worker.start()
+    _publish_for(broker, seconds=1.0)
+    worker.stop()
+
+    assert worker.stats["reid_inferences"] == 0
+    assert recognizer.process_crop_scored.call_count >= 1
+
+
+# ─── Criterio 3 end-to-end: identidad conservada sin cara visible ───────────
+# Una persona identificada que se gira de espaldas 10 s y vuelve (track_id
+# nuevo asignado por ByteTrack) conserva su person_id, con exactamente 1
+# PERSON_RECOGNIZED y 0 UNKNOWN_PERSON intermedio.
+# ───────────────────────────────────────────────────────────────────────────
+async def TEST_reid_recovers_identity_without_face(broker):
+    registry = TrackRegistry()
+    recognizer = MagicMock()
+    recognizer.available = True
+    # El mock solo "reconoce cara" del track activo mientras sea el 1; en
+    # cuanto el track pasa a ser el 99 (reaparicion de espaldas) la cara ya
+    # no esta disponible -- lo que diferencia este test del de la Fase 24.
+    match_track = {"id": 1}
+
+    def _scored(crop, track_id):
+        if track_id == match_track["id"]:
+            return _face(7, "Juan", score=0.8)
+        return _face()
+
+    recognizer.process_crop_scored.side_effect = _scored
+
+    reid_engine = _reid_mock()   # mismo vector para cualquier crop: misma persona
+    gallery = TrackGallery(inherit_window=15.0, similarity_threshold=0.7, interval=0.1)
+    fsm = IdentityStateMachine(TemporalVoter(window=3, min_votes=3), lost_ttl=30.0)
+    event_engine, received = make_engine()
+    sub = broker.subscribe("recognition")
+    rate = AdaptiveRate(target_fps=20.0, min_fps=20.0, max_fps=20.0)
+    worker = RecognitionWorker(sub, registry, recognizer, rate, min_track_age=0.0,
+                               identity_fsm=fsm, event_engine=event_engine,
+                               reid_engine=reid_engine, reid_gallery=gallery, reid_inherit=True)
+    worker.start()
+
+    # Track 1 visible: se confirma con 3 votos coherentes.
+    registry.update_from_detections(_FakeTracked([1]), now=time.monotonic())
+    registry.set_frame_ids({1})
+    _publish_for(broker, seconds=0.3)
+    await wait_until(lambda: fsm.state_of(1) is IdentityState.CONFIRMED, timeout=2.0)
+
+    # Desaparicion: _sync_identity real lo marca perdido, y el mock deja de
+    # "verle" cara (nadie coincide con match_track).
+    match_track["id"] = None
+    registry.set_frame_ids(set())
+    _publish_for(broker, seconds=0.2)
+    await wait_until(lambda: fsm.state_of(1) is IdentityState.TEMPORARILY_LOST, timeout=2.0)
+
+    # El TrackRegistry termina soltando el track viejo (lo que haria
+    # DetectionWorker.prune() pasado su ttl).
+    registry.prune(now=time.monotonic(), ttl=0.01)
+
+    # Reaparece con un track_id NUEVO (como haria ByteTrack), de espaldas: la
+    # cara sigue sin estar disponible, pero la apariencia es la misma.
+    registry.update_from_detections(_FakeTracked([99]), now=time.monotonic())
+    registry.set_frame_ids({99})
+    _publish_for(broker, seconds=0.3)
+    await wait_until(lambda: fsm.identity_of(99)[0] == 7, timeout=2.0)
+
+    worker.stop()
+    # wait_until puede salir sin haber cedido el control al loop ni una sola
+    # vez si el predicado ya era cierto en la primera comprobacion -- sin este
+    # respiro el EventBus nunca llega a drenar la cola hacia `received`.
+    await asyncio.sleep(0.1)
+
+    assert fsm.identity_of(99)[0] == 7, (
+        "criterio 3: el track reaparecido no heredo el person_id por apariencia"
+    )
+    recognized = [e for e in received if e.type is EventType.PERSON_RECOGNIZED]
+    assert len(recognized) == 1, (
+        f"se esperaba 1 PERSON_RECOGNIZED, hubo {len(recognized)} -- la herencia "
+        "por ReID debe llevar emits=False (misma visita)"
+    )
+    unknown = [e for e in received if e.type is EventType.UNKNOWN_PERSON]
+    assert unknown == [], (
+        "criterio 3: hubo UNKNOWN_PERSON intermedio; la persona nunca dejo de estar "
+        "identificada"
+    )
+    assert worker.stats["reid_inherited"] >= 1
