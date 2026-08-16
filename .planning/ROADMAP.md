@@ -276,7 +276,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 - [x] **Phase 23: Migración a InsightFace/ArcFace con quality gating** — Embeddings 512D + filtro de calidad de rostro (completed 2026-08-10; checkpoint de tasa de aciertos vs dlib pendiente de cámara real)
 - [x] **Phase 24: Identidad temporal — votación y máquina de estados** — UNKNOWN → CANDIDATE → CONFIRMED → TEMPORARILY_LOST
 - [x] **Phase 25: Re-identificación de personas (ReID)** — Continuidad de identidad sin cara visible (completed 2026-08-15; checkpoint de tasa de falsos positivos con cámara real pendiente)
-- [ ] **Phase 26: Análisis de comportamiento** — Merodeo, carrera, inmovilidad, aglomeración, zonas
+- [x] **Phase 26: Análisis de comportamiento** — Merodeo, carrera, inmovilidad, aglomeración, zonas
 - [ ] **Phase 27: Multi-clase y contexto de escena** — Objetos abandonados/retirados + estado agregado de la escena
 
 ### Bloque C — Producto
@@ -478,13 +478,13 @@ Plans:
   4. El historial por track está acotado y no crece con el tiempo de sesión
   5. Los eventos de comportamiento son usables como `when.event` en rules.yaml sin cambios en el RuleEngine
 **Spec**: SPEC_v2.md §5.7
-**Plans**: 5 plans (4 waves) — 4/5 completo
+**Plans**: 5/5 plans complete (4 waves)
 Plans:
 - [x] 26-01-PLAN.md — `BehaviorAnalyzer` (dominio puro): agregados O(1), las 4 reglas con latch por episodio y doble guarda de expiración
 - [x] 26-02-PLAN.md — 10 umbrales `behavior_*`/`loiter_*`/`run_*`/`immobile_*`/`crowd_*` en `config.py` + `validate_behavior_params`
 - [x] 26-03-PLAN.md — `EventEngine.emit_behavior()` + tiempo de permanencia (`duration_s`) en `ZONE_EXITED`
 - [x] 26-04-PLAN.md — Cableado: `DetectionWorker._analyze_behavior`, construcción fuera de la factoría en `manager.py`, propagación en `main.py`
-- [ ] 26-05-PLAN.md — Criterio 5 (`when.event` desde YAML real) + puerta de fase + checkpoint de calibración con cámara
+- [x] 26-05-PLAN.md — Criterio 5 (`when.event` desde YAML real) + puerta de fase + checkpoint de calibración con cámara (diferido, ver 26-05-SUMMARY.md)
 
 ### Phase 27: Multi-clase y contexto de escena
 **Goal**: Capa semántica: además de personas, el sistema entiende objetos y describe el estado de la escena
