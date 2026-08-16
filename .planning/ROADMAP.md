@@ -478,9 +478,9 @@ Plans:
   4. El historial por track está acotado y no crece con el tiempo de sesión
   5. Los eventos de comportamiento son usables como `when.event` en rules.yaml sin cambios en el RuleEngine
 **Spec**: SPEC_v2.md §5.7
-**Plans**: 5 plans (4 waves)
+**Plans**: 5 plans (4 waves) — 1/5 completo
 Plans:
-- [ ] 26-01-PLAN.md — `BehaviorAnalyzer` (dominio puro): agregados O(1), las 4 reglas con latch por episodio y doble guarda de expiración
+- [x] 26-01-PLAN.md — `BehaviorAnalyzer` (dominio puro): agregados O(1), las 4 reglas con latch por episodio y doble guarda de expiración
 - [ ] 26-02-PLAN.md — 10 umbrales `behavior_*`/`loiter_*`/`run_*`/`immobile_*`/`crowd_*` en `config.py` + `validate_behavior_params`
 - [ ] 26-03-PLAN.md — `EventEngine.emit_behavior()` + tiempo de permanencia (`duration_s`) en `ZONE_EXITED`
 - [ ] 26-04-PLAN.md — Cableado: `DetectionWorker._analyze_behavior`, construcción fuera de la factoría en `manager.py`, propagación en `main.py`

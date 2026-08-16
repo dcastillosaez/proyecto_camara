@@ -228,11 +228,11 @@
 
 ### Comprensión de escena (BEH)
 
-- [ ] **BEH-01**: El sistema detecta merodeo con umbrales de tiempo y desplazamiento configurables
-- [ ] **BEH-02**: El sistema detecta carrera e inmovilidad prolongada
-- [ ] **BEH-03**: El sistema detecta aglomeración a partir de un número configurable de tracks simultáneos
+- [x] **BEH-01**: El sistema detecta merodeo con umbrales de tiempo y desplazamiento configurables
+- [x] **BEH-02**: El sistema detecta carrera e inmovilidad prolongada
+- [x] **BEH-03**: El sistema detecta aglomeración a partir de un número configurable de tracks simultáneos
 - [ ] **BEH-04**: El sistema emite entrada y salida de zona por track con tiempo de permanencia
-- [ ] **BEH-05**: Cada evento de comportamiento incluye las magnitudes que lo justifican
+- [x] **BEH-05**: Cada evento de comportamiento incluye las magnitudes que lo justifican
 - [ ] **BEH-06**: Las clases detectadas son configurables más allá de "persona" (bicicleta, coche, moto, mochila, maleta)
 - [ ] **BEH-07**: El sistema detecta objetos abandonados y objetos retirados
 - [ ] **BEH-08**: El sistema expone un resumen de contexto de escena: hora, zona, personas totales, conocidas, desconocidas y nivel de actividad
