@@ -10,6 +10,7 @@ import pytest
 from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
 from backend.events.types import EventType, Severity
+from backend.perception.behavior import BehaviorFinding, BehaviorKind
 from backend.perception.face.identity import IdentityState, IdentityTransition
 
 
@@ -286,3 +287,113 @@ async def TEST_identity_intermediate_states_emit_nothing():
     await asyncio.sleep(0.2)
 
     assert received == []
+
+
+# ─── emit_behavior (Fase 26, BEH-04/BEH-05) ───────────────────────────────────
+
+async def TEST_emit_behavior_translates_the_four_kinds():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.LOITERING, track_id=3, zone_id="z1",
+                        duration_s=130.0, net_displacement_px=42.0), now,
+    )
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.RUNNING, track_id=4, speed_px_s=250.0), now,
+    )
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.IMMOBILE, track_id=7, duration_s=61.0,
+                        net_displacement_px=3.2), now,
+    )
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.CROWD, track_count=6), now,
+    )
+    await wait_until(lambda: len(received) == 4)
+
+    assert {e.type for e in received} == {
+        EventType.LOITERING, EventType.RUNNING, EventType.IMMOBILE, EventType.CROWD_DETECTED,
+    }
+    crowd = next(e for e in received if e.type == EventType.CROWD_DETECTED)
+    assert crowd.track_id is None
+    assert crowd.payload["track_count"] == 6
+    loitering = next(e for e in received if e.type == EventType.LOITERING)
+    assert loitering.zone_id == "z1"
+
+
+async def TEST_emit_behavior_payload_carries_magnitudes():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.IMMOBILE, track_id=7, duration_s=61.0,
+                        net_displacement_px=3.2), now,
+    )
+    await wait_until(lambda: len(received) == 1)
+
+    event = received[0]
+    assert event.payload["duration_s"] == 61.0
+    assert event.payload["net_displacement_px"] == 3.2
+    assert "speed_px_s" not in event.payload
+    assert "track_count" not in event.payload
+    assert all(v is not None for v in event.payload.values())
+
+
+async def TEST_emit_behavior_keeps_default_info_severity():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    for finding in (
+        BehaviorFinding(kind=BehaviorKind.LOITERING, track_id=1, duration_s=130.0),
+        BehaviorFinding(kind=BehaviorKind.RUNNING, track_id=2, speed_px_s=250.0),
+        BehaviorFinding(kind=BehaviorKind.IMMOBILE, track_id=3, duration_s=61.0),
+        BehaviorFinding(kind=BehaviorKind.CROWD, track_count=6),
+    ):
+        engine.emit_behavior(finding, now)
+    await wait_until(lambda: len(received) == 4)
+
+    assert all(e.severity is Severity.INFO for e in received)
+
+
+# ─── process_zone: tiempo de permanencia en ZONE_EXITED (Fase 26, BEH-04) ─────
+
+async def TEST_zone_dwell_time_in_exited_payload():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.process_zone("z1", {1}, now, now_monotonic=100.0)
+    await wait_until(lambda: len(received) == 1)
+
+    engine.process_zone("z1", set(), now + datetime.timedelta(seconds=12), now_monotonic=112.0)
+    await wait_until(lambda: len(received) == 2)
+
+    exited = received[1]
+    assert exited.type == EventType.ZONE_EXITED
+    assert exited.payload["duration_s"] == 12.0
+    assert "duration_s" not in received[0].payload
+
+
+async def TEST_zone_dwell_absent_without_monotonic_clock():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.process_zone("z1", {1}, now)
+    await wait_until(lambda: len(received) == 1)
+
+    engine.process_zone("z1", set(), now + datetime.timedelta(seconds=5))
+    await wait_until(lambda: len(received) == 2)
+
+    assert "duration_s" not in received[1].payload
+
+
+async def TEST_zone_dwell_entry_is_popped_on_exit():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.process_zone("z1", {1}, now, now_monotonic=100.0)
+    await wait_until(lambda: len(received) == 1)
+
+    engine.process_zone("z1", set(), now + datetime.timedelta(seconds=5), now_monotonic=105.0)
+    await wait_until(lambda: len(received) == 2)
+
+    assert 1 not in engine._zone_entry_at["z1"]

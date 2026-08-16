@@ -277,3 +277,57 @@ def TEST_reid_model_path_rejects_bad_extension_and_traversal():
     with pytest.raises((ValidationError, ValueError)):
         Settings(reid_model_path="../../etc/passwd.onnx")
     Settings(reid_model_path="models/reid/otro.onnx")
+
+
+# ─── Defaults de SPEC_v2.md §5.7 (26-CONTEXT.md § Umbrales y reglas) ──────────
+# loiter_require_zone=False NO es una omision del plan: es el fallback de D-02.
+# Una instalacion limpia tiene cero zonas (get_zones() lee de BD y no hay
+# seed), asi que sin este fallback LOITERING no se emitiria jamas y el
+# criterio 1 del ROADMAP ("con umbrales configurables") no seria verificable.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_behavior_defaults_match_spec():
+    """Settings() expone los 10 parametros behavior_* con los defaults del SPEC."""
+    s = Settings()
+    assert s.behavior_enabled is True
+    assert s.loiter_secs == 120.0
+    assert s.loiter_radius_px == 80.0
+    assert s.loiter_require_zone is False
+    assert s.run_speed_px_s == 350.0
+    assert s.run_window_secs == 1.0
+    assert s.immobile_secs == 60.0
+    assert s.immobile_radius_px == 20.0
+    assert s.crowd_threshold == 5
+    assert s.behavior_max_tracks == 256
+
+
+# ─── Umbrales de comportamiento fuera de rango son rechazados ────────────────
+# Todos los umbrales temporales/espaciales deben ser > 0 (un umbral <= 0 no
+# tiene interpretacion fisica). crowd_threshold=0 emitiria CROWD_DETECTED con
+# la escena vacia; behavior_max_tracks=0 dejaria el analisis inutilizable.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_behavior_params_must_be_positive():
+    """loiter_secs, immobile_secs, loiter_radius_px, run_speed_px_s, crowd_threshold y behavior_max_tracks <= 0 lanzan."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(loiter_secs=0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(immobile_secs=-1)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(loiter_radius_px=0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(run_speed_px_s=0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(crowd_threshold=0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(behavior_max_tracks=0)
+
+
+# ─── run_window_secs esta acotado por el historial de centroides disponible ──
+# centroid_history es un deque(maxlen=150) (tracking.py:47) y el escalon mas
+# alto de AdaptiveRate es 12 FPS (rate.py:26), asi que 150 muestras cubren
+# 12.5 s en el peor caso. Una ventana mayor no se podria calcular jamas.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_behavior_run_window_capped_by_history():
+    """run_window_secs=13.0 lanza; run_window_secs=12.0 no lanza."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(run_window_secs=13.0)
+    Settings(run_window_secs=12.0)

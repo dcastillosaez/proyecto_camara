@@ -18,11 +18,20 @@ from typing import TYPE_CHECKING, Any
 
 from backend.events.bus import EventBus
 from backend.events.types import Event, EventType, Severity
+from backend.perception.behavior import BehaviorFinding, BehaviorKind
 from backend.perception.face.identity import IdentityState, IdentityTransition
 from backend.storage.repositories import DetectionStatRepo
 
 if TYPE_CHECKING:
     from backend.observability.latency import LatencyTracker
+
+
+_BEHAVIOR_EVENT_TYPE: dict[BehaviorKind, EventType] = {
+    BehaviorKind.LOITERING: EventType.LOITERING,
+    BehaviorKind.RUNNING: EventType.RUNNING,
+    BehaviorKind.IMMOBILE: EventType.IMMOBILE,
+    BehaviorKind.CROWD: EventType.CROWD_DETECTED,
+}
 
 
 class EventEngine:
@@ -35,6 +44,7 @@ class EventEngine:
 
         self._known_tracks: set[int] = set()
         self._zone_inside: dict[str, set[int]] = {}
+        self._zone_entry_at: dict[str, dict[int, float]] = {}
         self._camera_offline = False
 
         self._minute_buckets: dict[datetime.datetime, dict[str, Any]] = {}
@@ -121,19 +131,28 @@ class EventEngine:
         now: datetime.datetime,
         captured_at: float | None = None,
         processed_at: float | None = None,
+        now_monotonic: float | None = None,
     ) -> None:
         previous = self._zone_inside.get(zone_id, set())
         entered = inside_track_ids - previous
         exited = previous - inside_track_ids
+        entry_at = self._zone_entry_at.setdefault(zone_id, {})
         for track_id in entered:
+            if now_monotonic is not None:
+                entry_at[track_id] = now_monotonic
             self._publish(
                 EventType.ZONE_ENTERED, ts=now, captured_at=captured_at,
                 processed_at=processed_at, track_id=track_id, zone_id=zone_id,
             )
         for track_id in exited:
+            t0 = entry_at.pop(track_id, None)  # el pop ES la politica de limpieza (T-26-08)
+            payload: dict[str, Any] = {}
+            if t0 is not None and now_monotonic is not None:
+                payload["duration_s"] = round(now_monotonic - t0, 3)  # BEH-04
             self._publish(
                 EventType.ZONE_EXITED, ts=now, captured_at=captured_at,
                 processed_at=processed_at, track_id=track_id, zone_id=zone_id,
+                payload=payload,
             )
         self._zone_inside[zone_id] = set(inside_track_ids)
 
@@ -214,6 +233,37 @@ class EventEngine:
                 "votes": transition.votes,
                 "window": transition.window,
             },
+        )
+
+    # ------------------------------------------------------------------
+    # Comportamiento (Fase 26)
+    # ------------------------------------------------------------------
+
+    def emit_behavior(
+        self,
+        finding: BehaviorFinding,
+        now: datetime.datetime,
+        captured_at: float | None = None,
+        processed_at: float | None = None,
+    ) -> None:
+        """Publica el evento de comportamiento correspondiente a *finding*, si lo hay.
+
+        La guarda de idempotencia NO esta aqui: vive en el latch por episodio de
+        BehaviorAnalyzer, igual que `emits` vive en la FSM para emit_identity. Sin ese
+        latch, una persona parada 10 min generaria ~4.800 IMMOBILE a 8 FPS — "the point
+        where v1 failed conceptually" (docstring de esta clase).
+        """
+        event_type = _BEHAVIOR_EVENT_TYPE.get(finding.kind)
+        if event_type is None:
+            return
+        self._publish(
+            event_type,
+            ts=now,
+            captured_at=captured_at,
+            processed_at=processed_at,
+            track_id=finding.track_id,
+            zone_id=finding.zone_id,
+            payload=finding.magnitudes(),
         )
 
     # ------------------------------------------------------------------

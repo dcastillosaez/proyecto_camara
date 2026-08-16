@@ -441,6 +441,16 @@ async def lifespan(app: FastAPI):
         reid_interval=settings.reid_interval_secs,
         reid_inherit=settings.reid_inherit_identity,
         reid_max_gallery_entries=settings.reid_max_gallery_entries,
+        behavior_enabled=settings.behavior_enabled,
+        loiter_secs=settings.loiter_secs,
+        loiter_radius_px=settings.loiter_radius_px,
+        loiter_require_zone=settings.loiter_require_zone,
+        run_speed_px_s=settings.run_speed_px_s,
+        run_window_secs=settings.run_window_secs,
+        immobile_secs=settings.immobile_secs,
+        immobile_radius_px=settings.immobile_radius_px,
+        crowd_threshold=settings.crowd_threshold,
+        behavior_max_tracks=settings.behavior_max_tracks,
     )
     rtsp_stream = pipeline  # fachada consumida por los endpoints
 

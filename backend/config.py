@@ -162,6 +162,31 @@ class Settings(BaseSettings):
     reid_inherit_identity: bool = False
     reid_max_gallery_entries: int = 256
 
+    # --- Analisis de comportamiento (Fase 26 — BEH-01..BEH-05) ---
+    # Defaults locked de SPEC_v2.md §5.7 (26-CONTEXT.md § Umbrales y reglas). Los
+    # umbrales temporales estan en SEGUNDOS y los espaciales en PIXELES DEL FRAME
+    # PROCESADO (process_width x process_height, 1280x720 por defecto): cambiar la
+    # resolucion de proceso cambia el significado de loiter_radius_px, run_speed_px_s
+    # e immobile_radius_px, que ademas no estan calibrados contra una escena real
+    # (26-RESEARCH.md § Environment Availability: la calibracion con camara real es un
+    # checkpoint manual abierto).
+    # loiter_require_zone=False es el fallback de D-02: una instalacion limpia tiene
+    # cero zonas (get_zones() lee de BD y no hay seed), asi que sin el LOITERING no se
+    # emitiria nunca. A True exige zona explicita.
+    # Los cuatro comportamientos salen con Severity.INFO por defecto del catalogo
+    # (types.py:49-57, D-01): subirlos a WARNING activaria la subida automatica de
+    # clips a Drive (upload_min_severity="warning", config.py:115 -> recording.py:309).
+    behavior_enabled: bool = True
+    loiter_secs: float = 120.0
+    loiter_radius_px: float = 80.0
+    loiter_require_zone: bool = False
+    run_speed_px_s: float = 350.0
+    run_window_secs: float = 1.0
+    immobile_secs: float = 60.0
+    immobile_radius_px: float = 20.0
+    crowd_threshold: int = 5
+    behavior_max_tracks: int = 256
+
     @field_validator("reid_model_path")
     @classmethod
     def validate_reid_model_path(cls, v: str) -> str:
@@ -245,6 +270,28 @@ class Settings(BaseSettings):
             )
         if self.reid_max_gallery_entries < 1:
             raise ValueError("reid_max_gallery_entries debe ser >= 1")
+        return self
+
+    @model_validator(mode="after")
+    def validate_behavior_params(self) -> "Settings":
+        for name in ("loiter_secs", "run_window_secs", "immobile_secs",
+                     "loiter_radius_px", "run_speed_px_s", "immobile_radius_px"):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name} debe ser > 0")
+        if self.crowd_threshold < 1:
+            raise ValueError(
+                "crowd_threshold debe ser >= 1: con 0 se emitiria CROWD_DETECTED "
+                "con la escena vacia"
+            )
+        if self.behavior_max_tracks < 1:
+            raise ValueError("behavior_max_tracks debe ser >= 1")
+        if self.run_window_secs > 12.0:
+            raise ValueError(
+                "run_window_secs no puede superar 12.0 s: centroid_history solo "
+                "garantiza 12.5 s de historial a 12 FPS (tracking.py:47 history_len=150, "
+                "rate.py:26 AdaptiveRate.STEPS[0]=12.0); una ventana mayor no se podria "
+                "calcular y RUNNING no se emitiria nunca"
+            )
         return self
 
 
