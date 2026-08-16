@@ -353,3 +353,47 @@ async def TEST_emit_behavior_keeps_default_info_severity():
     await wait_until(lambda: len(received) == 4)
 
     assert all(e.severity is Severity.INFO for e in received)
+
+
+# ─── process_zone: tiempo de permanencia en ZONE_EXITED (Fase 26, BEH-04) ─────
+
+async def TEST_zone_dwell_time_in_exited_payload():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.process_zone("z1", {1}, now, now_monotonic=100.0)
+    await wait_until(lambda: len(received) == 1)
+
+    engine.process_zone("z1", set(), now + datetime.timedelta(seconds=12), now_monotonic=112.0)
+    await wait_until(lambda: len(received) == 2)
+
+    exited = received[1]
+    assert exited.type == EventType.ZONE_EXITED
+    assert exited.payload["duration_s"] == 12.0
+    assert "duration_s" not in received[0].payload
+
+
+async def TEST_zone_dwell_absent_without_monotonic_clock():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.process_zone("z1", {1}, now)
+    await wait_until(lambda: len(received) == 1)
+
+    engine.process_zone("z1", set(), now + datetime.timedelta(seconds=5))
+    await wait_until(lambda: len(received) == 2)
+
+    assert "duration_s" not in received[1].payload
+
+
+async def TEST_zone_dwell_entry_is_popped_on_exit():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.process_zone("z1", {1}, now, now_monotonic=100.0)
+    await wait_until(lambda: len(received) == 1)
+
+    engine.process_zone("z1", set(), now + datetime.timedelta(seconds=5), now_monotonic=105.0)
+    await wait_until(lambda: len(received) == 2)
+
+    assert 1 not in engine._zone_entry_at["z1"]
