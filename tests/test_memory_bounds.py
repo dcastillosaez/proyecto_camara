@@ -11,6 +11,7 @@ not to introduce new bounding logic where it was missing.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ import numpy as np
 import pytest
 
 from backend.events.bus import EventBus
+from backend.events.engine import EventEngine
 from backend.events.rules import RuleEngine
 from backend.events.types import Event, EventType
 from backend.observability.latency import LatencyTracker, Stage
@@ -336,3 +338,25 @@ def TEST_behavior_state_bounded_without_prune():
         analyzer.analyze({tid: (1.0, 1.0)}, {}, {}, float(tid))
     assert len(analyzer._aggs) <= 256
     assert len(analyzer._loiter) <= 256
+
+
+# ─── EventEngine._zone_entry_at no acumula tracks efimeros (Fase 26, BEH-04) ──
+# Es la SEGUNDA estructura de memoria que añade esta fase (la primera,
+# BehaviorAnalyzer._aggs/_loiter, la cubren los dos tests de arriba, del plan
+# 26-01). Sin el pop() en la rama de salida de process_zone, cada track que
+# entra en una zona dejaria una entrada viva para siempre: ByteTrack asigna
+# ids monotonamente crecientes y nunca los reutiliza.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_zone_entry_at_bounded():
+    bus = EventBus(loop=asyncio.new_event_loop())
+    engine = EventEngine(bus, camera_id="cam1")
+    wall_now = datetime(2026, 4, 16, 18, 30)
+
+    for tid in range(10_000):
+        engine.process_zone("z1", {tid}, wall_now, now_monotonic=float(tid))
+        engine.process_zone("z1", set(), wall_now, now_monotonic=float(tid) + 1.0)
+        engine.process_zone("z2", {tid}, wall_now, now_monotonic=float(tid))
+        engine.process_zone("z2", set(), wall_now, now_monotonic=float(tid) + 1.0)
+
+    assert engine._zone_entry_at["z1"] == {}
+    assert engine._zone_entry_at["z2"] == {}
