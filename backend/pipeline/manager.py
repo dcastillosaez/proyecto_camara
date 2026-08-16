@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
+from backend.perception.behavior import BehaviorAnalyzer
 from backend.perception.face.identity import IdentityStateMachine, TemporalVoter
 from backend.perception.reid.engine import ReIDEngine
 from backend.perception.reid.gallery import TrackGallery
@@ -68,6 +69,16 @@ class CameraPipeline:
         reid_interval: float = 2.0,
         reid_inherit: bool = False,
         reid_max_gallery_entries: int = 256,
+        behavior_enabled: bool = True,
+        loiter_secs: float = 120.0,
+        loiter_radius_px: float = 80.0,
+        loiter_require_zone: bool = False,
+        run_speed_px_s: float = 350.0,
+        run_window_secs: float = 1.0,
+        immobile_secs: float = 60.0,
+        immobile_radius_px: float = 20.0,
+        crowd_threshold: int = 5,
+        behavior_max_tracks: int = 256,
     ) -> None:
         self.camera_id = camera_id
         self.broker = FrameBroker()
@@ -91,6 +102,26 @@ class CameraPipeline:
         self.identity_fsm: IdentityStateMachine | None = None
         self.reid_engine: "ReIDEngine | None" = None
         self.reid_gallery: "TrackGallery | None" = None
+        self.behavior: "BehaviorAnalyzer | None" = None
+
+        if behavior_enabled:
+            # El analizador vive FUERA de la factoria: WorkerSupervisor la re-ejecuta en
+            # cada reinicio del DetectionWorker, y construirlo dentro borraria todas las
+            # anclas y latches — una persona con 100 s de inmovilidad acumulada volveria a
+            # empezar el contador y los cuatro latches se re-armarian, provocando una
+            # rafaga de eventos duplicados en el frame siguiente. Mismo motivo que la FSM
+            # de identidad (Fase 24) y la galeria de apariencia (Fase 25).
+            self.behavior = BehaviorAnalyzer(
+                loiter_secs=loiter_secs,
+                loiter_radius_px=loiter_radius_px,
+                loiter_require_zone=loiter_require_zone,
+                run_speed_px_s=run_speed_px_s,
+                run_window_secs=run_window_secs,
+                immobile_secs=immobile_secs,
+                immobile_radius_px=immobile_radius_px,
+                crowd_threshold=crowd_threshold,
+                max_tracks=behavior_max_tracks,
+            )
 
         if detector is not None and tracker is not None:
             def _make_detection() -> DetectionWorker:
@@ -102,6 +133,7 @@ class CameraPipeline:
                     is_intrusion=is_intrusion,
                     camera_id=camera_id,
                     latency_tracker=latency_tracker,
+                    behavior=self.behavior,
                 )
                 return self.detection
 
