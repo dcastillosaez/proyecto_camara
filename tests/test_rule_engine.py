@@ -57,6 +57,31 @@ def make_rule(**when_overrides) -> dict:
     return {"name": "r1", "when": when, "actions": [{"type": "log"}]}
 
 
+BEHAVIOR_RULES_YAML = textwrap.dedent("""
+    version: 1
+    rules:
+      - name: merodeo_prolongado
+        enabled: true
+        when:
+          event: LOITERING
+          duration_gte: 120
+        debounce_secs: 300
+        actions: [ {type: notify} ]
+
+      - name: carrera_detectada
+        when: {event: RUNNING}
+        actions: [ {type: log} ]
+
+      - name: inmovilidad_prolongada
+        when: {event: IMMOBILE, duration_gte: 60}
+        actions: [ {type: log} ]
+
+      - name: aglomeracion
+        when: {event: CROWD_DETECTED}
+        actions: [ {type: notify} ]
+    """)
+
+
 def TEST_loads_valid_yaml(tmp_path):
     path = tmp_path / "rules.yaml"
     path.write_text(SPEC_RULES_YAML, encoding="utf-8")
@@ -191,3 +216,76 @@ async def TEST_camera_wildcard():
     fired = await engine.evaluate(make_event(camera_id="cam1"))
 
     assert fired == ["wild"]
+
+
+def TEST_behavior_events_usable_as_when_event(tmp_path):
+    """Criterio 5: When.event es de tipo EventType (rules.py:25), asi que Pydantic valida
+    contra el enum COMPLETO — los cuatro eventos de comportamiento, que existen en el
+    catalogo desde la Fase 19, cargan desde un YAML real sin tocar una linea del
+    RuleEngine."""
+    path = tmp_path / "rules.yaml"
+    path.write_text(BEHAVIOR_RULES_YAML, encoding="utf-8")
+
+    rules, errors = load_rules(str(path))
+
+    assert errors == []
+    assert {r.name for r in rules} == {
+        "merodeo_prolongado",
+        "carrera_detectada",
+        "inmovilidad_prolongada",
+        "aglomeracion",
+    }
+
+
+async def TEST_behavior_duration_gte_reads_duration_s(tmp_path):
+    path = tmp_path / "rules.yaml"
+    path.write_text(BEHAVIOR_RULES_YAML, encoding="utf-8")
+    rules, errors = load_rules(str(path))
+    assert errors == []
+    engine = RuleEngine(rules, registry={})
+
+    fired_over = await engine.evaluate(
+        make_event(type=EventType.LOITERING, payload={"duration_s": 130.0}, track_id=1)
+    )
+    fired_under = await engine.evaluate(
+        make_event(type=EventType.LOITERING, payload={"duration_s": 90.0}, track_id=2)
+    )
+    fired_wrong_key = await engine.evaluate(
+        make_event(type=EventType.LOITERING, payload={"duration": 130.0}, track_id=3)
+    )
+
+    assert fired_over == ["merodeo_prolongado"]
+    assert fired_under == []
+    assert fired_wrong_key == [], (
+        "duration_gte lee event.payload['duration_s'] (rules.py:88-91); con la clave "
+        "'duration' (nombre equivocado) event.payload.get('duration_s') devuelve None y "
+        "la regla NO debe disparar — si dispara, el criterio 5 se cumple a medias y en "
+        "silencio (Pitfall 8)."
+    )
+
+
+async def TEST_behavior_zone_filter_uses_first_class_zone_id(tmp_path):
+    """Demuestra por que zone_id va como campo de primer nivel del Event y no dentro
+    del payload (rules.py:75-76)."""
+    yaml_text = textwrap.dedent("""
+        version: 1
+        rules:
+          - name: merodeo_zona
+            when: {event: LOITERING, zone: "z1"}
+            actions: [ {type: notify} ]
+        """)
+    path = tmp_path / "rules.yaml"
+    path.write_text(yaml_text, encoding="utf-8")
+    rules, errors = load_rules(str(path))
+    assert errors == []
+    engine = RuleEngine(rules, registry={})
+
+    fired_in_zone = await engine.evaluate(
+        make_event(type=EventType.LOITERING, zone_id="z1", track_id=1)
+    )
+    fired_no_zone = await engine.evaluate(
+        make_event(type=EventType.LOITERING, zone_id=None, track_id=2)
+    )
+
+    assert fired_in_zone == ["merodeo_zona"]
+    assert fired_no_zone == []
