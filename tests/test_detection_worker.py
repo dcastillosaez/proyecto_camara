@@ -395,3 +395,59 @@ def TEST_behavior_zone_membership_snapshot_reuses_zone_states():
     )
 
     assert worker._zone_membership_snapshot() == {"z1": {1}, "z2": {2}}
+
+
+# ─── El BehaviorAnalyzer sobrevive a un reinicio del worker por el supervisor ─
+def TEST_behavior_analyzer_survives_worker_restart():
+    """El analizador se construye FUERA de _make_detection (manager.py): un
+    reinicio del worker (el supervisor la re-ejecuta) no debe borrar las
+    anclas y latches ya acumulados -- eso produciria una rafaga de eventos
+    duplicados en el frame siguiente. Mismo motivo que la FSM de identidad
+    (Fase 24) y la galeria de apariencia (Fase 25)."""
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline("cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock())
+
+    factory = pipeline.supervisor._entries["detector"].factory
+    worker1 = factory()
+    analyzer = pipeline.behavior
+    assert analyzer is not None
+    assert worker1._behavior is analyzer
+
+    worker2 = factory()
+    assert worker2 is not worker1
+    assert pipeline.behavior is analyzer     # misma instancia, no una nueva
+    assert worker2._behavior is analyzer
+
+
+# ─── behavior_enabled=False deja el pipeline sin analizador ─────────────────
+def TEST_behavior_disabled_leaves_pipeline_without_analyzer():
+    """Con behavior_enabled=False no se construye BehaviorAnalyzer y el
+    worker sigue siendo funcional (via de comportamiento no-op)."""
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline(
+        "cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock(), behavior_enabled=False
+    )
+
+    assert pipeline.behavior is None
+
+    factory = pipeline.supervisor._entries["detector"].factory
+    worker = factory()
+    assert worker is not None
+    assert worker._behavior is None
+
+
+# ─── Los umbrales configurados llegan al analizador de punta a punta ────────
+def TEST_behavior_thresholds_reach_the_analyzer():
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline(
+        "cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock(),
+        crowd_threshold=3, loiter_secs=7.0, immobile_radius_px=11.0,
+    )
+
+    assert pipeline.behavior is not None
+    assert pipeline.behavior._crowd_threshold == 3
+    assert pipeline.behavior._loiter_secs == 7.0
+    assert pipeline.behavior._immobile_radius_px == 11.0
