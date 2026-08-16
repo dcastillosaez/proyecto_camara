@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import supervision as sv
 
+from backend.perception.behavior import BehaviorAnalyzer, BehaviorKind
 from backend.pipeline.broker import Frame, FrameBroker
 from backend.pipeline.detection import DetectionWorker
 from backend.pipeline.rate import AdaptiveRate
@@ -319,3 +320,78 @@ def TEST_frame_ids_published_without_event_engine(broker):
     worker._emit_track_lifecycle(_tracked([1, 2]), captured_at=0.0, processed_at=0.0)
 
     assert registry.frame_ids() == {1, 2}
+
+
+# ---------------------------------------------------------------------------
+# Fase 26: enganche del BehaviorAnalyzer en _analyze_behavior
+# ---------------------------------------------------------------------------
+
+def TEST_behavior_analyzer_emits_crowd_from_worker():
+    broker = FrameBroker()
+    event_engine = MagicMock()
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+        event_engine=event_engine,
+        behavior=BehaviorAnalyzer(crowd_threshold=5),
+    )
+    boxes = [[i * 100, 10, i * 100 + 30, 50] for i in range(5)]
+    tids = [1, 2, 3, 4, 5]
+
+    worker._analyze_behavior(_tracked_at(boxes, tids), captured_at=0.0, processed_at=0.0)
+
+    event_engine.emit_behavior.assert_called_once()
+    finding = event_engine.emit_behavior.call_args[0][0]
+    assert finding.kind == BehaviorKind.CROWD
+    assert finding.magnitudes()["track_count"] == 5
+
+
+def TEST_behavior_absent_is_noop():
+    broker = FrameBroker()
+    event_engine = MagicMock()
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+        event_engine=event_engine,
+    )
+
+    worker._analyze_behavior(_tracked_at([[10, 10, 50, 50]], [1]), captured_at=0.0, processed_at=0.0)
+
+    event_engine.emit_behavior.assert_not_called()
+
+
+def TEST_behavior_failure_does_not_kill_thread():
+    broker = FrameBroker()
+    event_engine = MagicMock()
+    behavior = MagicMock()
+    behavior.analyze.side_effect = RuntimeError("boom")
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+        event_engine=event_engine,
+        behavior=behavior,
+    )
+
+    worker._analyze_behavior(_tracked_at([[10, 10, 50, 50]], [1]), captured_at=0.0, processed_at=0.0)
+
+    assert worker._exceptions == 1
+    event_engine.emit_behavior.assert_not_called()
+
+
+def TEST_behavior_zone_membership_snapshot_reuses_zone_states():
+    import json
+
+    worker = _worker_for_zones()
+    worker.set_zones([
+        {"id": "z1", "name": "Z1", "enabled": True,
+         "polygon_json": json.dumps([[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]])},
+        {"id": "z2", "name": "Z2", "enabled": True,
+         "polygon_json": json.dumps([[0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [0.5, 1.0]])},
+    ])
+    shape = (720, 1280, 3)
+
+    worker._update_zones_and_heat(
+        _tracked_at([[300, 100, 340, 400], [940, 100, 980, 400]], [1, 2]), shape
+    )
+
+    assert worker._zone_membership_snapshot() == {"z1": {1}, "z2": {2}}

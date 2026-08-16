@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from backend.detector import PersonDetector
     from backend.events.engine import EventEngine
     from backend.observability.latency import LatencyTracker
+    from backend.perception.behavior import BehaviorAnalyzer
     from backend.pipeline.broker import Subscription
     from backend.tracker import PersonTracker
 
@@ -56,6 +57,7 @@ class DetectionWorker:
         is_intrusion: Any = None,
         camera_id: str = "cam1",
         latency_tracker: LatencyTracker | None = None,
+        behavior: "BehaviorAnalyzer | None" = None,
     ) -> None:
         self._sub = sub
         self._detector = detector
@@ -65,6 +67,7 @@ class DetectionWorker:
         self._event_engine = event_engine
         self._camera_id = camera_id
         self._latency_tracker = latency_tracker
+        self._behavior = behavior
         # Callable[[], bool] opcional — decide si un cruce es intrusion
         # (RTSPStream._is_in_schedule). Sin ella, nunca se marca intrusion.
         self._is_intrusion = is_intrusion
@@ -180,9 +183,59 @@ class DetectionWorker:
             _metrics.active_tracks.labels(camera=self._camera_id).set(len(tracked))
             self._registry.update_from_detections(tracked, now)
             self._update_zones_and_heat(tracked, frame.image.shape, frame.captured_at, now)
+            self._analyze_behavior(tracked, frame.captured_at, now)      # NUEVO (Fase 26)
             self._emit_crossings(crossings, frame.captured_at, now)
             self._emit_track_lifecycle(tracked, frame.captured_at, now)
             self._registry.prune(now)
+
+    def _analyze_behavior(self, tracked: Any, captured_at: float, processed_at: float) -> None:
+        """Analisis de comportamiento del frame (Fase 26, BEH-01..BEH-05).
+
+        Patron de aislamiento de fallos de RecognitionWorker._sync_identity
+        (recognition.py:366-374): un fallo del analizador nunca mata el hilo de
+        deteccion, solo incrementa el contador de excepciones que ya expone
+        /api/v2/cameras/{id}/health.
+        """
+        if self._behavior is None or self._event_engine is None:
+            return
+        ids = tracked.tracker_id
+        if ids is None:
+            return
+        try:
+            centroids: dict[int, tuple[float, float]] = {}
+            histories: dict[int, Any] = {}
+            for i, tid in enumerate(ids):
+                tid = int(tid)
+                x1, y1, x2, y2 = map(int, tracked.xyxy[i])
+                centroids[tid] = ((x1 + x2) / 2, (y1 + y2) / 2)   # igual que tracking.py:66
+                st = self._registry.get(tid)
+                if st is not None:
+                    histories[tid] = st.centroid_history          # por referencia, sin copiar
+            findings = self._behavior.analyze(
+                centroids=centroids,
+                zone_membership=self._zone_membership_snapshot(),
+                histories=histories,
+                now=processed_at,                                 # monotonico del frame
+            )
+            self._behavior.prune(processed_at, set(centroids))
+        except Exception:
+            self._exceptions += 1
+            logger.exception("DetectionWorker: analisis de comportamiento fallo")
+            return
+        wall_now = datetime.datetime.now()
+        for f in findings:
+            self._event_engine.emit_behavior(f, wall_now, captured_at, processed_at)
+
+    def _zone_membership_snapshot(self) -> dict[str, set[int]]:
+        """Track ids por zona de ESTE frame, reutilizando `st["inside"]` (T-26-*).
+
+        `st["inside"]` ya lo calculo `_update_zones_and_heat` con
+        `sv.PolygonZone.trigger()` en este mismo frame. Recalcularlo aqui
+        duplicaria la inferencia geometrica y podria divergir del conteo de
+        `get_zone_stats()`.
+        """
+        with self._lock:
+            return {st["id"]: set(st["inside"]) for st in self._zone_states}
 
     def _emit_track_lifecycle(self, tracked: Any, captured_at: float, processed_at: float) -> None:
         """Publica el estado de tracks del frame actual y, si hay event_engine,
@@ -247,7 +300,8 @@ class DetectionWorker:
                 st["current"] = len(inside)
             if self._event_engine is not None:
                 self._event_engine.process_zone(
-                    st["id"], inside, datetime.datetime.now(), captured_at, processed_at
+                    st["id"], inside, datetime.datetime.now(), captured_at, processed_at,
+                    now_monotonic=processed_at,
                 )
 
         if len(tracked) == 0:
