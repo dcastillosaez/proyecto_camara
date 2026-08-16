@@ -1326,9 +1326,12 @@ línea) o CITED contra `SPEC_v2.md` / `ROADMAP.md` / `REQUIREMENTS.md`.**
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Severidad de los eventos de comportamiento.**
+> Las 4 quedaron cerradas por el usuario antes de planificar; se recogen como
+> D-01..D-04 en `26-CONTEXT.md`. En los 4 casos se adopto la recomendacion.
+
+1. **Severidad de los eventos de comportamiento.** **RESOLVED (D-01): INFO.**
    - Qué sabemos: `DEFAULT_SEVERITY` (`types.py:49-57`) no los incluye → salen `INFO`.
      `upload_min_severity="warning"` (`config.py:115`) controla la subida de clips a
      Drive (`recording.py:309`).
@@ -1337,20 +1340,20 @@ línea) o CITED contra `SPEC_v2.md` / `ROADMAP.md` / `REQUIREMENTS.md`.**
    - Recomendación: **dejarlos en `INFO`** (cambio cero) y escalar desde `rules.yaml`
      si hace falta. Es reversible en una línea.
 
-2. **LOITERING sin zonas configuradas (Q8, A2).**
+2. **LOITERING sin zonas configuradas (Q8, A2).** **RESOLVED (D-02): escena implicita `zone_id=None` + `loiter_require_zone: bool = False`.**
    - Qué sabemos: una instalación limpia tiene cero zonas → sin fallback, LOITERING
      nunca se emite y el criterio 1 no es verificable.
    - Qué no está claro: si "merodeo en la escena entera" es aceptable como semántica.
    - Recomendación: **escena implícita con `zone_id=None`**, más un
      `loiter_require_zone: bool = False` en config como escape.
 
-3. **¿LOITERING e IMMOBILE se excluyen mutuamente? (Pitfall 7, A3).**
+3. **¿LOITERING e IMMOBILE se excluyen mutuamente? (Pitfall 7, A3).** **RESOLVED (D-03): coexisten; aislamiento en las trayectorias de test, no en el dominio.**
    - Qué sabemos: son condiciones solapables por construcción; el criterio 2 exige
      "exactamente el evento esperado y ninguno más" en las trayectorias de test.
    - Recomendación: **coexisten**; el aislamiento se hace en las trayectorias del
      test, no metiendo supresión mutua en el dominio.
 
-4. **¿Se guarda el `zone_id` de LOITERING cuando el track está en varias zonas a la vez?**
+4. **¿Se guarda el `zone_id` de LOITERING cuando el track está en varias zonas a la vez?** **RESOLVED (D-04): ancla por (track, zona), un LOITERING por zona.**
    - Qué sabemos: `sv.PolygonZone` permite polígonos solapados; `_zone_states` es una
      lista y un track puede estar `inside` de varias.
    - Recomendación: llevar el ancla **por (track, zona)** y emitir un LOITERING por

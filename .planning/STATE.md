@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Ejecutado 25-06-PLAN.md (puerta de fase, ultimo plan de la Fase 25): suite completa 413/413 sin cambios de codigo, sin skips en test_reid_engine.py. Los 5 criterios de exito del ROADMAP trazados a comandos pytest -k que pasan (25-06-SUMMARY.md), REID-01..REID-04 confirmados [x] (ya cerrados desde 25-01/25-02/25-03). Fase 25 completa en codigo y tests (6/6 planes). El checkpoint manual del criterio 4 (tasa de falsos positivos con camara real) se DIFIERE explicitamente: no hay acceso a camara en esta sesion; la parte deterministica del criterio 4 (TEST_gallery_does_not_merge_distinct_identities) ya esta verde y reid_inherit_identity=False sigue siendo el default seguro, asi que no bloquea avanzar a la Fase 26. Pasa a ser el 7mo checkpoint manual con camara real abierto (se suma a los 6 de fases anteriores: 19-01 Task 5, 19-02 Task 5, 20-02 Task 4, 21-01 Task 5, 22-01 Task 4, 23-02 Task 4)."
-last_updated: "2026-08-15"
-last_activity: 2026-08-15
+stopped_at: "Planificada la Fase 26 (Analisis de comportamiento): CONTEXT.md (4 hallazgos verificados en codigo H-1..H-4, tabla de umbrales SPEC 5.7, decisiones D-01..D-04 resueltas con AskUserQuestion), RESEARCH.md (disuelve H-4: los 4 comportamientos son agregados O(1), no necesitan historial largo; 584 B/track vs 141.8 KB/track de la alternativa), PATTERNS.md (13 ficheros, todos con analogo exacto) y 5 PLAN.md (26-01..26-05, wave 1 26-01+26-02 en paralelo sin solape de ficheros, 26-03 dependiente, 26-04 dependiente, 26-05 puerta de fase con checkpoint manual no bloqueante). El gsd-plan-checker se corto por limite de gasto mensual (3a vez en la sesion); verificacion manual completa contra un checklist de 12 puntos (agregados O(1), latches con histeresis en los 4 comportamientos, naming literal duration_s con test negativo, criterio 2 con igualdad de conjuntos, D-01..D-04 implementados literalmente, BehaviorFinding no Event, construccion fuera de la factoria, doble guarda de memoria en las 2 estructuras nuevas, cero solape wave 1, naming TEST_*) sin blockers. Cobertura BEH-01..BEH-05 confirmada en los 5 planes. Fase 26 lista para ejecutar, pendiente confirmacion del usuario."
+last_updated: "2026-08-16"
+last_activity: 2026-08-16
 progress:
   total_phases: 22
   completed_phases: 9
@@ -222,7 +222,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 23 — InsightFace/ArcFace | B | ✓ Completa (código) | 2026-08-10 | ⧗ Tasa de aciertos ArcFace vs dlib con datos reales |
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
 | 25 — Re-identificación (ReID) | B | ✓ Completa (código) | 2026-08-15 | ⧗ Tasa de falsos positivos con dos personas reales (checkpoint 25-06 Task 2) |
-| 26 — Análisis de comportamiento | B | — Sin planificar | — | Depende de 25 |
+| 26 — Análisis de comportamiento | B | ⏳ Planificada (5/5 planes, sin ejecutar) | — | Depende de 25 (completa) |
 | 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
 | 29 — Vista de operaciones | C | — Sin planificar | — | Depende de 28 |
