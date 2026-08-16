@@ -18,11 +18,20 @@ from typing import TYPE_CHECKING, Any
 
 from backend.events.bus import EventBus
 from backend.events.types import Event, EventType, Severity
+from backend.perception.behavior import BehaviorFinding, BehaviorKind
 from backend.perception.face.identity import IdentityState, IdentityTransition
 from backend.storage.repositories import DetectionStatRepo
 
 if TYPE_CHECKING:
     from backend.observability.latency import LatencyTracker
+
+
+_BEHAVIOR_EVENT_TYPE: dict[BehaviorKind, EventType] = {
+    BehaviorKind.LOITERING: EventType.LOITERING,
+    BehaviorKind.RUNNING: EventType.RUNNING,
+    BehaviorKind.IMMOBILE: EventType.IMMOBILE,
+    BehaviorKind.CROWD: EventType.CROWD_DETECTED,
+}
 
 
 class EventEngine:
@@ -214,6 +223,37 @@ class EventEngine:
                 "votes": transition.votes,
                 "window": transition.window,
             },
+        )
+
+    # ------------------------------------------------------------------
+    # Comportamiento (Fase 26)
+    # ------------------------------------------------------------------
+
+    def emit_behavior(
+        self,
+        finding: BehaviorFinding,
+        now: datetime.datetime,
+        captured_at: float | None = None,
+        processed_at: float | None = None,
+    ) -> None:
+        """Publica el evento de comportamiento correspondiente a *finding*, si lo hay.
+
+        La guarda de idempotencia NO esta aqui: vive en el latch por episodio de
+        BehaviorAnalyzer, igual que `emits` vive en la FSM para emit_identity. Sin ese
+        latch, una persona parada 10 min generaria ~4.800 IMMOBILE a 8 FPS — "the point
+        where v1 failed conceptually" (docstring de esta clase).
+        """
+        event_type = _BEHAVIOR_EVENT_TYPE.get(finding.kind)
+        if event_type is None:
+            return
+        self._publish(
+            event_type,
+            ts=now,
+            captured_at=captured_at,
+            processed_at=processed_at,
+            track_id=finding.track_id,
+            zone_id=finding.zone_id,
+            payload=finding.magnitudes(),
         )
 
     # ------------------------------------------------------------------

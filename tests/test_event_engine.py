@@ -10,6 +10,7 @@ import pytest
 from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
 from backend.events.types import EventType, Severity
+from backend.perception.behavior import BehaviorFinding, BehaviorKind
 from backend.perception.face.identity import IdentityState, IdentityTransition
 
 
@@ -286,3 +287,69 @@ async def TEST_identity_intermediate_states_emit_nothing():
     await asyncio.sleep(0.2)
 
     assert received == []
+
+
+# ─── emit_behavior (Fase 26, BEH-04/BEH-05) ───────────────────────────────────
+
+async def TEST_emit_behavior_translates_the_four_kinds():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.LOITERING, track_id=3, zone_id="z1",
+                        duration_s=130.0, net_displacement_px=42.0), now,
+    )
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.RUNNING, track_id=4, speed_px_s=250.0), now,
+    )
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.IMMOBILE, track_id=7, duration_s=61.0,
+                        net_displacement_px=3.2), now,
+    )
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.CROWD, track_count=6), now,
+    )
+    await wait_until(lambda: len(received) == 4)
+
+    assert {e.type for e in received} == {
+        EventType.LOITERING, EventType.RUNNING, EventType.IMMOBILE, EventType.CROWD_DETECTED,
+    }
+    crowd = next(e for e in received if e.type == EventType.CROWD_DETECTED)
+    assert crowd.track_id is None
+    assert crowd.payload["track_count"] == 6
+    loitering = next(e for e in received if e.type == EventType.LOITERING)
+    assert loitering.zone_id == "z1"
+
+
+async def TEST_emit_behavior_payload_carries_magnitudes():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.emit_behavior(
+        BehaviorFinding(kind=BehaviorKind.IMMOBILE, track_id=7, duration_s=61.0,
+                        net_displacement_px=3.2), now,
+    )
+    await wait_until(lambda: len(received) == 1)
+
+    event = received[0]
+    assert event.payload["duration_s"] == 61.0
+    assert event.payload["net_displacement_px"] == 3.2
+    assert "speed_px_s" not in event.payload
+    assert "track_count" not in event.payload
+    assert all(v is not None for v in event.payload.values())
+
+
+async def TEST_emit_behavior_keeps_default_info_severity():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    for finding in (
+        BehaviorFinding(kind=BehaviorKind.LOITERING, track_id=1, duration_s=130.0),
+        BehaviorFinding(kind=BehaviorKind.RUNNING, track_id=2, speed_px_s=250.0),
+        BehaviorFinding(kind=BehaviorKind.IMMOBILE, track_id=3, duration_s=61.0),
+        BehaviorFinding(kind=BehaviorKind.CROWD, track_count=6),
+    ):
+        engine.emit_behavior(finding, now)
+    await wait_until(lambda: len(received) == 4)
+
+    assert all(e.severity is Severity.INFO for e in received)
