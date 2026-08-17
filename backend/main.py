@@ -55,7 +55,7 @@ from backend.observability.sampler import MetricsSampler
 from backend.notifier import Notifier
 from backend.pipeline import CameraManager, CameraPipeline
 from backend.recognizer import PersonRecognizer
-from backend.storage.repositories import DetectionStatRepo, EventRepo, RecordingRepo
+from backend.storage.repositories import ConfigRepo, DetectionStatRepo, EventRepo, RecordingRepo
 from backend.tracker import PersonTracker
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -278,10 +278,20 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe("websocket_v2", _broadcast_v2)
     event_bus.subscribe("rules", _apply_rules)
 
+    # app_config gana sobre la env var: es lo ultimo que el operador toco desde la UI
+    # (27-RESEARCH.md Q6, decision del usuario). init_db() ya corrio en la linea 238, asi
+    # que la tabla esta disponible. El `if persisted` (y no `is not None`) es deliberado:
+    # una fila [] guardada por un bug dejaria el sistema CIEGO — classes=[] devuelve 0
+    # detecciones, verificado — y tratarla como ausente es mas seguro que obedecerla.
+    persisted_classes = await ConfigRepo(get_session_factory()).get("yolo_classes")
+    active_classes = (
+        list(persisted_classes) if persisted_classes else list(settings.yolo_classes)
+    )
+
     detector = PersonDetector(
         model_path=settings.yolo_model_path,
         confidence=settings.yolo_confidence,
-        classes=settings.yolo_classes,
+        classes=active_classes,
         label=settings.detection_label,
         imgsz=settings.yolo_imgsz,
     )
@@ -410,6 +420,10 @@ async def lifespan(app: FastAPI):
         if settings.process_width > 0 else None
     )
     camera_manager = CameraManager()
+
+    from backend.api.v2 import detection as detection_v2_module
+    detection_v2_module.configure(camera_manager, event_engine)
+
     pipeline = camera_manager.add(
         "cam1",
         build_rtsp_url(settings),
@@ -462,6 +476,11 @@ async def lifespan(app: FastAPI):
         object_person_window_secs=settings.object_person_window_secs,
         object_max_tracks=settings.object_max_tracks,
     )
+    # Coherencia del reparto persona/objeto: el DetectionWorker recibe el conjunto de ids
+    # de objeto derivado de las clases realmente activas (que pueden venir de app_config),
+    # no solo del object_class_ids de settings — mismo patron que pipeline.set_zones(...)
+    # de mas abajo (cargar estado persistido justo despues de crear el pipeline).
+    pipeline.set_detection_classes(active_classes)
     rtsp_stream = pipeline  # fachada consumida por los endpoints
 
     if settings.camera_driver == "tapo":
@@ -569,6 +588,9 @@ app.include_router(recordings_v2_router)
 
 from backend.api.v2.metrics import router as metrics_v2_router
 app.include_router(metrics_v2_router)
+
+from backend.api.v2.detection import router as detection_v2_router
+app.include_router(detection_v2_router)
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
