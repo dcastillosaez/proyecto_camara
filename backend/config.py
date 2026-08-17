@@ -34,7 +34,10 @@ class Settings(BaseSettings):
     # Extension and path containment enforced below (SEC-16) — resolved relative
     # to the project root, never to the process cwd, so it can't be fooled by
     # launching uvicorn from an unexpected working directory.
-    yolo_model_path: str = "yolov8n.pt"
+    # Fijado a yolo26n.pt por decision de stack (CLAUDE.md, D-03): a diferencia
+    # de yolov8n.pt es end2end=True (NMS-free), lo que cambia la ruta de
+    # post-proceso sobre la que se mide el criterio 6 de la Fase 27.
+    yolo_model_path: str = "yolo26n.pt"
 
     @field_validator("yolo_model_path")
     @classmethod
@@ -187,6 +190,50 @@ class Settings(BaseSettings):
     crowd_threshold: int = 5
     behavior_max_tracks: int = 256
 
+    # --- Multi-clase y objetos (Fase 27 — BEH-06/BEH-07) ---
+    # (a) Los umbrales espaciales estan en PIXELES DEL FRAME PROCESADO
+    #     (process_width x process_height, 1280x720 por defecto) y NO estan calibrados
+    #     contra una escena real: object_person_radius_px=150 es 1,9 x loiter_radius_px
+    #     y ~media altura de persona a media distancia, una propuesta razonada
+    #     (27-RESEARCH.md Q1, Assumption A1). La calibracion con camara es el checkpoint
+    #     manual de 27-11.
+    # (b) OJO, AL REVES QUE EL BLOQUE DE LA FASE 26: OBJECT_LEFT sale con
+    #     Severity.WARNING por defecto del catalogo (types.py:55), asi que cruza
+    #     upload_min_severity="warning" (config.py:115 -> recording.py:309) y SUBE CLIPS A
+    #     GOOGLE DRIVE desde el primer evento. Es intencional (un objeto abandonado es lo
+    #     que quieres grabado), pero un radio mal calibrado consume cuota de Drive.
+    #     Valvula de escape sin tocar codigo: subir upload_min_severity a "critical".
+    # (c) yolo_classes=[] CIEGA el sistema en silencio: verificado, classes=[] devuelve 0
+    #     detecciones (no las 80, que es lo que hace classes=None). Por eso el endpoint
+    #     PUT la rechaza con 400 y el arranque trata una fila vacia de app_config como
+    #     ausente (27-RESEARCH Pitfall 3).
+    # object_person_radius_ratio corrige la escala: radio = max(px, ratio * alto_bbox),
+    # asi que una persona cerca de la camara (500 px de alto) tiene un "cerca" de 250 px
+    # y una lejana se queda en el suelo de 150 px.
+    object_class_ids: list[int] = [1, 2, 3, 24, 28]   # bicycle, car, motorcycle, backpack, suitcase
+    object_left_secs: float = 60.0
+    object_still_radius_px: float = 20.0
+    object_person_radius_px: float = 150.0
+    object_person_radius_ratio: float = 0.5
+    object_warmup_secs: float = 10.0
+    object_gone_secs: float = 3.0
+    object_person_window_secs: float = 10.0
+    object_max_tracks: int = 256
+    objects_enabled: bool = True
+
+    # --- Contexto de escena (Fase 27 — BEH-08/BEH-09) ---
+    # El baseline se calcula sobre unique_tracks (personas distintas por minuto), NO sobre
+    # detections: detections acumula len(active_track_ids) una vez por FRAME PROCESADO
+    # (engine.py:281), asi que depende del FPS que AdaptiveRate haya elegido y no es
+    # comparable entre dias (27-RESEARCH H-5). context_min_sample_days=3 hace que un
+    # sistema recien instalado diga "unknown" en vez de inventarse un veredicto con
+    # AVG sobre una sola muestra (Pitfall 8). Los ratios 0,5/1,5 son la parte de menor
+    # confianza de la fase (Assumption A4): dos floats, triviales de ajustar con datos.
+    context_baseline_days: int = 7
+    context_min_sample_days: int = 3
+    context_low_ratio: float = 0.5
+    context_high_ratio: float = 1.5
+
     @field_validator("reid_model_path")
     @classmethod
     def validate_reid_model_path(cls, v: str) -> str:
@@ -292,6 +339,33 @@ class Settings(BaseSettings):
                 "rate.py:26 AdaptiveRate.STEPS[0]=12.0); una ventana mayor no se podria "
                 "calcular y RUNNING no se emitiria nunca"
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_object_params(self) -> "Settings":
+        for name in ("object_left_secs", "object_still_radius_px",
+                     "object_person_radius_px", "object_warmup_secs",
+                     "object_gone_secs", "object_person_window_secs"):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name} debe ser > 0")
+        if not 0 <= self.object_person_radius_ratio <= 2.0:
+            raise ValueError("object_person_radius_ratio debe estar en [0, 2]")
+        if any(not 0 <= c <= 79 for c in self.object_class_ids):
+            raise ValueError("object_class_ids deben ser ids COCO validos (0-79)")
+        if 0 in self.object_class_ids:
+            raise ValueError(
+                "la clase 0 (person) no puede estar en object_class_ids: las personas "
+                "van al PersonTracker (LineZone + identidad + comportamiento), no al "
+                "tracker de objetos"
+            )
+        if self.object_max_tracks < 1:
+            raise ValueError("object_max_tracks debe ser >= 1")
+        if not self.context_low_ratio < self.context_high_ratio:
+            raise ValueError("context_low_ratio debe ser menor que context_high_ratio")
+        if not 1 <= self.context_baseline_days <= 90:
+            raise ValueError("context_baseline_days debe estar en [1, 90]")
+        if self.context_min_sample_days < 1:
+            raise ValueError("context_min_sample_days debe ser >= 1")
         return self
 
 
