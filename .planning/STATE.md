@@ -84,10 +84,12 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 /gsd:execute-phase 27
 ```
 
-Fase 27 (Multi-clase y contexto de escena) en progreso: `27-01` completo
-(`ObjectAnalyzer`, dominio puro), quedan `27-02`..`27-07` (config, tracker
-por sustraccion, media movil horaria, `emit_object`, cableado y router de
-clases activas).
+Fase 27 (Multi-clase y contexto de escena) en progreso: `27-01`
+(`ObjectAnalyzer`, dominio puro) y `27-02` (D-03 + config `object_*`/
+`context_*` + `PersonDetector.set_classes()`) completos, quedan `27-03`..
+`27-11` (tracker por sustraccion, media movil horaria, `emit_object`,
+cableado, router de clases activas, overlay MJPEG, endpoint de contexto,
+control de clases en el dashboard y puerta de fase).
 
 La Fase 24 (Identidad temporal — votación y máquina de estados) está
 **completa**: 6/6 planes (`24-01`..`24-06`), FACE-07..FACE-11 cerrados,
@@ -258,7 +260,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
 | 25 — Re-identificación (ReID) | B | ✓ Completa (código) | 2026-08-15 | ⧗ Tasa de falsos positivos con dos personas reales (checkpoint 25-06 Task 2) |
 | 26 — Análisis de comportamiento | B | ✓ Completa (código) | 2026-08-16 | ⧗ Calibración de umbrales con cámara real (checkpoint 26-05 Task 3) |
-| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (1/7 planes) | — | 6 planes restantes (27-02..27-07) |
+| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (2/11 planes) | — | 9 planes restantes (27-03..27-11) |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
 | 29 — Vista de operaciones | C | — Sin planificar | — | Depende de 28 |
 | 30 — Event Timeline y alertas | C | — Sin planificar | — | Depende de 29 |
@@ -304,7 +306,15 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **468/468 passing** (última ejecución 2026-08-17, tras `27-01`: +11 tests
+Suite completa: **473/473 passing** (última ejecución 2026-08-17, tras `27-02`: +5 tests
+`TEST_*` — 3 en `tests/test_config.py` (`TEST_yolo_model_default_is_yolo26n`,
+`TEST_object_defaults_match_research` con un assert por cada uno de los 10 `object_*` y
+4 `context_*`, `TEST_object_params_reject_impossible_values` con caso propio para
+`object_class_ids=[0, 24]`) + 2 en `tests/test_detector.py`
+(`TEST_set_classes_changes_next_inference`, y `TEST_multiclass_latency_under_15_percent`
+que mide con pesos reales de `yolo26n.pt` sobre `bus.jpg` a 1280x720: p50 con 1 clase vs
+6 clases, criterio 6 del ROADMAP con margen — sin skip, `bus.jpg` presente en
+`ultralytics/assets`). Cifra anterior 468/468 (tras `27-01`: +11 tests
 `TEST_*` en `tests/test_object_analyzer.py` (nuevo fichero: los 9 comportamientos de BEH-07
 — `OBJECT_LEFT` tras umbral, latch por episodio, igualdad de conjunto, supresion por
 persona cercana, guardas de warmup y zona de exclusion, `OBJECT_REMOVED` con/sin persona,
@@ -353,6 +363,8 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - EventEngine.emit_behavior (Fase 26, 26-03): nunca pasa `severity=` explícita, para que `@model_validator` de `Event` aplique el default `INFO` del catálogo (D-01) y los comportamientos no crucen `upload_min_severity="warning"`; `process_zone()` añade `now_monotonic` AL FINAL de la firma (aditivo, compatible con el único llamador posicional) porque `captured_at`/`processed_at` son conceptos privados de latencia OBS-03, no un reloj semántico — restar dos `datetime.datetime.now()` sería sensible a saltos de reloj por NTP; `duration_s` es la clave literal del payload porque `rules.py:88-91` la lee tal cual para `duration_gte`; `_zone_entry_at` se acota con `pop()` en el mismo bucle que emite `ZONE_EXITED` (mismo "seguro de vida" que `TrackGallery`/`BehaviorAnalyzer` de las Fases 25/26)
 - DetectionWorker/manager.py (Fase 26, 26-04): `_analyze_behavior` toma los ids del frame de `tracked.tracker_id` directamente, nunca de `self._registry.frame_ids()` — `set_frame_ids()` se llama dentro de `_emit_track_lifecycle`, que corre DESPUÉS en `_loop`, así que leer `frame_ids()` en `_analyze_behavior` vería el frame anterior; `self.behavior` se construye en `CameraPipeline.__init__` ANTES del bloque `if detector is not None and tracker is not None`, gateado solo por `behavior_enabled`, y se pasa como último kwarg dentro de `_make_detection` — mismo motivo que `identity_fsm`/`reid_gallery`: el `WorkerSupervisor` re-ejecuta la factoría en cada reinicio y construir el analizador dentro borraría las anclas y latches, produciendo una ráfaga de eventos duplicados
 - backend/config.py (Fase 26, 26-02): `validate_behavior_params` acota `run_window_secs <= 12.0` — es la misma clase de guarda que `validate_identity_params` (impide una configuración que nunca podría cumplirse), aquí contra el límite real de `centroid_history` (`tracking.py:47`, `deque(maxlen=150)`) al peor caso de FPS (`rate.py:26`, `AdaptiveRate.STEPS[0]=12.0`) — sin esta cota, un operador podría configurar una ventana de RUNNING que jamás se calcularía; `loiter_require_zone=False` por defecto (fallback D-02) para que una instalación limpia sin zonas configuradas siga pudiendo emitir LOITERING
+- backend/config.py (Fase 27, 27-02, D-03): `yolo_model_path` por defecto pasa de `yolov8n.pt` a `yolo26n.pt` — corrige la deriva respecto a CLAUDE.md; se aplica en este plan y no antes porque el criterio 6 (latencia con 6 clases) se mide despues, sobre la ruta de post-proceso NMS-free de `yolo26n.pt`. `validate_object_params` sigue el molde de `validate_behavior_params` y rechaza explicitamente la clase 0 (person) en `object_class_ids` — desviarla ahi perderia el `LineZone`/identidad/comportamiento del `PersonTracker`
+- PersonDetector.set_classes (Fase 27, 27-02): mutacion en caliente de `self._classes` (rebind atomico, sin lock) en vez de reconstruir el detector — mismo motivo que `PersonTracker.set_frame_rate`, pero con coste mayor si se reconstruyera: `WorkerSupervisor._check()` cuenta cualquier parada del worker como caida y tres reinicios en 60 s lo dejarian en `FAILED` permanente
 - ObjectAnalyzer (Fase 27, 27-01): `ObjectObservation`/`PersonObservation` (dataclasses con 6 atributos) en vez de los `dict[int, tuple]` de `BehaviorAnalyzer` — varios dicts paralelos por objeto serían un criadero de bugs de desincronización; `prune()` devuelve `list[ObjectFinding]` (a diferencia de `BehaviorAnalyzer.prune` que devuelve `None`) porque `OBJECT_REMOVED` se decide ahí, no en `analyze()`, para exigir `gone_secs` de gracia contra oclusiones de un frame; `stable` se deriva de `object_gone_secs` sin parámetro nuevo (mínimo tiempo quieto para considerarse "establecido" = la misma ventana de gracia con la que se declara la desaparición); asimetría deliberada entre el radio de persona en `OBJECT_LEFT` (negativo: pasarse de grande suprime eventos, lado seguro) y en `OBJECT_REMOVED` (positivo: pasarse de grande es peligroso)
 - Puerta de fase (Fase 26, 26-05): no hizo falta ningún fix de código — `tests/test_rule_engine.py` ganó 3 tests que recorren el camino real (YAML en `tmp_path` + `load_rules` + `evaluate`) para demostrar el criterio 5 sin tocar `backend/events/rules.py` ni `config/rules.yaml`, y BEH-01..BEH-05 ya estaban `[x]` desde planes anteriores. Las seis decisiones clave de la fase quedan resumidas aquí: (1) el historial de 120 s se disuelve con agregados incrementales O(1) en vez de ampliar `history_len` (584 B/track medidos frente a 141,8 KB si se hubiera ampliado a 1000, `tracking.py` intacto); (2) los CUATRO comportamientos llevan latch por episodio, no solo CROWD — sin él, una persona parada 10 min generaría miles de eventos IMMOBILE, y `debounce_secs` de `rules.yaml` no sustituye al latch porque actúa después de persistir y difundir; (3) `analyze()` devuelve `list[BehaviorFinding]`, no `list[Event]` (D-3, corrige SPEC §5.7) — `perception/` no conoce `camera_id` ni el reloj de pared; (4) semántica de zonas: LOITERING cae a escena implícita (`zone_id=None`) sin zonas configuradas salvo `loiter_require_zone=True` (D-02), LOITERING e IMMOBILE coexisten (D-03), y con zonas solapadas se emite un finding por zona (D-04); (5) la clave del payload es `duration_s` literal porque `rules.py:88-91` la lee así para `duration_gte` — cualquier otro nombre rompe el criterio 5 en silencio; (6) los 4 comportamientos se quedan en `Severity.INFO` por defecto (D-01, cambio cero) — subirlos a WARNING habría activado la subida automática de clips a Google Drive. El checkpoint de calibración de umbrales con cámara real (Task 3) se difiere explícitamente — 8º checkpoint manual pendiente, no bloquea avanzar a la Fase 27
 
@@ -373,18 +385,27 @@ Fase 23, la Fase 25 y la Fase 26 por completamente validados en producción.
 ## Session Continuity
 
 Last session: 2026-08-17
-Stopped at: Ejecutado 27-01-PLAN.md (wave 1, sin dependencias). `backend/perception/objects.py`
-  (320 líneas): `ObjectKind`, `ObjectObservation`, `PersonObservation`, `ObjectFinding`
-  (contratos LOCKED que consumirán `27-05`/`27-06`) y `ObjectAnalyzer` con `analyze()`/
-  `prune()`/`_enforce_cap()`, mismo molde que `BehaviorAnalyzer` de la Fase 26 (dominio puro,
-  reloj inyectado, sin `time`/`numpy`/`backend.*`). 11 tests nuevos en
-  `tests/test_object_analyzer.py` (los 9 comportamientos de BEH-07) + 3 tests de cota de
-  memoria en `tests/test_memory_bounds.py` (con y sin `prune()`, incluida `_ignored`). Suite
-  completa 468/468 (454 previos + 14). `behavior.py` sin cambios. BEH-07 marcado `[x]` en
-  `REQUIREMENTS.md`. Sin desviaciones de código — ver `27-01-SUMMARY.md`. Quedan `27-02`..
-  `27-07` (config, tracker por sustracción, media móvil horaria, `emit_object`, cableado y
-  router de clases activas). Siguiente: `/gsd:execute-phase 27` para continuar con `27-02`.
-Resume file: `.planning/phases/27-multi-clase-y-contexto-de-escena/27-02-PLAN.md`
+Stopped at: Ejecutado 27-02-PLAN.md (wave 1, sin dependencias reales de código). D-03:
+  `yolo_model_path` por defecto pasa de `yolov8n.pt` a `yolo26n.pt` (end2end=True, NMS-free).
+  10 parámetros `object_*` y 4 `context_*` en `backend/config.py` con los defaults del
+  research, más `validate_object_params` (rechaza clase 0/person en `object_class_ids`,
+  ratios fuera de rango, ids COCO inválidos, `context_low_ratio >= context_high_ratio`).
+  `PersonDetector.set_classes()` (`backend/detector.py`): mutación en caliente de
+  `self._classes` con rebind atómico (sin lock, mismo patrón que
+  `PersonTracker.set_frame_rate`), verificado que no recarga el modelo (`id(self._model)`
+  no cambia). 5 tests nuevos: 3 en `tests/test_config.py` (default `yolo26n.pt`, defaults
+  de los 14 parámetros, rechazo de las 6 configuraciones imposibles) + 2 en
+  `tests/test_detector.py` (`TEST_set_classes_changes_next_inference` y
+  `TEST_multiclass_latency_under_15_percent`, el benchmark del criterio 6 del ROADMAP con
+  pesos reales de `yolo26n.pt` sobre `bus.jpg`, sin skip). Suite completa 473/473 (468
+  previos + 5). Ningún requisito BEH-06/08/09 se marca `[x]` todavía — están repartidos
+  entre `27-03`..`27-11` y se cierran en el gate de fase (`27-11`); `BEH-07` ya estaba
+  marcado desde `27-01`. Sin desviaciones de código — ver `27-02-SUMMARY.md`. Quedan
+  `27-03`..`27-11` (tracker por sustracción, media móvil horaria, `emit_object`, cableado,
+  router de clases activas, overlay MJPEG, endpoint de contexto, control de clases en el
+  dashboard y puerta de fase). Siguiente: `/gsd:execute-phase 27` para continuar con
+  `27-03`.
+Resume file: `.planning/phases/27-multi-clase-y-contexto-de-escena/27-03-PLAN.md`
 
 Sesión anterior (2026-08-16): Ejecutado 26-05-PLAN.md (criterio 5 `when.event` desde YAML
   real + puerta de fase, wave 4, depende de `26-01`..`26-04`). Los 3
