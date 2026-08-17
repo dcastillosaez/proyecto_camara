@@ -181,7 +181,8 @@ class CameraPipeline:
             def _make_streaming() -> StreamingWorker:
                 clients = self.streaming.stats["clients"] if self.streaming else 0
                 self.streaming = StreamingWorker(
-                    self.broker.subscribe("streaming", replace=True), self.registry, tracker
+                    self.broker.subscribe("streaming", replace=True), self.registry, tracker,
+                    object_boxes=self.get_object_boxes,  # NUEVO (Fase 27): solo lectura
                 )
                 # Un reinicio no debe dejar de servir a los clientes ya conectados
                 for _ in range(clients):
