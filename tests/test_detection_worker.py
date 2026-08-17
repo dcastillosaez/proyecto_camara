@@ -12,6 +12,7 @@ import pytest
 import supervision as sv
 
 from backend.perception.behavior import BehaviorAnalyzer, BehaviorKind
+from backend.perception.objects import ObjectAnalyzer, ObjectFinding, ObjectKind
 from backend.pipeline.broker import Frame, FrameBroker
 from backend.pipeline.detection import DetectionWorker
 from backend.pipeline.rate import AdaptiveRate
@@ -642,3 +643,169 @@ def TEST_object_boxes_snapshot_is_a_copy():
     snap[0]["class_name"] = "mutated"
 
     assert worker.get_object_boxes()[0]["class_name"] == "backpack"
+
+
+# ─── Cableado del ObjectAnalyzer en el hilo de deteccion (Fase 27, BEH-07) ───
+
+def TEST_object_left_emitted_from_worker():
+    broker = FrameBroker()
+    event_engine = MagicMock()
+    analyzer = ObjectAnalyzer(left_secs=1.0, warmup_secs=0.0, gone_secs=0.5)
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+        event_engine=event_engine,
+        objects=analyzer,
+    )
+    no_persons = sv.Detections.empty()
+    obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
+
+    worker._analyze_objects(obj_tracked, no_persons, captured_at=0.0, processed_at=0.0)
+    worker._analyze_objects(obj_tracked, no_persons, captured_at=1.5, processed_at=1.5)
+
+    event_engine.emit_object.assert_called()
+    finding = event_engine.emit_object.call_args[0][0]
+    assert finding.kind == ObjectKind.LEFT
+
+
+def TEST_object_analysis_failure_does_not_kill_thread():
+    broker = FrameBroker()
+    event_engine = MagicMock()
+    objects = MagicMock()
+    objects.analyze.side_effect = RuntimeError("boom")
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+        event_engine=event_engine,
+        objects=objects,
+    )
+    obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
+
+    worker._analyze_objects(obj_tracked, sv.Detections.empty(), captured_at=0.0, processed_at=0.0)
+
+    assert worker._exceptions == 1
+    event_engine.emit_object.assert_not_called()
+
+
+def TEST_object_prune_findings_are_emitted():
+    """Protege contra ignorar el retorno de prune(): OBJECT_REMOVED se decide ahi."""
+    broker = FrameBroker()
+    event_engine = MagicMock()
+    objects = MagicMock()
+    objects.analyze.return_value = []
+    removed = ObjectFinding(kind=ObjectKind.REMOVED, track_id=1, class_name="backpack")
+    objects.prune.return_value = [removed]
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+        event_engine=event_engine,
+        objects=objects,
+    )
+    obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
+
+    worker._analyze_objects(obj_tracked, sv.Detections.empty(), captured_at=0.0, processed_at=0.0)
+
+    event_engine.emit_object.assert_called_once()
+    finding = event_engine.emit_object.call_args[0][0]
+    assert finding is removed
+    assert finding.kind == ObjectKind.REMOVED
+
+
+def TEST_excluded_zone_suppresses_object_candidate():
+    import json
+
+    worker = _worker_for_zones()
+    event_engine = MagicMock()
+    worker._event_engine = event_engine
+    objects = MagicMock()
+    objects.analyze.return_value = []
+    objects.prune.return_value = []
+    worker._objects = objects
+    worker.set_zones([{
+        "id": "zex", "name": "Exclusion", "kind": "exclude_objects", "enabled": True,
+        "polygon_json": json.dumps([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+    }])
+    worker._update_zones_and_heat(sv.Detections.empty(), (360, 640, 3))
+    obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
+
+    worker._analyze_objects(obj_tracked, sv.Detections.empty(), captured_at=0.0, processed_at=0.0)
+
+    observations = objects.analyze.call_args[0][0]
+    assert observations[0].excluded is True
+
+
+# ─── ObjectAnalyzer y ObjectTracker sobreviven a un reinicio del worker ──────
+# Se construyen FUERA de _make_detection (manager.py): el supervisor re-ejecuta
+# la factoria en cada reinicio y construirlos dentro borraria anclas, latches, la
+# marca de arranque y el contador de ids de objeto. Consecuencia concreta: la
+# ventana de warmup se reabriria, todo el mobiliario fijo volveria a "aparecer" y
+# a los 60 s habria una rafaga de OBJECT_LEFT — que es WARNING y por tanto sube
+# un clip a Google Drive por cada mueble. Mismo motivo que la FSM de identidad
+# (Fase 24), la galeria ReID (Fase 25) y el BehaviorAnalyzer (Fase 26).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def TEST_object_analyzer_survives_worker_restart():
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline("cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock())
+
+    factory = pipeline.supervisor._entries["detector"].factory
+    worker1 = factory()
+    analyzer = pipeline.objects
+    assert analyzer is not None
+    assert worker1._objects is analyzer
+
+    worker2 = factory()
+    assert worker2 is not worker1
+    assert pipeline.objects is analyzer      # misma instancia, no una nueva
+    assert worker2._objects is analyzer
+
+
+def TEST_object_tracker_survives_worker_restart():
+    """Si el ObjectTracker se reconstruyera, los track_id de objeto volverian a 1 y
+    todo el mobiliario "aparecería" otra vez."""
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline("cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock())
+
+    factory = pipeline.supervisor._entries["detector"].factory
+    worker1 = factory()
+    tracker = pipeline.object_tracker
+    assert tracker is not None
+    assert worker1._object_tracker is tracker
+
+    worker2 = factory()
+    assert worker2 is not worker1
+    assert pipeline.object_tracker is tracker  # misma instancia, no una nueva
+    assert worker2._object_tracker is tracker
+
+
+def TEST_objects_disabled_leaves_pipeline_without_analyzer():
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline(
+        "cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock(), objects_enabled=False
+    )
+
+    assert pipeline.objects is None
+    assert pipeline.object_tracker is None
+
+    factory = pipeline.supervisor._entries["detector"].factory
+    worker = factory()
+    assert worker is not None
+    assert worker._objects is None
+    assert worker._object_tracker is None
+
+
+def TEST_set_object_detection_classes_does_not_restart_worker():
+    from backend.pipeline.manager import CameraPipeline
+
+    detector = MagicMock()
+    pipeline = CameraPipeline("cam1", "rtsp://fake", detector=detector, tracker=MagicMock())
+    pipeline.detection = MagicMock()
+
+    pipeline.set_detection_classes([0, 24])
+
+    detector.set_classes.assert_called_once_with([0, 24])
+    pipeline.detection.set_object_classes.assert_called_once_with({24})
+    pipeline.detection.stop.assert_not_called()
