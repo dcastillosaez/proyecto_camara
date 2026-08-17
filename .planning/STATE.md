@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Ejecutado 27-05-PLAN.md (emit_object + config_changed en EventEngine, wave 2, depende de 27-01). backend/events/engine.py: import de ObjectFinding/ObjectKind (direccion events/ -> perception/), _OBJECT_EVENT_TYPE (tabla de modulo, molde de _BEHAVIOR_EVENT_TYPE), emit_object() traduce ObjectKind.LEFT/REMOVED a OBJECT_LEFT/OBJECT_REMOVED con bbox como campo de primer nivel y payload via finding.magnitudes(), sin pasar severity= explicita (OBJECT_LEFT hereda WARNING del catalogo, OBJECT_REMOVED INFO); config_changed(now, **detail) publica CONFIG_CHANGED, primer emisor desde que existe en el catalogo (Fase 19). Deviation Rule 1: el docstring propuesto por el plan contenia las subcadenas literales 'severity=' y 'upload_min_severity=\"warning\"' que autoinvalidaban el propio <verify> automatizado (inspect.getsource + 'severity=' not in src) — reescrito sin la subcadena, mismo significado. 5 tests nuevos TEST_* en tests/test_event_engine.py (traduccion de los 2 ObjectKind, payload sin None con duration_s/class_name, severidad WARNING/INFO desde el catalogo, bbox de primer nivel fuera del payload, config_changed con detalle arbitrario). Suite completa 492/492. BEH-06/07 NO se marcan en REQUIREMENTS.md: el ROADMAP sigue asignando esa puerta a 27-11 (cierra BEH-06..BEH-09 de una vez con trazabilidad). Fase 27: 5/11 planes."
+stopped_at: "Ejecutado 27-06-PLAN.md (cableado de ObjectAnalyzer en DetectionWorker, wave 3, depende de 27-01+27-03+27-04+27-05). backend/pipeline/detection.py: _analyze_objects(obj_tracked, tracked, captured_at, processed_at) — mismo patron de aislamiento de fallos que _analyze_behavior (try envolviendo analyze+prune, except con self._exceptions += 1, emision fuera del try), anclas BOTTOM_CENTER para objetos y personas, findings += self._objects.prune(...) recogido explicitamente (el retorno NO se ignora); _excluded_object_ids/_object_zone_ids reutilizan sv.PolygonZone.trigger() sobre los mismos _zone_states (kind propagado en _rebuild_zone_states). backend/pipeline/manager.py: self.objects/self.object_tracker construidos en CameraPipeline.__init__ ANTES de _make_detection, gateados por objects_enabled — cuarto precedente (tras FSM Fase 24, ReID Fase 25, BehaviorAnalyzer Fase 26) de estado que sobrevive a un reinicio del DetectionWorker; set_detection_classes/get_object_stats/get_object_boxes en la fachada. backend/main.py propaga los 10 parametros object_*/objects_enabled desde Settings. 8 tests nuevos TEST_* en tests/test_detection_worker.py (emision real de OBJECT_LEFT, aislamiento de fallos, retorno de prune no ignorado, exclusion por zona, supervivencia de analizador y tracker a reinicio, objects_enabled=False, set_detection_classes sin reiniciar worker). Suite completa 500/500. Dos discrepancias de conteo en los <verify> automatizados del plan (no funcionales, documentadas en 27-06-SUMMARY.md): grep -c \"object_\" backend/main.py da 9 no >=10 (objects_enabled no matchea el patron por la 's' de plural, nombre fijado por el contrato LOCKED) y pytest -k object recoge 12 no >=13 (el plan asumia que los 7 tests de 27-03 matcheaban todos 'object', solo 4 lo hacen). BEH-06/07 NO se marcan en REQUIREMENTS.md: el ROADMAP sigue asignando esa puerta a 27-11. Fase 27: 6/11 planes."
 last_updated: "2026-08-17"
 last_activity: 2026-08-17
 progress:
@@ -91,14 +91,18 @@ particion por clase en `DetectionWorker`, cierra el riesgo de que
 `sv.ByteTrack` — class-agnostic — transfiera un `tracker_id` entre persona
 y objeto), `27-04` (`DetectionStatRepo.hourly_baseline()` — media movil
 por franja horaria sobre `unique_tracks` con doble GROUP BY, sin indice
-nuevo — y `kind` en el `Zone` legacy que alimenta al `DetectionWorker`) y
+nuevo — y `kind` en el `Zone` legacy que alimenta al `DetectionWorker`),
 `27-05` (`EventEngine.emit_object()` — traduce `ObjectFinding` a
 `OBJECT_LEFT`/`OBJECT_REMOVED` sin forzar severidad, `bbox` como campo de
 primer nivel — y `EventEngine.config_changed()`, primer emisor de
-`CONFIG_CHANGED` desde que existe en el catalogo, Fase 19) completos.
-Quedan `27-06`..`27-11` (cableado de `_analyze_objects`, router de clases
-activas, overlay MJPEG, endpoint de contexto, control de clases en el
-dashboard y puerta de fase que cierra BEH-06..BEH-09).
+`CONFIG_CHANGED` desde que existe en el catalogo, Fase 19) y `27-06`
+(`_analyze_objects` cableado en `DetectionWorker._loop`, `ObjectAnalyzer`/
+`ObjectTracker` construidos fuera de `_make_detection` para sobrevivir a
+un reinicio del worker, fachada `set_detection_classes`/
+`get_object_stats`/`get_object_boxes`) completos.
+Quedan `27-07`..`27-11` (router de clases activas, overlay MJPEG,
+endpoint de contexto, control de clases en el dashboard y puerta de fase
+que cierra BEH-06..BEH-09).
 
 La Fase 24 (Identidad temporal — votación y máquina de estados) está
 **completa**: 6/6 planes (`24-01`..`24-06`), FACE-07..FACE-11 cerrados,
@@ -269,7 +273,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
 | 25 — Re-identificación (ReID) | B | ✓ Completa (código) | 2026-08-15 | ⧗ Tasa de falsos positivos con dos personas reales (checkpoint 25-06 Task 2) |
 | 26 — Análisis de comportamiento | B | ✓ Completa (código) | 2026-08-16 | ⧗ Calibración de umbrales con cámara real (checkpoint 26-05 Task 3) |
-| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (5/11 planes) | — | 6 planes restantes (27-06..27-11) |
+| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (6/11 planes) | — | 5 planes restantes (27-07..27-11) |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
 | 29 — Vista de operaciones | C | — Sin planificar | — | Depende de 28 |
 | 30 — Event Timeline y alertas | C | — Sin planificar | — | Depende de 29 |
@@ -315,7 +319,14 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **492/492 passing** (última ejecución 2026-08-17, tras `27-05`: +5 tests
+Suite completa: **500/500 passing** (última ejecución 2026-08-17, tras `27-06`: +8 tests
+`TEST_*` en `tests/test_detection_worker.py` — `TEST_object_left_emitted_from_worker`
+(emision real de `OBJECT_LEFT` con reloj inyectado), `TEST_object_analysis_failure_does_not_kill_thread`,
+`TEST_object_prune_findings_are_emitted` (protege el retorno de `prune()`),
+`TEST_excluded_zone_suppresses_object_candidate`, `TEST_object_analyzer_survives_worker_restart`,
+`TEST_object_tracker_survives_worker_restart`, `TEST_objects_disabled_leaves_pipeline_without_analyzer`
+y `TEST_set_object_detection_classes_does_not_restart_worker` — ver `27-06-SUMMARY.md`). Cifra anterior
+492/492 (última ejecución 2026-08-17, tras `27-05`: +5 tests
 `TEST_*` en `tests/test_event_engine.py` — `TEST_emit_object_translates_both_kinds`,
 `TEST_emit_object_payload_carries_magnitudes` (`duration_s`/`class_name` presentes,
 `person_distance_px` ausente al ser `None`), `TEST_emit_object_severity_comes_from_catalog`
@@ -403,6 +414,7 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - EventEngine.emit_object (Fase 27, 27-05): nunca pasa `severity=` explicita — a diferencia de los 4 comportamientos de la Fase 26 (que se quedaron en INFO a proposito), aqui `OBJECT_LEFT` hereda `WARNING` del catalogo y por tanto SUBE EL CLIP A GOOGLE DRIVE al cruzar `upload_min_severity`; decision cerrada con el usuario (T-27-19). `bbox` viaja como campo de primer nivel del `Event` (los eventos de objeto llevan caja, los de comportamiento no). `config_changed()` es el primer emisor de `CONFIG_CHANGED` desde que existe en el catalogo (Fase 19) — unica mitigacion de repudio disponible sin roles en el sistema (ASVS V4, T-27-20)
 - DetectionWorker._split_by_class (Fase 27, 27-03): la partición por `class_id` (`np.isin` contra `PERSON_CLASS_IDS=(0,)`) ocurre DENTRO del `try` de inferencia ya existente, para que un `sv_dets` malformado siga cayendo en el mismo `except`; `PersonTracker.update` recibe siempre `person_dets`, nunca `sv_dets` completo — sin esto, un objeto (coche, mochila) sumaría al conteo de línea de la Fase 4 o entraría en `TrackRegistry`/reconocimiento facial. Los objetos NUNCA entran en `TrackRegistry`: su estado vive en `self._object_boxes` bajo `self._lock` (mismo patrón que `_zone_states`), con escritor único (hilo de detección) y lectores desde fuera (`get_object_boxes`/`get_object_stats`, copias defensivas). `self._rate.observe()` sigue midiendo solo la vía de personas — la vía de objetos nunca la llama, mismo patrón que ReID (Fase 25) y `BehaviorAnalyzer` (Fase 26)
 - Riesgo de primer orden verificado con test de reproducción (Fase 27, 27-03): `sv.ByteTrack` es class-agnostic (el tensor del matcher usa solo `xyxy`+`confidence`, `supervision/tracker/byte_tracker/core.py:104-110`) — `TEST_bytetrack_ids_do_not_migrate_between_classes` reproduce literalmente que un `sv.ByteTrack` COMPARTIDO transfiere el id de una mochila "perdida" a una persona casi en la misma caja, y demuestra que con `ObjectTracker`+`PersonTracker` separados no ocurre
+- DetectionWorker._analyze_objects / CameraPipeline (Fase 27, 27-06): `findings += self._objects.prune(...)` se recoge explícitamente — a diferencia de `BehaviorAnalyzer.prune` (devuelve `None`), el `prune()` de `ObjectAnalyzer` decide `OBJECT_REMOVED` y su retorno no se puede ignorar sin perder la mitad del requisito BEH-07; `_excluded_object_ids`/`_object_zone_ids` reutilizan `sv.PolygonZone.trigger()` sobre los mismos `_zone_states` (con `kind` ya propagado desde `27-04`) en vez de escribir geometría punto-en-polígono propia. `self.objects`/`self.object_tracker` se construyen en `CameraPipeline.__init__` ANTES de `_make_detection` — cuarto precedente del mismo patrón que la FSM (Fase 24), la galería ReID (Fase 25) y `BehaviorAnalyzer` (Fase 26): reconstruirlos en cada reinicio del `DetectionWorker` reabriría la ventana de warmup y reiniciaría los `track_id` de objeto, emitiendo una ráfaga de `OBJECT_LEFT` (`WARNING`) que subiría un clip a Google Drive por cada mueble fijo de la escena
 - Puerta de fase (Fase 26, 26-05): no hizo falta ningún fix de código — `tests/test_rule_engine.py` ganó 3 tests que recorren el camino real (YAML en `tmp_path` + `load_rules` + `evaluate`) para demostrar el criterio 5 sin tocar `backend/events/rules.py` ni `config/rules.yaml`, y BEH-01..BEH-05 ya estaban `[x]` desde planes anteriores. Las seis decisiones clave de la fase quedan resumidas aquí: (1) el historial de 120 s se disuelve con agregados incrementales O(1) en vez de ampliar `history_len` (584 B/track medidos frente a 141,8 KB si se hubiera ampliado a 1000, `tracking.py` intacto); (2) los CUATRO comportamientos llevan latch por episodio, no solo CROWD — sin él, una persona parada 10 min generaría miles de eventos IMMOBILE, y `debounce_secs` de `rules.yaml` no sustituye al latch porque actúa después de persistir y difundir; (3) `analyze()` devuelve `list[BehaviorFinding]`, no `list[Event]` (D-3, corrige SPEC §5.7) — `perception/` no conoce `camera_id` ni el reloj de pared; (4) semántica de zonas: LOITERING cae a escena implícita (`zone_id=None`) sin zonas configuradas salvo `loiter_require_zone=True` (D-02), LOITERING e IMMOBILE coexisten (D-03), y con zonas solapadas se emite un finding por zona (D-04); (5) la clave del payload es `duration_s` literal porque `rules.py:88-91` la lee así para `duration_gte` — cualquier otro nombre rompe el criterio 5 en silencio; (6) los 4 comportamientos se quedan en `Severity.INFO` por defecto (D-01, cambio cero) — subirlos a WARNING habría activado la subida automática de clips a Google Drive. El checkpoint de calibración de umbrales con cámara real (Task 3) se difiere explícitamente — 8º checkpoint manual pendiente, no bloquea avanzar a la Fase 27
 
 ### Pendiente manual (no es código)
@@ -422,28 +434,30 @@ Fase 23, la Fase 25 y la Fase 26 por completamente validados en producción.
 ## Session Continuity
 
 Last session: 2026-08-17
-Stopped at: Ejecutado 27-04-PLAN.md (wave 1, sin dependencias de código).
-  `DetectionStatRepo.hourly_baseline()` (`backend/storage/repositories.py`): subconsulta
-  `per_day` que suma `unique_tracks` por `(dia, hora)` con `func.strftime`, query externa que
-  promedia esos totales por hora, `sample_days`/`mins` en el dict devuelto, parámetro `until`
-  opcional para excluir la hora en curso (parcial) del baseline — contrato LOCKED que
-  consumirá `27-09`. Todos los parámetros ligados; sin índice nuevo (`git diff --stat
-  backend/storage/models.py` vacío, confirma la medición de 27-RESEARCH Q7: p50 11,2 ms a
-  525.600 filas). `kind` en el `Zone` legacy (`backend/database.py`, copiado carácter a
-  carácter de `storage/models.py:168`) y en `get_zones()` — la función que `main.py:468` usa
-  para alimentar al `DetectionWorker` — sin tocar `upsert_zone` ni el endpoint `/api/zones`
-  (fuera de alcance). 7 tests nuevos: 5 de `hourly_baseline` (orden de agregación con datos
-  repartidos en varios minutos por día, `sample_days` con un solo día, `until` excluyendo la
-  hora en curso, aislamiento por `camera_id`, ventana vacía sin excepción) en
-  `tests/test_repositories.py`, más `TEST_config_repo_roundtrip_list` (primer test de
-  `ConfigRepo`, roundtrip de `list[int]` en columna JSON) y `TEST_get_zones_returns_kind`
-  (`tests/test_database.py`). Suite completa 487/487 (480 previos + 7). BEH-06/07/09 NO se
-  marcan `[x]`: el ROADMAP asigna esa puerta a `27-11` (cierra BEH-06..BEH-09 de una vez con
-  trazabilidad a los 6 criterios de éxito). Sin desviaciones de código — ver
-  `27-04-SUMMARY.md`. Quedan `27-05`..`27-11` (`emit_object`, cableado de `_analyze_objects`,
-  router de clases activas, overlay MJPEG, endpoint de contexto, control de clases en el
-  dashboard y puerta de fase). Siguiente: `/gsd:execute-phase 27` para continuar con `27-05`.
-Resume file: ninguno registrado todavía para `27-06` — generar/ejecutar con
+Stopped at: Ejecutado 27-06-PLAN.md (wave 3, depende de 27-01+27-03+27-04+27-05).
+  `_analyze_objects` cableado en `DetectionWorker._loop` justo despues de `_analyze_behavior`:
+  construye `ObjectObservation`/`PersonObservation` con anclas `BOTTOM_CENTER`, recoge
+  `findings += self._objects.prune(...)` explicitamente (el retorno NO se ignora, a
+  diferencia de `BehaviorAnalyzer.prune`), y emite via `EventEngine.emit_object` fuera del
+  `try` de aislamiento de fallos. `_excluded_object_ids`/`_object_zone_ids` reutilizan
+  `sv.PolygonZone.trigger()` sobre los mismos `_zone_states` (nueva clave `kind` propagada en
+  `_rebuild_zone_states`), sin geometria propia. `CameraPipeline.__init__`: `self.objects`/
+  `self.object_tracker` construidos ANTES de `_make_detection`, gateados por
+  `objects_enabled` — cuarto precedente de estado que sobrevive a un reinicio del
+  `DetectionWorker` (FSM Fase 24, ReID Fase 25, `BehaviorAnalyzer` Fase 26). Fachada
+  `set_detection_classes`/`get_object_stats`/`get_object_boxes`; `set_detection_classes` muta
+  detector+reparto sin reiniciar ningun worker (test explicito `stop.assert_not_called()`).
+  `backend/main.py` propaga los 10 parametros `object_*`/`objects_enabled`. 8 tests nuevos
+  `TEST_*` en `tests/test_detection_worker.py`. Suite completa 500/500 (492 previos + 8). Dos
+  discrepancias de conteo en los `<verify>` automatizados del propio plan, documentadas y sin
+  impacto funcional (ver `27-06-SUMMARY.md` § Deviations): `grep -c "object_" backend/main.py`
+  da 9 no >=10 (`objects_enabled` no matchea por la "s" de plural; nombre fijado por el
+  contrato LOCKED) y `pytest -k object` recoge 12 no >=13 (3 de los 7 tests de `27-03` no
+  contienen la palabra "object" en su nombre). BEH-06/07 NO se marcan `[x]`: el ROADMAP
+  asigna esa puerta a `27-11`. Quedan `27-07`..`27-11` (router de clases activas, overlay
+  MJPEG, endpoint de contexto, control de clases en el dashboard y puerta de fase). Siguiente:
+  `/gsd:execute-phase 27` para continuar con `27-07`.
+Resume file: ninguno registrado todavía para `27-07` — generar/ejecutar con
   `/gsd:execute-phase 27`.
 
 Sesión anterior (2026-08-17): Ejecutado 27-04-PLAN.md (media movil horaria + kind de zona,
