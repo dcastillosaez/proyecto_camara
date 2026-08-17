@@ -498,7 +498,7 @@ Plans:
   5. Escena con mochila abandonada emite un único OBJECT_LEFT; con la persona presente no lo emite
   6. Activar 6 clases no incrementa la latencia de inferencia más de un 15%
 **Spec**: SPEC_v2.md Phase 27
-**Plans**: 6/11 plans complete
+**Plans**: 7/11 plans complete
 Plans:
 - [x] 27-01-PLAN.md — `ObjectAnalyzer` (dominio puro): `OBJECT_LEFT`/`OBJECT_REMOVED` con guarda de warmup, zona de exclusión y gracia de oclusión
 - [x] 27-02-PLAN.md — D-03 + umbrales `object_*` en `config.py` + `validate_object_params` + `PersonDetector.set_classes()`
@@ -506,7 +506,7 @@ Plans:
 - [x] 27-04-PLAN.md — `DetectionStatRepo.hourly_baseline()` — media móvil por franja horaria
 - [x] 27-05-PLAN.md — `EventEngine.emit_object()` + `config_changed()`
 - [x] 27-06-PLAN.md — Cableado: `DetectionWorker._analyze_objects` + zonas de exclusión
-- [ ] 27-07-PLAN.md — `backend/api/v2/detection.py` — router GET/PUT de clases activas
+- [x] 27-07-PLAN.md — `backend/api/v2/detection.py` — router GET/PUT de clases activas
 - [ ] 27-08-PLAN.md — Overlay de objetos trackeados en el feed MJPEG
 - [ ] 27-09-PLAN.md — `GET /api/v2/analytics/context` — resumen de contexto de escena
 - [ ] 27-10-PLAN.md — Control de clases activas en el dashboard
