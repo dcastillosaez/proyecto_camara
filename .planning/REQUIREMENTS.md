@@ -234,7 +234,7 @@
 - [x] **BEH-04**: El sistema emite entrada y salida de zona por track con tiempo de permanencia
 - [x] **BEH-05**: Cada evento de comportamiento incluye las magnitudes que lo justifican
 - [ ] **BEH-06**: Las clases detectadas son configurables más allá de "persona" (bicicleta, coche, moto, mochila, maleta)
-- [ ] **BEH-07**: El sistema detecta objetos abandonados y objetos retirados
+- [x] **BEH-07**: El sistema detecta objetos abandonados y objetos retirados
 - [ ] **BEH-08**: El sistema expone un resumen de contexto de escena: hora, zona, personas totales, conocidas, desconocidas y nivel de actividad
 - [ ] **BEH-09**: El nivel de actividad se calcula contra la media móvil histórica de esa franja horaria
 

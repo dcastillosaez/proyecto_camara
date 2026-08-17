@@ -4,13 +4,13 @@ milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
 stopped_at: "Ejecutado 26-05-PLAN.md (criterio 5 when.event desde YAML real + puerta de fase). tests/test_rule_engine.py: 3 tests nuevos (TEST_behavior_events_usable_as_when_event, TEST_behavior_duration_gte_reads_duration_s, TEST_behavior_zone_filter_uses_first_class_zone_id) prueban el camino real (YAML en tmp_path + load_rules + evaluate) para los 4 eventos de comportamiento, sin tocar backend/events/rules.py ni config/rules.yaml. Suite completa 454/454. Los 5 criterios de exito del ROADMAP trazados a comandos pytest -k que pasan. BEH-01..BEH-05 ya estaban [x] en REQUIREMENTS.md, confirmado. Fase 26 completa: 5/5 planes. El checkpoint de calibracion de umbrales con camara real (Task 3) queda DIFERIDO — 8o checkpoint manual pendiente, no bloquea avanzar a la Fase 27. Sin desviaciones de codigo."
-last_updated: "2026-08-16"
-last_activity: 2026-08-16
+last_updated: "2026-08-17"
+last_activity: 2026-08-17
 progress:
   total_phases: 22
   completed_phases: 10
-  total_plans: 29
-  completed_plans: 29
+  total_plans: 30
+  completed_plans: 30
   percent: 45
 previous_milestone:
   name: v1.2
@@ -61,7 +61,7 @@ Status: Bloque A cerrado (310/310), Fase 23 (Migración a InsightFace/
   `run_speed_px_s`/`loiter_radius_px`/`immobile_radius_px` contra
   cámara real — los defaults de SPEC_v2.md §5.7 ya están cubiertos por
   tests deterministas con trayectorias sintéticas).
-Last activity: 2026-08-16
+Last activity: 2026-08-17
 
 Progress v2.0: [████░░░░░░] ~45% (10/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
@@ -81,8 +81,13 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 ## Siguiente paso
 
 ```
-/gsd:plan-phase 27
+/gsd:execute-phase 27
 ```
+
+Fase 27 (Multi-clase y contexto de escena) en progreso: `27-01` completo
+(`ObjectAnalyzer`, dominio puro), quedan `27-02`..`27-07` (config, tracker
+por sustraccion, media movil horaria, `emit_object`, cableado y router de
+clases activas).
 
 La Fase 24 (Identidad temporal — votación y máquina de estados) está
 **completa**: 6/6 planes (`24-01`..`24-06`), FACE-07..FACE-11 cerrados,
@@ -253,7 +258,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
 | 25 — Re-identificación (ReID) | B | ✓ Completa (código) | 2026-08-15 | ⧗ Tasa de falsos positivos con dos personas reales (checkpoint 25-06 Task 2) |
 | 26 — Análisis de comportamiento | B | ✓ Completa (código) | 2026-08-16 | ⧗ Calibración de umbrales con cámara real (checkpoint 26-05 Task 3) |
-| 27 — Multi-clase y contexto de escena | B | — Sin planificar | — | Depende de 26 |
+| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (1/7 planes) | — | 6 planes restantes (27-02..27-07) |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
 | 29 — Vista de operaciones | C | — Sin planificar | — | Depende de 28 |
 | 30 — Event Timeline y alertas | C | — Sin planificar | — | Depende de 29 |
@@ -299,7 +304,13 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa (44 ficheros en `tests/`): **454/454 passing** (última ejecución 2026-08-16, tras `26-05`: +3 tests `TEST_behavior_*` en `tests/test_rule_engine.py` — carga de las 4 reglas de comportamiento desde YAML real vía `load_rules`, `duration_gte` leyendo `duration_s` con prueba negativa explícita del nombre equivocado, y filtro `zone` sobre `zone_id` de primer nivel — sin cambios en `backend/events/rules.py` ni `config/rules.yaml`, ver `26-05-SUMMARY.md`). Cifra anterior 451/451 (tras `26-04`: +11 tests `TEST_behavior_*` en `tests/test_detection_worker.py` — 4 de cableado de `_analyze_behavior`/`_zone_membership_snapshot` (CROWD_DETECTED real, ausencia de `behavior`, fallo aislado, reutilización de `st["inside"]`) + 3 de supervivencia/desactivación/umbrales vía `CameraPipeline` (mismo molde que `TEST_fsm_survives_worker_restart` de la Fase 24) — sin cambios en `backend/perception/behavior.py` ni `backend/events/engine.py`, ver `26-04-SUMMARY.md`). Cifra anterior 444/444 (tras `26-03`: +7 tests — 3 `TEST_emit_behavior_*` y 3 `TEST_zone_dwell_*` en `tests/test_event_engine.py` (traducción de los 4 `BehaviorKind`, magnitudes en payload, severidad INFO por defecto, `duration_s` en `ZONE_EXITED` con/sin reloj monotónico) + 1 `TEST_zone_entry_at_bounded` en `tests/test_memory_bounds.py` (10.000 entradas/salidas efímeras en dos zonas, ambos dicts quedan vacíos)). Cifra anterior 437/437 (tras `26-02`: +3 tests `TEST_behavior_*` en `tests/test_config.py` — defaults de los 10 parámetros `behavior_*`, positividad de umbrales, y cota de `run_window_secs <= 12.0`). Cifra anterior 434/434 (tras `26-01`: +21 tests — 19 `TEST_*` nuevos en `tests/test_behavior_analyzer.py` (las 4 reglas de `BehaviorAnalyzer`, sus latches, el payload de magnitudes y 4 tests de trayectoria con igualdad de conjunto para el criterio 2 del ROADMAP) + 2 tests de cota en `tests/test_memory_bounds.py` (`TEST_behavior_state_bounded`/`..._without_prune`)). Cifra anterior 413/413 (última ejecución 2026-08-15, tras `25-06`: sin cambios de código, puerta de fase pura — misma cifra que tras `25-05`: +6 tests — 4 `TEST_reid_*` en `tests/test_config.py` (defaults, umbral fuera de rango, parámetros temporales/cota, extensión+traversal del modelo) y 2 en `tests/test_recognition_worker.py` (supervivencia de motor/galería a reinicio de worker, `reid_enabled=False`)). Cifra anterior 407/407 tras `25-04` (+5 tests `TEST_*` en `tests/test_recognition_worker.py` — presupuesto de inferencias criterio 5, modo solo-observación criterio 4, contadores en `stats`, compatibilidad sin ReID, y el end-to-end del criterio 3). Cifra anterior 402/402 tras `25-03` (+12 tests `TEST_*` en `tests/test_track_gallery.py` (nuevo fichero, `TrackGallery` con vectores 512D de coseno exacto) + 2 tests de cota en `tests/test_memory_bounds.py`. Cifra anterior 388/388 tras `25-02` (+7 tests `TEST_reid*` en `tests/test_identity_state_machine.py` — herencia, no-voto, no-secuestro, no-interferencia, ausencia de identidad perdida, `IDENTITY_LOST` espurio y barrido de rancios). 381/381 tras `25-01` (+4 tests en `tests/test_reid_engine.py`); 377/377 verificada en `24-06`).
+Suite completa: **468/468 passing** (última ejecución 2026-08-17, tras `27-01`: +11 tests
+`TEST_*` en `tests/test_object_analyzer.py` (nuevo fichero: los 9 comportamientos de BEH-07
+— `OBJECT_LEFT` tras umbral, latch por episodio, igualdad de conjunto, supresion por
+persona cercana, guardas de warmup y zona de exclusion, `OBJECT_REMOVED` con/sin persona,
+gracia de oclusion, payload sin `None`) + 3 tests `TEST_object_analyzer_*` en
+`tests/test_memory_bounds.py` (doble guarda TTL+LRU con y sin `prune()`, incluida `_ignored`)
+— ver `27-01-SUMMARY.md`). Cifra anterior 454/454 (última ejecución 2026-08-16, tras `26-05`: +3 tests `TEST_behavior_*` en `tests/test_rule_engine.py` — carga de las 4 reglas de comportamiento desde YAML real vía `load_rules`, `duration_gte` leyendo `duration_s` con prueba negativa explícita del nombre equivocado, y filtro `zone` sobre `zone_id` de primer nivel — sin cambios en `backend/events/rules.py` ni `config/rules.yaml`, ver `26-05-SUMMARY.md`). Cifra anterior 451/451 (tras `26-04`: +11 tests `TEST_behavior_*` en `tests/test_detection_worker.py` — 4 de cableado de `_analyze_behavior`/`_zone_membership_snapshot` (CROWD_DETECTED real, ausencia de `behavior`, fallo aislado, reutilización de `st["inside"]`) + 3 de supervivencia/desactivación/umbrales vía `CameraPipeline` (mismo molde que `TEST_fsm_survives_worker_restart` de la Fase 24) — sin cambios en `backend/perception/behavior.py` ni `backend/events/engine.py`, ver `26-04-SUMMARY.md`). Cifra anterior 444/444 (tras `26-03`: +7 tests — 3 `TEST_emit_behavior_*` y 3 `TEST_zone_dwell_*` en `tests/test_event_engine.py` (traducción de los 4 `BehaviorKind`, magnitudes en payload, severidad INFO por defecto, `duration_s` en `ZONE_EXITED` con/sin reloj monotónico) + 1 `TEST_zone_entry_at_bounded` en `tests/test_memory_bounds.py` (10.000 entradas/salidas efímeras en dos zonas, ambos dicts quedan vacíos)). Cifra anterior 437/437 (tras `26-02`: +3 tests `TEST_behavior_*` en `tests/test_config.py` — defaults de los 10 parámetros `behavior_*`, positividad de umbrales, y cota de `run_window_secs <= 12.0`). Cifra anterior 434/434 (tras `26-01`: +21 tests — 19 `TEST_*` nuevos en `tests/test_behavior_analyzer.py` (las 4 reglas de `BehaviorAnalyzer`, sus latches, el payload de magnitudes y 4 tests de trayectoria con igualdad de conjunto para el criterio 2 del ROADMAP) + 2 tests de cota en `tests/test_memory_bounds.py` (`TEST_behavior_state_bounded`/`..._without_prune`)). Cifra anterior 413/413 (última ejecución 2026-08-15, tras `25-06`: sin cambios de código, puerta de fase pura — misma cifra que tras `25-05`: +6 tests — 4 `TEST_reid_*` en `tests/test_config.py` (defaults, umbral fuera de rango, parámetros temporales/cota, extensión+traversal del modelo) y 2 en `tests/test_recognition_worker.py` (supervivencia de motor/galería a reinicio de worker, `reid_enabled=False`)). Cifra anterior 407/407 tras `25-04` (+5 tests `TEST_*` en `tests/test_recognition_worker.py` — presupuesto de inferencias criterio 5, modo solo-observación criterio 4, contadores en `stats`, compatibilidad sin ReID, y el end-to-end del criterio 3). Cifra anterior 402/402 tras `25-03` (+12 tests `TEST_*` en `tests/test_track_gallery.py` (nuevo fichero, `TrackGallery` con vectores 512D de coseno exacto) + 2 tests de cota en `tests/test_memory_bounds.py`. Cifra anterior 388/388 tras `25-02` (+7 tests `TEST_reid*` en `tests/test_identity_state_machine.py` — herencia, no-voto, no-secuestro, no-interferencia, ausencia de identidad perdida, `IDENTITY_LOST` espurio y barrido de rancios). 381/381 tras `25-01` (+4 tests en `tests/test_reid_engine.py`); 377/377 verificada en `24-06`).
 La tabla por módulo de v1.2 (38 tests) quedó obsoleta al crecer la suite en v2.0 —
 ver `pytest tests/ -v` para el desglose actual por fichero.
 
@@ -342,6 +353,7 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - EventEngine.emit_behavior (Fase 26, 26-03): nunca pasa `severity=` explícita, para que `@model_validator` de `Event` aplique el default `INFO` del catálogo (D-01) y los comportamientos no crucen `upload_min_severity="warning"`; `process_zone()` añade `now_monotonic` AL FINAL de la firma (aditivo, compatible con el único llamador posicional) porque `captured_at`/`processed_at` son conceptos privados de latencia OBS-03, no un reloj semántico — restar dos `datetime.datetime.now()` sería sensible a saltos de reloj por NTP; `duration_s` es la clave literal del payload porque `rules.py:88-91` la lee tal cual para `duration_gte`; `_zone_entry_at` se acota con `pop()` en el mismo bucle que emite `ZONE_EXITED` (mismo "seguro de vida" que `TrackGallery`/`BehaviorAnalyzer` de las Fases 25/26)
 - DetectionWorker/manager.py (Fase 26, 26-04): `_analyze_behavior` toma los ids del frame de `tracked.tracker_id` directamente, nunca de `self._registry.frame_ids()` — `set_frame_ids()` se llama dentro de `_emit_track_lifecycle`, que corre DESPUÉS en `_loop`, así que leer `frame_ids()` en `_analyze_behavior` vería el frame anterior; `self.behavior` se construye en `CameraPipeline.__init__` ANTES del bloque `if detector is not None and tracker is not None`, gateado solo por `behavior_enabled`, y se pasa como último kwarg dentro de `_make_detection` — mismo motivo que `identity_fsm`/`reid_gallery`: el `WorkerSupervisor` re-ejecuta la factoría en cada reinicio y construir el analizador dentro borraría las anclas y latches, produciendo una ráfaga de eventos duplicados
 - backend/config.py (Fase 26, 26-02): `validate_behavior_params` acota `run_window_secs <= 12.0` — es la misma clase de guarda que `validate_identity_params` (impide una configuración que nunca podría cumplirse), aquí contra el límite real de `centroid_history` (`tracking.py:47`, `deque(maxlen=150)`) al peor caso de FPS (`rate.py:26`, `AdaptiveRate.STEPS[0]=12.0`) — sin esta cota, un operador podría configurar una ventana de RUNNING que jamás se calcularía; `loiter_require_zone=False` por defecto (fallback D-02) para que una instalación limpia sin zonas configuradas siga pudiendo emitir LOITERING
+- ObjectAnalyzer (Fase 27, 27-01): `ObjectObservation`/`PersonObservation` (dataclasses con 6 atributos) en vez de los `dict[int, tuple]` de `BehaviorAnalyzer` — varios dicts paralelos por objeto serían un criadero de bugs de desincronización; `prune()` devuelve `list[ObjectFinding]` (a diferencia de `BehaviorAnalyzer.prune` que devuelve `None`) porque `OBJECT_REMOVED` se decide ahí, no en `analyze()`, para exigir `gone_secs` de gracia contra oclusiones de un frame; `stable` se deriva de `object_gone_secs` sin parámetro nuevo (mínimo tiempo quieto para considerarse "establecido" = la misma ventana de gracia con la que se declara la desaparición); asimetría deliberada entre el radio de persona en `OBJECT_LEFT` (negativo: pasarse de grande suprime eventos, lado seguro) y en `OBJECT_REMOVED` (positivo: pasarse de grande es peligroso)
 - Puerta de fase (Fase 26, 26-05): no hizo falta ningún fix de código — `tests/test_rule_engine.py` ganó 3 tests que recorren el camino real (YAML en `tmp_path` + `load_rules` + `evaluate`) para demostrar el criterio 5 sin tocar `backend/events/rules.py` ni `config/rules.yaml`, y BEH-01..BEH-05 ya estaban `[x]` desde planes anteriores. Las seis decisiones clave de la fase quedan resumidas aquí: (1) el historial de 120 s se disuelve con agregados incrementales O(1) en vez de ampliar `history_len` (584 B/track medidos frente a 141,8 KB si se hubiera ampliado a 1000, `tracking.py` intacto); (2) los CUATRO comportamientos llevan latch por episodio, no solo CROWD — sin él, una persona parada 10 min generaría miles de eventos IMMOBILE, y `debounce_secs` de `rules.yaml` no sustituye al latch porque actúa después de persistir y difundir; (3) `analyze()` devuelve `list[BehaviorFinding]`, no `list[Event]` (D-3, corrige SPEC §5.7) — `perception/` no conoce `camera_id` ni el reloj de pared; (4) semántica de zonas: LOITERING cae a escena implícita (`zone_id=None`) sin zonas configuradas salvo `loiter_require_zone=True` (D-02), LOITERING e IMMOBILE coexisten (D-03), y con zonas solapadas se emite un finding por zona (D-04); (5) la clave del payload es `duration_s` literal porque `rules.py:88-91` la lee así para `duration_gte` — cualquier otro nombre rompe el criterio 5 en silencio; (6) los 4 comportamientos se quedan en `Severity.INFO` por defecto (D-01, cambio cero) — subirlos a WARNING habría activado la subida automática de clips a Google Drive. El checkpoint de calibración de umbrales con cámara real (Task 3) se difiere explícitamente — 8º checkpoint manual pendiente, no bloquea avanzar a la Fase 27
 
 ### Pendiente manual (no es código)
@@ -360,8 +372,21 @@ Fase 23, la Fase 25 y la Fase 26 por completamente validados en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-16
-Stopped at: Ejecutado 26-05-PLAN.md (criterio 5 `when.event` desde YAML
+Last session: 2026-08-17
+Stopped at: Ejecutado 27-01-PLAN.md (wave 1, sin dependencias). `backend/perception/objects.py`
+  (320 líneas): `ObjectKind`, `ObjectObservation`, `PersonObservation`, `ObjectFinding`
+  (contratos LOCKED que consumirán `27-05`/`27-06`) y `ObjectAnalyzer` con `analyze()`/
+  `prune()`/`_enforce_cap()`, mismo molde que `BehaviorAnalyzer` de la Fase 26 (dominio puro,
+  reloj inyectado, sin `time`/`numpy`/`backend.*`). 11 tests nuevos en
+  `tests/test_object_analyzer.py` (los 9 comportamientos de BEH-07) + 3 tests de cota de
+  memoria en `tests/test_memory_bounds.py` (con y sin `prune()`, incluida `_ignored`). Suite
+  completa 468/468 (454 previos + 14). `behavior.py` sin cambios. BEH-07 marcado `[x]` en
+  `REQUIREMENTS.md`. Sin desviaciones de código — ver `27-01-SUMMARY.md`. Quedan `27-02`..
+  `27-07` (config, tracker por sustracción, media móvil horaria, `emit_object`, cableado y
+  router de clases activas). Siguiente: `/gsd:execute-phase 27` para continuar con `27-02`.
+Resume file: `.planning/phases/27-multi-clase-y-contexto-de-escena/27-02-PLAN.md`
+
+Sesión anterior (2026-08-16): Ejecutado 26-05-PLAN.md (criterio 5 `when.event` desde YAML
   real + puerta de fase, wave 4, depende de `26-01`..`26-04`). Los 3
   tasks: (1) `tests/test_rule_engine.py` gana `BEHAVIOR_RULES_YAML`
   (4 reglas, una por evento de comportamiento) y 3 tests que recorren
