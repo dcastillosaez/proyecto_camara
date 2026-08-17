@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import cv2
 import numpy as np
@@ -41,10 +41,16 @@ class StreamingWorker:
         sub: Subscription,
         registry: TrackRegistry,
         tracker: PersonTracker,
+        object_boxes: Callable[[], list[dict]] | None = None,
     ) -> None:
         self._sub = sub
         self._registry = registry
         self._tracker = tracker
+        # Objetos trackeados a dibujar (Fase 27, BEH-06). Callable de solo lectura, NO un
+        # segundo registry: CameraPipeline.get_object_boxes ya delega en
+        # DetectionWorker.get_object_boxes() bajo self._lock (27-03/27-06). Duplicar ese
+        # estado aqui divergiria del que usa /api/v2/analytics/context (27-09).
+        self._object_boxes = object_boxes
 
         self._running = False
         self._thread: threading.Thread | None = None
@@ -160,4 +166,13 @@ class StreamingWorker:
                 out, text, tuple(pts32[0]),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1,
             )
+
+        if self._object_boxes is not None:
+            for b in self._object_boxes():
+                x1, y1, x2, y2 = map(int, b["bbox"])
+                cv2.rectangle(out, (x1, y1), (x2, y2), (255, 0, 255), 2)
+                cv2.putText(
+                    out, f'{b["class_name"]} #{b["track_id"]}', (x1, max(0, y1 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 255), 1,
+                )
         return out
