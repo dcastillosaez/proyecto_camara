@@ -20,6 +20,7 @@ import numpy as np
 import supervision as sv
 
 from backend.observability.metrics import metrics as _metrics
+from backend.perception.objects import ObjectObservation, PersonObservation
 from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.tracking import TrackRegistry
 
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from backend.events.engine import EventEngine
     from backend.observability.latency import LatencyTracker
     from backend.perception.behavior import BehaviorAnalyzer
+    from backend.perception.objects import ObjectAnalyzer
     from backend.pipeline.broker import Subscription
     from backend.tracker import ObjectTracker, PersonTracker
 
@@ -64,6 +66,7 @@ class DetectionWorker:
         behavior: "BehaviorAnalyzer | None" = None,
         object_tracker: "ObjectTracker | None" = None,
         object_class_ids: set[int] | None = None,
+        objects: "ObjectAnalyzer | None" = None,
     ) -> None:
         self._sub = sub
         self._detector = detector
@@ -75,6 +78,7 @@ class DetectionWorker:
         self._latency_tracker = latency_tracker
         self._behavior = behavior
         self._object_tracker = object_tracker
+        self._objects = objects
         self._object_class_ids: frozenset[int] = frozenset(object_class_ids or ())
         # Callable[[], bool] opcional — decide si un cruce es intrusion
         # (RTSPStream._is_in_schedule). Sin ella, nunca se marca intrusion.
@@ -227,6 +231,7 @@ class DetectionWorker:
             self._registry.update_from_detections(tracked, now)
             self._update_zones_and_heat(tracked, frame.image.shape, frame.captured_at, now)
             self._analyze_behavior(tracked, frame.captured_at, now)      # NUEVO (Fase 26)
+            self._analyze_objects(obj_tracked, tracked, frame.captured_at, now)  # NUEVO (Fase 27)
             self._update_object_boxes(obj_tracked)
             self._emit_crossings(crossings, frame.captured_at, now)
             self._emit_track_lifecycle(tracked, frame.captured_at, now)
@@ -301,6 +306,101 @@ class DetectionWorker:
         wall_now = datetime.datetime.now()
         for f in findings:
             self._event_engine.emit_behavior(f, wall_now, captured_at, processed_at)
+
+    def _analyze_objects(self, obj_tracked: Any, tracked: Any, captured_at: float, processed_at: float) -> None:
+        """Analisis de objetos abandonados/retirados del frame (Fase 27, BEH-07).
+
+        Mismo patron de aislamiento de fallos que _analyze_behavior (que a su vez viene de
+        RecognitionWorker._sync_identity, recognition.py:366-374): un fallo del analizador
+        nunca mata el hilo de deteccion, solo incrementa el contador de excepciones que ya
+        expone /api/v2/cameras/{id}/health.
+
+        Las distancias se miden entre anclas BOTTOM_CENTER, no entre centroides: una
+        mochila en el suelo junto a una persona de pie tiene el centroide desplazado media
+        altura de persona aunque se esten tocando (27-RESEARCH.md Q1). Es la misma
+        convencion que ya usan el LineZone (tracker.py:41) y el heatmap (linea 312).
+        """
+        if self._objects is None or self._event_engine is None or obj_tracked is None:
+            return
+        obj_ids = obj_tracked.tracker_id
+        if obj_ids is None:
+            return
+        try:
+            excluded = self._excluded_object_ids(obj_tracked)
+            zone_of = self._object_zone_ids(obj_tracked)
+            names = obj_tracked.data.get("class_name") if obj_tracked.data else None
+            anchors = obj_tracked.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
+            observations: list[ObjectObservation] = []
+            for i, raw_tid in enumerate(obj_ids):
+                tid = int(raw_tid)
+                x, y = anchors[i]
+                class_id = int(obj_tracked.class_id[i]) if obj_tracked.class_id is not None else -1
+                class_name = str(names[i]) if names is not None else str(class_id)
+                x1, y1, x2, y2 = obj_tracked.xyxy[i]
+                observations.append(ObjectObservation(
+                    track_id=tid, x=float(x), y=float(y),
+                    class_id=class_id, class_name=class_name,
+                    bbox=(float(x1), float(y1), float(x2), float(y2)),
+                    zone_id=zone_of.get(tid),
+                    excluded=tid in excluded,
+                ))
+            persons: list[PersonObservation] = []
+            person_ids = tracked.tracker_id
+            if person_ids is not None and len(tracked):
+                person_anchors = tracked.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
+                for i, raw_tid in enumerate(person_ids):
+                    px, py = person_anchors[i]
+                    y1, y2 = tracked.xyxy[i][1], tracked.xyxy[i][3]
+                    persons.append(PersonObservation(
+                        track_id=int(raw_tid), x=float(px), y=float(py),
+                        height_px=float(y2 - y1),
+                    ))
+            findings = self._objects.analyze(observations, persons, processed_at)
+            findings += self._objects.prune(processed_at, {int(t) for t in obj_ids})
+        except Exception:
+            self._exceptions += 1
+            logger.exception("DetectionWorker: analisis de objetos fallo")
+            return
+        wall_now = datetime.datetime.now()
+        for f in findings:
+            self._event_engine.emit_object(f, wall_now, captured_at, processed_at)
+
+    def _excluded_object_ids(self, obj_tracked: Any) -> set[int]:
+        """Ids de objeto que caen dentro de una zona kind == "exclude_objects".
+
+        Se usa sv.PolygonZone.trigger() sobre los mismos _zone_states que ya existen en
+        vez de escribir un test punto-en-poligono propio: recalcularlo duplicaria la
+        inferencia geometrica y podria divergir del conteo de get_zone_stats()
+        (mismo motivo que _zone_membership_snapshot, linea 229).
+        """
+        ids = obj_tracked.tracker_id
+        excluded: set[int] = set()
+        if ids is None or len(obj_tracked) == 0:
+            return excluded
+        with self._lock:
+            states = list(self._zone_states)
+        for st in states:
+            if st.get("kind") != "exclude_objects":
+                continue
+            mask = st["zone"].trigger(obj_tracked)
+            if len(mask):
+                excluded |= {int(ids[i]) for i in np.flatnonzero(mask)}
+        return excluded
+
+    def _object_zone_ids(self, obj_tracked: Any) -> dict[int, str | None]:
+        """Zona en la que cae cada objeto, para el zone_id del evento. None = escena."""
+        ids = obj_tracked.tracker_id
+        if ids is None or len(obj_tracked) == 0:
+            return {}
+        zone_of: dict[int, str | None] = {int(t): None for t in ids}
+        with self._lock:
+            states = list(self._zone_states)
+        for st in states:
+            mask = st["zone"].trigger(obj_tracked)
+            if len(mask):
+                for i in np.flatnonzero(mask):
+                    zone_of[int(ids[i])] = st["id"]
+        return zone_of
 
     def _zone_membership_snapshot(self) -> dict[str, set[int]]:
         """Track ids por zona de ESTE frame, reutilizando `st["inside"]` (T-26-*).
@@ -407,6 +507,7 @@ class DetectionWorker:
                 states.append({
                     "id": z["id"],
                     "name": z["name"],
+                    "kind": z.get("kind"),
                     "polygon": pts,
                     "zone": sv.PolygonZone(polygon=pts),
                     "inside": set(),
