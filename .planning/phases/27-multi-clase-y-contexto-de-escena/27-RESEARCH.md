@@ -1818,7 +1818,15 @@ tests de cota.
 
 ---
 
-## Open Questions
+## Open Questions — RESUELTAS con el usuario (`AskUserQuestion`, opción recomendada aceptada en las 5)
+
+1. **Overlay MJPEG**: SÍ dibujar los objetos, color distinto a las personas, vía referencia de solo lectura del `StreamingWorker` a `DetectionWorker.get_object_boxes()`.
+2. **Desactivar clase "persona"**: NO permitido. Checkbox de "persona" siempre marcado y deshabilitado en la UI; el backend rechaza con 400 cualquier PUT que no la incluya.
+3. **Precedencia `app_config` vs `YOLO_CLASSES`**: gana la base de datos. La env var solo es el valor inicial de una instalación limpia.
+4. **Severidad `OBJECT_LEFT`**: se mantiene `WARNING` (ya publicada en el catálogo desde la Fase 26). El checkpoint manual de esta fase debe verificar la tasa de falsos positivos antes de operar desatendido.
+5. **Métrica del baseline BEH-09**: `unique_tracks` por hora (flujo de personas distintas), no `max_concurrent`.
+
+Detalle original de cada pregunta (contexto para el planner):
 
 1. **¿Se dibujan los objetos en el overlay MJPEG?**
    - Lo que sabemos: `StreamingWorker._annotate` dibuja desde
