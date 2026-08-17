@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Ejecutado 27-04-PLAN.md (media movil horaria + kind de zona, wave 1, sin dependencias de codigo). backend/storage/repositories.py: DetectionStatRepo.hourly_baseline() con doble GROUP BY (subquery por dia+hora, luego avg por hora) sobre unique_tracks, parametro until para excluir la hora en curso, todo parametros ligados. backend/database.py: kind en el Zone legacy (copiado caracter a caracter de storage/models.py) y en get_zones(), que main.py:468 usa para alimentar al DetectionWorker. Sin indice nuevo ni migracion (confirmado con git diff --stat vacio en models.py/migrations.py). tests: +7 tests TEST_* (5 de hourly_baseline: orden de agregacion, sample_days, until, filtro por camara, ventana vacia; 1 de ConfigRepo roundtrip de list[int]; 1 de get_zones_returns_kind). Suite completa 487/487. BEH-06/07/09 NO se marcan en REQUIREMENTS.md: el ROADMAP asigna esa puerta a 27-11. Fase 27: 4/11 planes. Sin desviaciones."
+stopped_at: "Ejecutado 27-05-PLAN.md (emit_object + config_changed en EventEngine, wave 2, depende de 27-01). backend/events/engine.py: import de ObjectFinding/ObjectKind (direccion events/ -> perception/), _OBJECT_EVENT_TYPE (tabla de modulo, molde de _BEHAVIOR_EVENT_TYPE), emit_object() traduce ObjectKind.LEFT/REMOVED a OBJECT_LEFT/OBJECT_REMOVED con bbox como campo de primer nivel y payload via finding.magnitudes(), sin pasar severity= explicita (OBJECT_LEFT hereda WARNING del catalogo, OBJECT_REMOVED INFO); config_changed(now, **detail) publica CONFIG_CHANGED, primer emisor desde que existe en el catalogo (Fase 19). Deviation Rule 1: el docstring propuesto por el plan contenia las subcadenas literales 'severity=' y 'upload_min_severity=\"warning\"' que autoinvalidaban el propio <verify> automatizado (inspect.getsource + 'severity=' not in src) — reescrito sin la subcadena, mismo significado. 5 tests nuevos TEST_* en tests/test_event_engine.py (traduccion de los 2 ObjectKind, payload sin None con duration_s/class_name, severidad WARNING/INFO desde el catalogo, bbox de primer nivel fuera del payload, config_changed con detalle arbitrario). Suite completa 492/492. BEH-06/07 NO se marcan en REQUIREMENTS.md: el ROADMAP sigue asignando esa puerta a 27-11 (cierra BEH-06..BEH-09 de una vez con trazabilidad). Fase 27: 5/11 planes."
 last_updated: "2026-08-17"
 last_activity: 2026-08-17
 progress:
@@ -89,13 +89,16 @@ Fase 27 (Multi-clase y contexto de escena) en progreso: `27-01`
 `context_*` + `PersonDetector.set_classes()`), `27-03` (`ObjectTracker` +
 particion por clase en `DetectionWorker`, cierra el riesgo de que
 `sv.ByteTrack` — class-agnostic — transfiera un `tracker_id` entre persona
-y objeto) y `27-04` (`DetectionStatRepo.hourly_baseline()` — media movil
+y objeto), `27-04` (`DetectionStatRepo.hourly_baseline()` — media movil
 por franja horaria sobre `unique_tracks` con doble GROUP BY, sin indice
-nuevo — y `kind` en el `Zone` legacy que alimenta al `DetectionWorker`)
-completos. Quedan `27-05`..`27-11` (`emit_object`, cableado de
-`_analyze_objects`, router de clases activas, overlay MJPEG, endpoint de
-contexto, control de clases en el dashboard y puerta de fase que cierra
-BEH-06..BEH-09).
+nuevo — y `kind` en el `Zone` legacy que alimenta al `DetectionWorker`) y
+`27-05` (`EventEngine.emit_object()` — traduce `ObjectFinding` a
+`OBJECT_LEFT`/`OBJECT_REMOVED` sin forzar severidad, `bbox` como campo de
+primer nivel — y `EventEngine.config_changed()`, primer emisor de
+`CONFIG_CHANGED` desde que existe en el catalogo, Fase 19) completos.
+Quedan `27-06`..`27-11` (cableado de `_analyze_objects`, router de clases
+activas, overlay MJPEG, endpoint de contexto, control de clases en el
+dashboard y puerta de fase que cierra BEH-06..BEH-09).
 
 La Fase 24 (Identidad temporal — votación y máquina de estados) está
 **completa**: 6/6 planes (`24-01`..`24-06`), FACE-07..FACE-11 cerrados,
@@ -266,7 +269,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
 | 25 — Re-identificación (ReID) | B | ✓ Completa (código) | 2026-08-15 | ⧗ Tasa de falsos positivos con dos personas reales (checkpoint 25-06 Task 2) |
 | 26 — Análisis de comportamiento | B | ✓ Completa (código) | 2026-08-16 | ⧗ Calibración de umbrales con cámara real (checkpoint 26-05 Task 3) |
-| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (4/11 planes) | — | 7 planes restantes (27-05..27-11) |
+| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (5/11 planes) | — | 6 planes restantes (27-06..27-11) |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
 | 29 — Vista de operaciones | C | — Sin planificar | — | Depende de 28 |
 | 30 — Event Timeline y alertas | C | — Sin planificar | — | Depende de 29 |
@@ -312,7 +315,14 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **487/487 passing** (última ejecución 2026-08-17, tras `27-04`: +7 tests
+Suite completa: **492/492 passing** (última ejecución 2026-08-17, tras `27-05`: +5 tests
+`TEST_*` en `tests/test_event_engine.py` — `TEST_emit_object_translates_both_kinds`,
+`TEST_emit_object_payload_carries_magnitudes` (`duration_s`/`class_name` presentes,
+`person_distance_px` ausente al ser `None`), `TEST_emit_object_severity_comes_from_catalog`
+(`OBJECT_LEFT` en `Severity.WARNING`, `OBJECT_REMOVED` en `Severity.INFO`, sin que
+`emit_object` pase `severity=`), `TEST_emit_object_carries_bbox_as_first_class_field` y
+`TEST_config_changed_is_emitted_with_detail` — ver `27-05-SUMMARY.md`). Cifra anterior
+487/487 (última ejecución 2026-08-17, tras `27-04`: +7 tests
 `TEST_*` en `tests/test_repositories.py`/`tests/test_database.py` — 5 de
 `DetectionStatRepo.hourly_baseline()` (orden de agregacion con datos repartidos en varios
 minutos, `sample_days` con un solo dia, `until` excluyendo la hora en curso, aislamiento por
@@ -390,6 +400,7 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - PersonDetector.set_classes (Fase 27, 27-02): mutacion en caliente de `self._classes` (rebind atomico, sin lock) en vez de reconstruir el detector — mismo motivo que `PersonTracker.set_frame_rate`, pero con coste mayor si se reconstruyera: `WorkerSupervisor._check()` cuenta cualquier parada del worker como caida y tres reinicios en 60 s lo dejarian en `FAILED` permanente
 - ObjectAnalyzer (Fase 27, 27-01): `ObjectObservation`/`PersonObservation` (dataclasses con 6 atributos) en vez de los `dict[int, tuple]` de `BehaviorAnalyzer` — varios dicts paralelos por objeto serían un criadero de bugs de desincronización; `prune()` devuelve `list[ObjectFinding]` (a diferencia de `BehaviorAnalyzer.prune` que devuelve `None`) porque `OBJECT_REMOVED` se decide ahí, no en `analyze()`, para exigir `gone_secs` de gracia contra oclusiones de un frame; `stable` se deriva de `object_gone_secs` sin parámetro nuevo (mínimo tiempo quieto para considerarse "establecido" = la misma ventana de gracia con la que se declara la desaparición); asimetría deliberada entre el radio de persona en `OBJECT_LEFT` (negativo: pasarse de grande suprime eventos, lado seguro) y en `OBJECT_REMOVED` (positivo: pasarse de grande es peligroso)
 - ObjectTracker (Fase 27, 27-03): análogo por sustracción de `PersonTracker` — mismo `sv.ByteTrack`+`LOST_TRACK_BUFFER`+`set_frame_rate`, SIN `DetectionsSmoother` (congelaría `class_id` hasta 5 frames) y SIN `LineZone` (el conteo de la Fase 4, en producción, es solo de personas); `PersonTracker` queda intacto, verificado por `git diff` sin líneas `-`
+- EventEngine.emit_object (Fase 27, 27-05): nunca pasa `severity=` explicita — a diferencia de los 4 comportamientos de la Fase 26 (que se quedaron en INFO a proposito), aqui `OBJECT_LEFT` hereda `WARNING` del catalogo y por tanto SUBE EL CLIP A GOOGLE DRIVE al cruzar `upload_min_severity`; decision cerrada con el usuario (T-27-19). `bbox` viaja como campo de primer nivel del `Event` (los eventos de objeto llevan caja, los de comportamiento no). `config_changed()` es el primer emisor de `CONFIG_CHANGED` desde que existe en el catalogo (Fase 19) — unica mitigacion de repudio disponible sin roles en el sistema (ASVS V4, T-27-20)
 - DetectionWorker._split_by_class (Fase 27, 27-03): la partición por `class_id` (`np.isin` contra `PERSON_CLASS_IDS=(0,)`) ocurre DENTRO del `try` de inferencia ya existente, para que un `sv_dets` malformado siga cayendo en el mismo `except`; `PersonTracker.update` recibe siempre `person_dets`, nunca `sv_dets` completo — sin esto, un objeto (coche, mochila) sumaría al conteo de línea de la Fase 4 o entraría en `TrackRegistry`/reconocimiento facial. Los objetos NUNCA entran en `TrackRegistry`: su estado vive en `self._object_boxes` bajo `self._lock` (mismo patrón que `_zone_states`), con escritor único (hilo de detección) y lectores desde fuera (`get_object_boxes`/`get_object_stats`, copias defensivas). `self._rate.observe()` sigue midiendo solo la vía de personas — la vía de objetos nunca la llama, mismo patrón que ReID (Fase 25) y `BehaviorAnalyzer` (Fase 26)
 - Riesgo de primer orden verificado con test de reproducción (Fase 27, 27-03): `sv.ByteTrack` es class-agnostic (el tensor del matcher usa solo `xyxy`+`confidence`, `supervision/tracker/byte_tracker/core.py:104-110`) — `TEST_bytetrack_ids_do_not_migrate_between_classes` reproduce literalmente que un `sv.ByteTrack` COMPARTIDO transfiere el id de una mochila "perdida" a una persona casi en la misma caja, y demuestra que con `ObjectTracker`+`PersonTracker` separados no ocurre
 - Puerta de fase (Fase 26, 26-05): no hizo falta ningún fix de código — `tests/test_rule_engine.py` ganó 3 tests que recorren el camino real (YAML en `tmp_path` + `load_rules` + `evaluate`) para demostrar el criterio 5 sin tocar `backend/events/rules.py` ni `config/rules.yaml`, y BEH-01..BEH-05 ya estaban `[x]` desde planes anteriores. Las seis decisiones clave de la fase quedan resumidas aquí: (1) el historial de 120 s se disuelve con agregados incrementales O(1) en vez de ampliar `history_len` (584 B/track medidos frente a 141,8 KB si se hubiera ampliado a 1000, `tracking.py` intacto); (2) los CUATRO comportamientos llevan latch por episodio, no solo CROWD — sin él, una persona parada 10 min generaría miles de eventos IMMOBILE, y `debounce_secs` de `rules.yaml` no sustituye al latch porque actúa después de persistir y difundir; (3) `analyze()` devuelve `list[BehaviorFinding]`, no `list[Event]` (D-3, corrige SPEC §5.7) — `perception/` no conoce `camera_id` ni el reloj de pared; (4) semántica de zonas: LOITERING cae a escena implícita (`zone_id=None`) sin zonas configuradas salvo `loiter_require_zone=True` (D-02), LOITERING e IMMOBILE coexisten (D-03), y con zonas solapadas se emite un finding por zona (D-04); (5) la clave del payload es `duration_s` literal porque `rules.py:88-91` la lee así para `duration_gte` — cualquier otro nombre rompe el criterio 5 en silencio; (6) los 4 comportamientos se quedan en `Severity.INFO` por defecto (D-01, cambio cero) — subirlos a WARNING habría activado la subida automática de clips a Google Drive. El checkpoint de calibración de umbrales con cámara real (Task 3) se difiere explícitamente — 8º checkpoint manual pendiente, no bloquea avanzar a la Fase 27
@@ -432,8 +443,19 @@ Stopped at: Ejecutado 27-04-PLAN.md (wave 1, sin dependencias de código).
   `27-04-SUMMARY.md`. Quedan `27-05`..`27-11` (`emit_object`, cableado de `_analyze_objects`,
   router de clases activas, overlay MJPEG, endpoint de contexto, control de clases en el
   dashboard y puerta de fase). Siguiente: `/gsd:execute-phase 27` para continuar con `27-05`.
-Resume file: ninguno registrado todavía para `27-05` — generar/ejecutar con
+Resume file: ninguno registrado todavía para `27-06` — generar/ejecutar con
   `/gsd:execute-phase 27`.
+
+Sesión anterior (2026-08-17): Ejecutado 27-04-PLAN.md (media movil horaria + kind de zona,
+  wave 1, sin dependencias de codigo). backend/storage/repositories.py:
+  DetectionStatRepo.hourly_baseline() con doble GROUP BY (subquery por dia+hora, luego avg
+  por hora) sobre unique_tracks, parametro until para excluir la hora en curso, todo
+  parametros ligados. backend/database.py: kind en el Zone legacy (copiado caracter a
+  caracter de storage/models.py) y en get_zones(), que main.py:468 usa para alimentar al
+  DetectionWorker. Sin indice nuevo ni migracion (confirmado con git diff --stat vacio en
+  models.py/migrations.py). tests: +7 tests TEST_* (5 de hourly_baseline: orden de
+  agregacion, sample_days, until, filtro por camara, ventana vacia; 1 de ConfigRepo roundtrip
+  de list[int]; 1 de get_zones_returns_kind). Suite completa 487/487. Sin desviaciones.
 
 Sesión anterior (2026-08-17): Ejecutado 27-02-PLAN.md (wave 1, sin dependencias reales de
   código). D-03: `yolo_model_path` por defecto pasa de `yolov8n.pt` a `yolo26n.pt`
