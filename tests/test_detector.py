@@ -1,8 +1,12 @@
 """Tests for PersonDetector — bounding-box detection and frame annotation."""
 from __future__ import annotations
 
+import statistics
+import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import cv2
 import numpy as np
 import pytest
 import supervision as sv
@@ -185,3 +189,77 @@ def TEST_039_annotate_preserves_frame_shape(detector, blank_frame):
     det = Detection(x1=0, y1=0, x2=100, y2=100, confidence=0.5)
     annotated = detector.annotate(blank_frame, [det])
     assert annotated.shape == blank_frame.shape
+
+
+# ---------------------------------------------------------------------------
+# set_classes()
+# ---------------------------------------------------------------------------
+
+# ─── Mutacion en caliente: sin recarga de modelo ─────────────────────────────
+# set_classes() debe cambiar las clases que se pasan a la siguiente inferencia
+# sin reconstruir self._model (27-RESEARCH.md Q3: id(self._model) no cambia).
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_set_classes_changes_next_inference(detector, blank_frame):
+    """set_classes([0, 24]) cambia las clases de detect_sv() sin recargar el modelo."""
+    model_before = detector._model
+    detector.set_classes([0, 24])
+    mock_result = MagicMock()
+    detector._mock_model.return_value = [mock_result]
+    with patch("backend.detector.sv.Detections.from_ultralytics", return_value=sv.Detections.empty()):
+        detector.detect_sv(blank_frame)
+    _, kwargs = detector._mock_model.call_args
+    assert kwargs["classes"] == [0, 24]
+    assert detector._model is model_before
+
+
+# ---------------------------------------------------------------------------
+# Criterio 6 del ROADMAP (Fase 27): latencia con multiples clases activas
+# ---------------------------------------------------------------------------
+
+_BUS_JPG = Path("F:/Documentos/IA/Proyecto_Camara/.venv/Lib/site-packages/ultralytics/assets/bus.jpg")
+
+
+@pytest.fixture(scope="module")
+def real_detector() -> PersonDetector:
+    if not _BUS_JPG.exists():
+        pytest.skip(f"{_BUS_JPG} ausente — no se puede medir latencia real")
+    return PersonDetector(model_path="yolo26n.pt", confidence=0.45)
+
+
+@pytest.fixture(scope="module")
+def bench_frame() -> np.ndarray:
+    img = cv2.imread(str(_BUS_JPG))
+    if img is None:
+        pytest.skip(f"{_BUS_JPG} no se pudo leer con cv2.imread")
+    return cv2.resize(img, (1280, 720))
+
+
+def TEST_multiclass_latency_under_15_percent(real_detector, bench_frame):
+    """Criterio 6: activar las 6 clases del ROADMAP no puede subir la latencia de
+    inferencia mas de un 15 %. Se mide el p50, no un maximo ni una sola llamada: el
+    jitter del planificador de Windows en esta maquina compartida haria flaky un assert
+    sobre una muestra (misma metodologia que TEST_reid_latency_under_20ms).
+
+    Medido en 27-RESEARCH.md Q8 con yolo26n.pt sobre bus.jpg a 1280x720: 38,90 ms con 1
+    clase y 40,74 ms con 6 (+4,7 %, margen 3x sobre el criterio). El coste marginal es
+    practicamente cero porque `classes=` es un filtro de post-proceso dentro de la NMS
+    (predict.py:54-58) y yolo26n es NMS-free.
+    """
+    def _measure(classes: list[int]) -> float:
+        real_detector.set_classes(classes)
+        for _ in range(5):
+            real_detector.detect_sv(bench_frame)
+        samples = []
+        for _ in range(30):
+            t0 = time.perf_counter()
+            real_detector.detect_sv(bench_frame)
+            samples.append(time.perf_counter() - t0)
+        return statistics.median(samples)
+
+    p50_1 = _measure([0])
+    p50_6 = _measure([0, 1, 2, 3, 24, 28])
+    assert p50_6 < 1.15 * p50_1, (
+        f"criterio 6: p50 con 6 clases = {p50_6 * 1000:.2f} ms, con 1 clase = "
+        f"{p50_1 * 1000:.2f} ms, se exige < 15% de subida "
+        f"(medido en el research: 38,90 ms con 1 clase, 40,74 ms con 6)"
+    )

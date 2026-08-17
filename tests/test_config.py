@@ -331,3 +331,60 @@ def TEST_behavior_run_window_capped_by_history():
     with pytest.raises((ValidationError, ValueError)):
         Settings(run_window_secs=13.0)
     Settings(run_window_secs=12.0)
+
+
+# ─── D-03: yolo26n.pt sustituye a yolov8n.pt como default ────────────────────
+# Corrige la deriva de config.py:37 respecto a la decision de stack de
+# CLAUDE.md; ademas yolo26n.pt es end2end=True (NMS-free) y yolov8n.pt no, asi
+# que el criterio 6 (Fase 27) se mide sobre una ruta de post-proceso distinta.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_yolo_model_default_is_yolo26n():
+    """Settings().yolo_model_path es yolo26n.pt, no yolov8n.pt."""
+    assert Settings().yolo_model_path == "yolo26n.pt"
+
+
+# ─── Defaults de 27-RESEARCH.md § Bloque de configuracion ────────────────────
+# Los 10 parametros object_* y los 4 context_* deben coincidir exactamente con
+# los valores acordados en el research — cualquier deriva aqui rompe las
+# suposiciones de 27-03 (object_class_ids), 27-06 y 27-07/27-09 (endpoints).
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_object_defaults_match_research():
+    """Settings() expone los 10 object_* y los 4 context_* con los defaults del research."""
+    s = Settings()
+    assert s.object_class_ids == [1, 2, 3, 24, 28]
+    assert s.object_left_secs == 60.0
+    assert s.object_still_radius_px == 20.0
+    assert s.object_person_radius_px == 150.0
+    assert s.object_person_radius_ratio == 0.5
+    assert s.object_warmup_secs == 10.0
+    assert s.object_gone_secs == 3.0
+    assert s.object_person_window_secs == 10.0
+    assert s.object_max_tracks == 256
+    assert s.objects_enabled is True
+    assert s.context_baseline_days == 7
+    assert s.context_min_sample_days == 3
+    assert s.context_low_ratio == 0.5
+    assert s.context_high_ratio == 1.5
+
+
+# ─── Configuraciones imposibles rechazadas por validate_object_params ────────
+# object_class_ids=[0, 24] merece su propio caso: es la guarda que impide, por
+# configuracion, que las personas acaben en el tracker de objetos y se pierda
+# el LineZone de la Fase 4 (conteo por cruce de linea).
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_object_params_reject_impossible_values():
+    """object_left_secs<=0, clase 0 en object_class_ids, ids fuera de 0-79,
+    ratio fuera de [0,2], context_low_ratio>=context_high_ratio y
+    object_max_tracks<1 lanzan."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(object_left_secs=0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(object_class_ids=[0, 24])
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(object_class_ids=[80])
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(object_person_radius_ratio=3.0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(context_low_ratio=2.0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(object_max_tracks=0)
