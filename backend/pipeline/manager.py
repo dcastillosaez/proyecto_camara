@@ -15,6 +15,7 @@ import numpy as np
 
 from backend.perception.behavior import BehaviorAnalyzer
 from backend.perception.face.identity import IdentityStateMachine, TemporalVoter
+from backend.perception.objects import ObjectAnalyzer
 from backend.perception.reid.engine import ReIDEngine
 from backend.perception.reid.gallery import TrackGallery
 from backend.pipeline.broker import FrameBroker
@@ -26,6 +27,7 @@ from backend.pipeline.recording import RecordingWorker
 from backend.pipeline.streaming import StreamingWorker
 from backend.pipeline.supervisor import WorkerSupervisor
 from backend.pipeline.tracking import TrackRegistry
+from backend.tracker import ObjectTracker
 
 if TYPE_CHECKING:
     from backend.detector import PersonDetector
@@ -79,6 +81,16 @@ class CameraPipeline:
         immobile_radius_px: float = 20.0,
         crowd_threshold: int = 5,
         behavior_max_tracks: int = 256,
+        objects_enabled: bool = True,
+        object_class_ids: list[int] | None = None,
+        object_left_secs: float = 60.0,
+        object_still_radius_px: float = 20.0,
+        object_person_radius_px: float = 150.0,
+        object_person_radius_ratio: float = 0.5,
+        object_warmup_secs: float = 10.0,
+        object_gone_secs: float = 3.0,
+        object_person_window_secs: float = 10.0,
+        object_max_tracks: int = 256,
     ) -> None:
         self.camera_id = camera_id
         self.broker = FrameBroker()
@@ -103,6 +115,8 @@ class CameraPipeline:
         self.reid_engine: "ReIDEngine | None" = None
         self.reid_gallery: "TrackGallery | None" = None
         self.behavior: "BehaviorAnalyzer | None" = None
+        self.objects: "ObjectAnalyzer | None" = None
+        self.object_tracker: "ObjectTracker | None" = None
 
         if behavior_enabled:
             # El analizador vive FUERA de la factoria: WorkerSupervisor la re-ejecuta en
@@ -123,6 +137,28 @@ class CameraPipeline:
                 max_tracks=behavior_max_tracks,
             )
 
+        if objects_enabled:
+            # Analizador y tracker viven FUERA de la factoria: WorkerSupervisor la
+            # re-ejecuta en cada reinicio del DetectionWorker, y construirlos dentro
+            # borraria las anclas, los latches, la marca de arranque y el contador de ids
+            # de objeto. El agravante de esta fase respecto a la 26: reconstruirlos reabre
+            # la ventana de warmup y reinicia los track_id, asi que TODO el mobiliario fijo
+            # volveria a "aparecer" y a los 60 s se emitiria una rafaga de OBJECT_LEFT —
+            # que es Severity.WARNING (types.py:55) y por tanto SUBE UN CLIP A GOOGLE DRIVE
+            # POR CADA MUEBLE. Mismo motivo que la FSM de identidad (Fase 24), la galeria
+            # de apariencia (Fase 25) y el BehaviorAnalyzer (Fase 26).
+            self.object_tracker = ObjectTracker(frame_rate=int(target))
+            self.objects = ObjectAnalyzer(
+                left_secs=object_left_secs,
+                still_radius_px=object_still_radius_px,
+                person_radius_px=object_person_radius_px,
+                person_radius_ratio=object_person_radius_ratio,
+                warmup_secs=object_warmup_secs,
+                gone_secs=object_gone_secs,
+                person_window_secs=object_person_window_secs,
+                max_tracks=object_max_tracks,
+            )
+
         if detector is not None and tracker is not None:
             def _make_detection() -> DetectionWorker:
                 self.detection = DetectionWorker(
@@ -134,6 +170,9 @@ class CameraPipeline:
                     camera_id=camera_id,
                     latency_tracker=latency_tracker,
                     behavior=self.behavior,
+                    objects=self.objects,
+                    object_tracker=self.object_tracker,
+                    object_class_ids=set(object_class_ids or []),
                 )
                 return self.detection
 
@@ -285,6 +324,26 @@ class CameraPipeline:
 
     def get_zone_stats(self) -> list[dict]:
         return self.detection.get_zone_stats() if self.detection else []
+
+    def set_detection_classes(self, classes: list[int]) -> None:
+        """Aplica las clases activas al detector y al reparto persona/objeto.
+
+        NO reinicia el DetectionWorker, a diferencia de set_process_size (que si reinicia
+        el CaptureWorker): WorkerSupervisor._check() cuenta cualquier parada como caida y
+        tres cambios de configuracion en 60 s lo marcarian FAILED de forma permanente,
+        con el pipeline en modo degradado (supervisor.py:166-173). El detector lee
+        self._classes en cada inferencia, asi que basta con mutarlo.
+        """
+        if self.detector is not None:
+            self.detector.set_classes(classes)
+        if self.detection is not None:
+            self.detection.set_object_classes({c for c in classes if c != 0})
+
+    def get_object_stats(self) -> list[dict]:
+        return self.detection.get_object_stats() if self.detection else []
+
+    def get_object_boxes(self) -> list[dict]:
+        return self.detection.get_object_boxes() if self.detection else []
 
     def get_heatmap(self) -> np.ndarray | None:
         frame = self.get_frame()

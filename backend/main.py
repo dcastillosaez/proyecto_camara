@@ -451,6 +451,16 @@ async def lifespan(app: FastAPI):
         immobile_radius_px=settings.immobile_radius_px,
         crowd_threshold=settings.crowd_threshold,
         behavior_max_tracks=settings.behavior_max_tracks,
+        objects_enabled=settings.objects_enabled,
+        object_class_ids=settings.object_class_ids,
+        object_left_secs=settings.object_left_secs,
+        object_still_radius_px=settings.object_still_radius_px,
+        object_person_radius_px=settings.object_person_radius_px,
+        object_person_radius_ratio=settings.object_person_radius_ratio,
+        object_warmup_secs=settings.object_warmup_secs,
+        object_gone_secs=settings.object_gone_secs,
+        object_person_window_secs=settings.object_person_window_secs,
+        object_max_tracks=settings.object_max_tracks,
     )
     rtsp_stream = pipeline  # fachada consumida por los endpoints
 
