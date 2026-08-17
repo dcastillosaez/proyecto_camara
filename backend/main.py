@@ -230,6 +230,16 @@ async def _purge_loop() -> None:
             logger.error("Purge loop error: %s", exc)
 
 
+def _resolve_active_classes(persisted: list[int] | None, settings_value: list[int]) -> list[int]:
+    """app_config gana sobre la env var YOLO_CLASSES (27-RESEARCH.md Q6).
+
+    `if persisted` (no `is not None`) es deliberado: una fila `[]` guardada en app_config
+    por un bug se trata como ausente, no como "no detectes nada" (Pitfall 3) — classes=[]
+    deja el detector ciego en silencio, verificado.
+    """
+    return list(persisted) if persisted else list(settings_value)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global rtsp_stream, camera_manager, notifier, event_bus, event_engine, rule_engine, latency_tracker
@@ -284,9 +294,7 @@ async def lifespan(app: FastAPI):
     # una fila [] guardada por un bug dejaria el sistema CIEGO — classes=[] devuelve 0
     # detecciones, verificado — y tratarla como ausente es mas seguro que obedecerla.
     persisted_classes = await ConfigRepo(get_session_factory()).get("yolo_classes")
-    active_classes = (
-        list(persisted_classes) if persisted_classes else list(settings.yolo_classes)
-    )
+    active_classes = _resolve_active_classes(persisted_classes, settings.yolo_classes)
 
     detector = PersonDetector(
         model_path=settings.yolo_model_path,
