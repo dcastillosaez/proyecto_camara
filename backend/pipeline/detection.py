@@ -29,9 +29,13 @@ if TYPE_CHECKING:
     from backend.observability.latency import LatencyTracker
     from backend.perception.behavior import BehaviorAnalyzer
     from backend.pipeline.broker import Subscription
-    from backend.tracker import PersonTracker
+    from backend.tracker import ObjectTracker, PersonTracker
 
 logger = logging.getLogger(__name__)
+
+PERSON_CLASS_IDS = (0,)   # la clase persona nunca entra en el tracker de objetos: es la
+                          # dueña del LineZone (Fase 4), de la identidad (Fases 23/24),
+                          # del ReID (Fase 25) y del analisis de comportamiento (Fase 26)
 
 
 class DetectionWorker:
@@ -58,6 +62,8 @@ class DetectionWorker:
         camera_id: str = "cam1",
         latency_tracker: LatencyTracker | None = None,
         behavior: "BehaviorAnalyzer | None" = None,
+        object_tracker: "ObjectTracker | None" = None,
+        object_class_ids: set[int] | None = None,
     ) -> None:
         self._sub = sub
         self._detector = detector
@@ -68,6 +74,8 @@ class DetectionWorker:
         self._camera_id = camera_id
         self._latency_tracker = latency_tracker
         self._behavior = behavior
+        self._object_tracker = object_tracker
+        self._object_class_ids: frozenset[int] = frozenset(object_class_ids or ())
         # Callable[[], bool] opcional — decide si un cruce es intrusion
         # (RTSPStream._is_in_schedule). Sin ella, nunca se marca intrusion.
         self._is_intrusion = is_intrusion
@@ -84,6 +92,10 @@ class DetectionWorker:
         self._zone_states: list[dict] = []
         self._zone_frame_size: tuple[int, int] = (0, 0)
         self._heat_mask: np.ndarray | None = None
+        self._object_boxes: list[dict] = []      # ultima foto de objetos trackeados;
+                                                 # writer: hilo de deteccion,
+                                                 # readers: event loop (endpoint de
+                                                 # contexto) y StreamingWorker (overlay)
 
     # ------------------------------------------------------------------
     # Public API
@@ -129,6 +141,25 @@ class DetectionWorker:
                 for st in self._zone_states
             ]
 
+    def set_object_classes(self, class_ids: set[int]) -> None:
+        """Ids que van al tracker de OBJETOS. Thread-safe."""
+        with self._lock:
+            self._object_class_ids = frozenset(class_ids)
+
+    def get_object_stats(self) -> list[dict]:
+        """Recuento por class_name de los objetos trackeados en el ultimo frame."""
+        with self._lock:
+            boxes = list(self._object_boxes)
+        counts: dict[str, int] = {}
+        for b in boxes:
+            counts[b["class_name"]] = counts.get(b["class_name"], 0) + 1
+        return [{"class_name": k, "count": v} for k, v in sorted(counts.items())]
+
+    def get_object_boxes(self) -> list[dict]:
+        """Cajas de objeto del ultimo frame, para el overlay del MJPEG. Thread-safe."""
+        with self._lock:
+            return [dict(b) for b in self._object_boxes]
+
     def compose_heatmap(self, frame: np.ndarray) -> np.ndarray | None:
         """Compose the accumulated activity heat map over *frame*. Heavy — call off the event loop."""
         with self._lock:
@@ -164,7 +195,19 @@ class DetectionWorker:
             t0 = time.monotonic()
             try:
                 sv_dets = self._detector.detect_sv(frame.image)
-                tracked, crossings = self._tracker.update(sv_dets)
+                # ─── Particion por clase ANTES del tracker (Fase 27, 27-RESEARCH Q4) ───
+                # sv.ByteTrack es class-agnostic: el class_id no llega al matcher
+                # (core.py:104-110) y el id puede transferirse entre clases cuando las
+                # cajas se solapan (reproducido). Mandar sv_dets completo a
+                # PersonTracker haria que un coche cruzando la linea sumara al conteo de
+                # personas de la Fase 4, que esta en produccion.
+                person_dets, object_dets = self._split_by_class(sv_dets)
+                tracked, crossings = self._tracker.update(person_dets)
+                obj_tracked = (
+                    self._object_tracker.update(object_dets)
+                    if self._object_tracker is not None
+                    else None
+                )
             except Exception:
                 self._exceptions += 1
                 logger.exception("DetectionWorker: fallo de inferencia, se salta el frame")
@@ -184,9 +227,42 @@ class DetectionWorker:
             self._registry.update_from_detections(tracked, now)
             self._update_zones_and_heat(tracked, frame.image.shape, frame.captured_at, now)
             self._analyze_behavior(tracked, frame.captured_at, now)      # NUEVO (Fase 26)
+            self._update_object_boxes(obj_tracked)
             self._emit_crossings(crossings, frame.captured_at, now)
             self._emit_track_lifecycle(tracked, frame.captured_at, now)
             self._registry.prune(now)
+
+    def _split_by_class(self, dets: sv.Detections) -> tuple[sv.Detections, sv.Detections]:
+        """Separa personas y objetos. El slicing preserva data["class_name"] (verificado
+        en 27-RESEARCH.md, medicion 2 de H-1), asi que el nombre de clase para el payload
+        del evento sale del modelo y no de un mapa COCO escrito a mano."""
+        cls = dets.class_id
+        with self._lock:
+            object_ids = self._object_class_ids
+        if cls is None or len(dets) == 0:
+            return dets, dets[:0]
+        person_dets = dets[np.isin(cls, PERSON_CLASS_IDS)]
+        object_dets = dets[np.isin(cls, list(object_ids))] if object_ids else dets[:0]
+        return person_dets, object_dets
+
+    def _update_object_boxes(self, obj_tracked: sv.Detections | None) -> None:
+        """Refresca la foto de objetos trackeados bajo self._lock. Sin foto anterior
+        si no hay objetos en este frame: conservarla mentiria al overlay."""
+        boxes: list[dict] = []
+        if obj_tracked is not None and len(obj_tracked) and obj_tracked.tracker_id is not None:
+            names = obj_tracked.data.get("class_name") if obj_tracked.data else None
+            for i, tid in enumerate(obj_tracked.tracker_id):
+                class_id = int(obj_tracked.class_id[i]) if obj_tracked.class_id is not None else -1
+                class_name = str(names[i]) if names is not None else str(class_id)
+                x1, y1, x2, y2 = obj_tracked.xyxy[i]
+                boxes.append({
+                    "track_id": int(tid),
+                    "class_id": class_id,
+                    "class_name": class_name,
+                    "bbox": (float(x1), float(y1), float(x2), float(y2)),
+                })
+        with self._lock:
+            self._object_boxes = boxes
 
     def _analyze_behavior(self, tracked: Any, captured_at: float, processed_at: float) -> None:
         """Analisis de comportamiento del frame (Fase 26, BEH-01..BEH-05).
@@ -263,6 +339,9 @@ class DetectionWorker:
         if fps != self._last_effective_fps:
             self._last_effective_fps = fps
             self._tracker.set_frame_rate(fps)
+            if self._object_tracker is not None:
+                self._object_tracker.set_frame_rate(fps)   # si no, el tracker de objetos
+                                                           # queda desincronizado del FPS real
 
     def _emit_crossings(self, crossings: list[dict], captured_at: float, processed_at: float) -> None:
         if not crossings or self._event_engine is None:
