@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Ejecutado 26-05-PLAN.md (criterio 5 when.event desde YAML real + puerta de fase). tests/test_rule_engine.py: 3 tests nuevos (TEST_behavior_events_usable_as_when_event, TEST_behavior_duration_gte_reads_duration_s, TEST_behavior_zone_filter_uses_first_class_zone_id) prueban el camino real (YAML en tmp_path + load_rules + evaluate) para los 4 eventos de comportamiento, sin tocar backend/events/rules.py ni config/rules.yaml. Suite completa 454/454. Los 5 criterios de exito del ROADMAP trazados a comandos pytest -k que pasan. BEH-01..BEH-05 ya estaban [x] en REQUIREMENTS.md, confirmado. Fase 26 completa: 5/5 planes. El checkpoint de calibracion de umbrales con camara real (Task 3) queda DIFERIDO — 8o checkpoint manual pendiente, no bloquea avanzar a la Fase 27. Sin desviaciones de codigo."
+stopped_at: "Ejecutado 27-03-PLAN.md (ObjectTracker + particion por clase en DetectionWorker). backend/tracker.py: ObjectTracker con sv.ByteTrack propio (sin DetectionsSmoother ni LineZone), PersonTracker intacto. backend/pipeline/detection.py: _split_by_class parte sv_dets por class_id dentro del try de inferencia existente; PersonTracker.update solo recibe person_dets; set_object_classes/get_object_stats/get_object_boxes nuevos; _sync_tracker_frame_rate propaga a los dos trackers. tests/test_detection_worker.py: +7 tests TEST_* de regresion del riesgo ByteTrack class-agnostic (el que reproduce el hallazgo del research con un ByteTrack compartido, LineZone, TrackRegistry, class_name, sin clases de objeto configuradas, sincronizacion de FPS, copia defensiva). Suite completa 480/480. BEH-06 NO se marca en REQUIREMENTS.md: el ROADMAP asigna esa puerta a 27-11 (BEH-06..BEH-09 de una vez). Fase 27: 3/11 planes. Sin desviaciones de codigo (solo redaccion de docstring para no chocar con el propio <verify> de la Task 1)."
 last_updated: "2026-08-17"
 last_activity: 2026-08-17
 progress:
@@ -85,11 +85,14 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 ```
 
 Fase 27 (Multi-clase y contexto de escena) en progreso: `27-01`
-(`ObjectAnalyzer`, dominio puro) y `27-02` (D-03 + config `object_*`/
-`context_*` + `PersonDetector.set_classes()`) completos, quedan `27-03`..
-`27-11` (tracker por sustraccion, media movil horaria, `emit_object`,
-cableado, router de clases activas, overlay MJPEG, endpoint de contexto,
-control de clases en el dashboard y puerta de fase).
+(`ObjectAnalyzer`, dominio puro), `27-02` (D-03 + config `object_*`/
+`context_*` + `PersonDetector.set_classes()`) y `27-03` (`ObjectTracker` +
+particion por clase en `DetectionWorker`, cierra el riesgo de que
+`sv.ByteTrack` — class-agnostic — transfiera un `tracker_id` entre persona
+y objeto) completos. Quedan `27-04`..`27-11` (media movil horaria,
+`emit_object`, cableado de `_analyze_objects`, router de clases activas,
+overlay MJPEG, endpoint de contexto, control de clases en el dashboard y
+puerta de fase que cierra BEH-06..BEH-09).
 
 La Fase 24 (Identidad temporal — votación y máquina de estados) está
 **completa**: 6/6 planes (`24-01`..`24-06`), FACE-07..FACE-11 cerrados,
@@ -260,7 +263,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
 | 25 — Re-identificación (ReID) | B | ✓ Completa (código) | 2026-08-15 | ⧗ Tasa de falsos positivos con dos personas reales (checkpoint 25-06 Task 2) |
 | 26 — Análisis de comportamiento | B | ✓ Completa (código) | 2026-08-16 | ⧗ Calibración de umbrales con cámara real (checkpoint 26-05 Task 3) |
-| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (2/11 planes) | — | 9 planes restantes (27-03..27-11) |
+| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (3/11 planes) | — | 8 planes restantes (27-04..27-11) |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
 | 29 — Vista de operaciones | C | — Sin planificar | — | Depende de 28 |
 | 30 — Event Timeline y alertas | C | — Sin planificar | — | Depende de 29 |
@@ -306,7 +309,16 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **473/473 passing** (última ejecución 2026-08-17, tras `27-02`: +5 tests
+Suite completa: **480/480 passing** (última ejecución 2026-08-17, tras `27-03`: +7 tests
+`TEST_*` en `tests/test_detection_worker.py` — regresion del riesgo ByteTrack
+class-agnostic: `TEST_bytetrack_ids_do_not_migrate_between_classes` reproduce
+literalmente el hallazgo del research con un `sv.ByteTrack` compartido y demuestra
+que con la particion por clase (`ObjectTracker` + `PersonTracker` separados) no
+ocurre; mas `TEST_object_class_does_not_reach_line_zone` (igualdad de `get_counts()`
+con/sin coche), `TEST_objects_not_in_registry`, `TEST_split_by_class_preserves_class_name`,
+`TEST_sync_frame_rate_reaches_both_trackers`, `TEST_no_object_classes_behaves_like_today`
+y `TEST_object_boxes_snapshot_is_a_copy` — ver `27-03-SUMMARY.md`). Cifra anterior
+473/473 (última ejecución 2026-08-17, tras `27-02`: +5 tests
 `TEST_*` — 3 en `tests/test_config.py` (`TEST_yolo_model_default_is_yolo26n`,
 `TEST_object_defaults_match_research` con un assert por cada uno de los 10 `object_*` y
 4 `context_*`, `TEST_object_params_reject_impossible_values` con caso propio para
@@ -366,6 +378,9 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - backend/config.py (Fase 27, 27-02, D-03): `yolo_model_path` por defecto pasa de `yolov8n.pt` a `yolo26n.pt` — corrige la deriva respecto a CLAUDE.md; se aplica en este plan y no antes porque el criterio 6 (latencia con 6 clases) se mide despues, sobre la ruta de post-proceso NMS-free de `yolo26n.pt`. `validate_object_params` sigue el molde de `validate_behavior_params` y rechaza explicitamente la clase 0 (person) en `object_class_ids` — desviarla ahi perderia el `LineZone`/identidad/comportamiento del `PersonTracker`
 - PersonDetector.set_classes (Fase 27, 27-02): mutacion en caliente de `self._classes` (rebind atomico, sin lock) en vez de reconstruir el detector — mismo motivo que `PersonTracker.set_frame_rate`, pero con coste mayor si se reconstruyera: `WorkerSupervisor._check()` cuenta cualquier parada del worker como caida y tres reinicios en 60 s lo dejarian en `FAILED` permanente
 - ObjectAnalyzer (Fase 27, 27-01): `ObjectObservation`/`PersonObservation` (dataclasses con 6 atributos) en vez de los `dict[int, tuple]` de `BehaviorAnalyzer` — varios dicts paralelos por objeto serían un criadero de bugs de desincronización; `prune()` devuelve `list[ObjectFinding]` (a diferencia de `BehaviorAnalyzer.prune` que devuelve `None`) porque `OBJECT_REMOVED` se decide ahí, no en `analyze()`, para exigir `gone_secs` de gracia contra oclusiones de un frame; `stable` se deriva de `object_gone_secs` sin parámetro nuevo (mínimo tiempo quieto para considerarse "establecido" = la misma ventana de gracia con la que se declara la desaparición); asimetría deliberada entre el radio de persona en `OBJECT_LEFT` (negativo: pasarse de grande suprime eventos, lado seguro) y en `OBJECT_REMOVED` (positivo: pasarse de grande es peligroso)
+- ObjectTracker (Fase 27, 27-03): análogo por sustracción de `PersonTracker` — mismo `sv.ByteTrack`+`LOST_TRACK_BUFFER`+`set_frame_rate`, SIN `DetectionsSmoother` (congelaría `class_id` hasta 5 frames) y SIN `LineZone` (el conteo de la Fase 4, en producción, es solo de personas); `PersonTracker` queda intacto, verificado por `git diff` sin líneas `-`
+- DetectionWorker._split_by_class (Fase 27, 27-03): la partición por `class_id` (`np.isin` contra `PERSON_CLASS_IDS=(0,)`) ocurre DENTRO del `try` de inferencia ya existente, para que un `sv_dets` malformado siga cayendo en el mismo `except`; `PersonTracker.update` recibe siempre `person_dets`, nunca `sv_dets` completo — sin esto, un objeto (coche, mochila) sumaría al conteo de línea de la Fase 4 o entraría en `TrackRegistry`/reconocimiento facial. Los objetos NUNCA entran en `TrackRegistry`: su estado vive en `self._object_boxes` bajo `self._lock` (mismo patrón que `_zone_states`), con escritor único (hilo de detección) y lectores desde fuera (`get_object_boxes`/`get_object_stats`, copias defensivas). `self._rate.observe()` sigue midiendo solo la vía de personas — la vía de objetos nunca la llama, mismo patrón que ReID (Fase 25) y `BehaviorAnalyzer` (Fase 26)
+- Riesgo de primer orden verificado con test de reproducción (Fase 27, 27-03): `sv.ByteTrack` es class-agnostic (el tensor del matcher usa solo `xyxy`+`confidence`, `supervision/tracker/byte_tracker/core.py:104-110`) — `TEST_bytetrack_ids_do_not_migrate_between_classes` reproduce literalmente que un `sv.ByteTrack` COMPARTIDO transfiere el id de una mochila "perdida" a una persona casi en la misma caja, y demuestra que con `ObjectTracker`+`PersonTracker` separados no ocurre
 - Puerta de fase (Fase 26, 26-05): no hizo falta ningún fix de código — `tests/test_rule_engine.py` ganó 3 tests que recorren el camino real (YAML en `tmp_path` + `load_rules` + `evaluate`) para demostrar el criterio 5 sin tocar `backend/events/rules.py` ni `config/rules.yaml`, y BEH-01..BEH-05 ya estaban `[x]` desde planes anteriores. Las seis decisiones clave de la fase quedan resumidas aquí: (1) el historial de 120 s se disuelve con agregados incrementales O(1) en vez de ampliar `history_len` (584 B/track medidos frente a 141,8 KB si se hubiera ampliado a 1000, `tracking.py` intacto); (2) los CUATRO comportamientos llevan latch por episodio, no solo CROWD — sin él, una persona parada 10 min generaría miles de eventos IMMOBILE, y `debounce_secs` de `rules.yaml` no sustituye al latch porque actúa después de persistir y difundir; (3) `analyze()` devuelve `list[BehaviorFinding]`, no `list[Event]` (D-3, corrige SPEC §5.7) — `perception/` no conoce `camera_id` ni el reloj de pared; (4) semántica de zonas: LOITERING cae a escena implícita (`zone_id=None`) sin zonas configuradas salvo `loiter_require_zone=True` (D-02), LOITERING e IMMOBILE coexisten (D-03), y con zonas solapadas se emite un finding por zona (D-04); (5) la clave del payload es `duration_s` literal porque `rules.py:88-91` la lee así para `duration_gte` — cualquier otro nombre rompe el criterio 5 en silencio; (6) los 4 comportamientos se quedan en `Severity.INFO` por defecto (D-01, cambio cero) — subirlos a WARNING habría activado la subida automática de clips a Google Drive. El checkpoint de calibración de umbrales con cámara real (Task 3) se difiere explícitamente — 8º checkpoint manual pendiente, no bloquea avanzar a la Fase 27
 
 ### Pendiente manual (no es código)
@@ -385,27 +400,48 @@ Fase 23, la Fase 25 y la Fase 26 por completamente validados en producción.
 ## Session Continuity
 
 Last session: 2026-08-17
-Stopped at: Ejecutado 27-02-PLAN.md (wave 1, sin dependencias reales de código). D-03:
-  `yolo_model_path` por defecto pasa de `yolov8n.pt` a `yolo26n.pt` (end2end=True, NMS-free).
-  10 parámetros `object_*` y 4 `context_*` en `backend/config.py` con los defaults del
-  research, más `validate_object_params` (rechaza clase 0/person en `object_class_ids`,
-  ratios fuera de rango, ids COCO inválidos, `context_low_ratio >= context_high_ratio`).
-  `PersonDetector.set_classes()` (`backend/detector.py`): mutación en caliente de
-  `self._classes` con rebind atómico (sin lock, mismo patrón que
-  `PersonTracker.set_frame_rate`), verificado que no recarga el modelo (`id(self._model)`
-  no cambia). 5 tests nuevos: 3 en `tests/test_config.py` (default `yolo26n.pt`, defaults
-  de los 14 parámetros, rechazo de las 6 configuraciones imposibles) + 2 en
-  `tests/test_detector.py` (`TEST_set_classes_changes_next_inference` y
-  `TEST_multiclass_latency_under_15_percent`, el benchmark del criterio 6 del ROADMAP con
-  pesos reales de `yolo26n.pt` sobre `bus.jpg`, sin skip). Suite completa 473/473 (468
-  previos + 5). Ningún requisito BEH-06/08/09 se marca `[x]` todavía — están repartidos
-  entre `27-03`..`27-11` y se cierran en el gate de fase (`27-11`); `BEH-07` ya estaba
-  marcado desde `27-01`. Sin desviaciones de código — ver `27-02-SUMMARY.md`. Quedan
-  `27-03`..`27-11` (tracker por sustracción, media móvil horaria, `emit_object`, cableado,
+Stopped at: Ejecutado 27-03-PLAN.md (wave 1, sin dependencias de código). `ObjectTracker`
+  (`backend/tracker.py`): análogo por sustracción de `PersonTracker` — mismo `sv.ByteTrack`
+  + `LOST_TRACK_BUFFER` + `set_frame_rate`, sin `DetectionsSmoother` ni `LineZone`;
+  `PersonTracker` intacto (verificado con `git diff` sin líneas `-`). `DetectionWorker`
+  (`backend/pipeline/detection.py`): `_split_by_class` parte `sv_dets` por `class_id`
+  (`np.isin` contra `PERSON_CLASS_IDS=(0,)`) dentro del `try` de inferencia ya existente;
+  `PersonTracker.update` recibe siempre `person_dets`, nunca `sv_dets` completo; estado de
+  objetos nuevo en `self._object_boxes` bajo `self._lock` (nunca `TrackRegistry`);
+  `set_object_classes`/`get_object_stats`/`get_object_boxes` nuevos; `_sync_tracker_frame_rate`
+  propaga el cambio de escalón de `AdaptiveRate` a los DOS trackers. 7 tests de regresión
+  nuevos en `tests/test_detection_worker.py`: `TEST_bytetrack_ids_do_not_migrate_between_classes`
+  reproduce literalmente el hallazgo del research (un `sv.ByteTrack` COMPARTIDO transfiere
+  el id de una mochila a una persona solapada) y demuestra que con la partición no ocurre;
+  más `TEST_object_class_does_not_reach_line_zone` (igualdad de `get_counts()` con/sin
+  coche), `TEST_objects_not_in_registry`, `TEST_split_by_class_preserves_class_name`,
+  `TEST_sync_frame_rate_reaches_both_trackers`, `TEST_no_object_classes_behaves_like_today`,
+  `TEST_object_boxes_snapshot_is_a_copy`. Suite completa 480/480 (473 previos + 7). BEH-06
+  NO se marca `[x]`: el ROADMAP asigna esa puerta a `27-11` (cierra BEH-06..BEH-09 de una
+  vez con trazabilidad a los 6 criterios de éxito). Sin desviaciones de código (solo
+  redacción de docstring en `ObjectTracker` para no citar literalmente
+  `DetectionsSmoother`/`LineZone`, porque el propio `<verify>` de la Task 1 comprobaba su
+  ausencia por substring en `inspect.getsource()`) — ver `27-03-SUMMARY.md`. Quedan
+  `27-04`..`27-11` (media móvil horaria, `emit_object`, cableado de `_analyze_objects`,
   router de clases activas, overlay MJPEG, endpoint de contexto, control de clases en el
   dashboard y puerta de fase). Siguiente: `/gsd:execute-phase 27` para continuar con
-  `27-03`.
-Resume file: `.planning/phases/27-multi-clase-y-contexto-de-escena/27-03-PLAN.md`
+  `27-04`.
+Resume file: `.planning/phases/27-multi-clase-y-contexto-de-escena/27-04-PLAN.md`
+
+Sesión anterior (2026-08-17): Ejecutado 27-02-PLAN.md (wave 1, sin dependencias reales de
+  código). D-03: `yolo_model_path` por defecto pasa de `yolov8n.pt` a `yolo26n.pt`
+  (end2end=True, NMS-free). 10 parámetros `object_*` y 4 `context_*` en `backend/config.py`
+  con los defaults del research, más `validate_object_params` (rechaza clase 0/person en
+  `object_class_ids`, ratios fuera de rango, ids COCO inválidos,
+  `context_low_ratio >= context_high_ratio`). `PersonDetector.set_classes()`
+  (`backend/detector.py`): mutación en caliente de `self._classes` con rebind atómico (sin
+  lock, mismo patrón que `PersonTracker.set_frame_rate`), verificado que no recarga el
+  modelo (`id(self._model)` no cambia). 5 tests nuevos: 3 en `tests/test_config.py`
+  (default `yolo26n.pt`, defaults de los 14 parámetros, rechazo de las 6 configuraciones
+  imposibles) + 2 en `tests/test_detector.py` (`TEST_set_classes_changes_next_inference` y
+  `TEST_multiclass_latency_under_15_percent`, el benchmark del criterio 6 del ROADMAP con
+  pesos reales de `yolo26n.pt` sobre `bus.jpg`, sin skip). Suite completa 473/473 (468
+  previos + 5). Sin desviaciones de código — ver `27-02-SUMMARY.md`.
 
 Sesión anterior (2026-08-16): Ejecutado 26-05-PLAN.md (criterio 5 `when.event` desde YAML
   real + puerta de fase, wave 4, depende de `26-01`..`26-04`). Los 3
