@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.events.types import Event, EventType, Severity
 from backend.storage import models
-from backend.storage.repositories import DetectionStatRepo, EventRepo
+from backend.storage.repositories import ConfigRepo, DetectionStatRepo, EventRepo
 from scripts.seed_events import seed_events
 
 
@@ -102,6 +102,97 @@ async def TEST_detection_stats_upsert(db):
     assert rows[0]["detections"] == 25
     assert rows[0]["unique_tracks"] == 3
     assert rows[0]["max_concurrent"] == 3
+
+
+# ─── hourly_baseline: media movil por franja horaria (Fase 27, BEH-09) ───────
+# El orden de agregacion es lo que se esta probando: primero SUM por (dia, hora)
+# y solo despues AVG entre dias. Promediar las filas de minuto daria "media por
+# minuto" y ponderaria mas los dias con mas minutos registrados. Se agrega sobre
+# unique_tracks y no sobre detections porque detections depende del FPS que
+# AdaptiveRate haya elegido (engine.py:281) y no es comparable entre dias.
+# ─────────────────────────────────────────────────────────────────────────────
+async def TEST_hourly_baseline_averages_across_days(db):
+    _, sf = db
+    repo = DetectionStatRepo(sf)
+    # Dia 1: 09:05 + 09:20 + 09:40 -> total 10. Dia 2 -> total 20. Dia 3 -> total 30.
+    # Repartido en varios minutos: si el test promediase filas de minuto en vez de
+    # sumar por dia primero, "avg_total" saldria distinto de 20.0.
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 1, 9, 5), detections=0, unique_tracks=3, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 1, 9, 20), detections=0, unique_tracks=3, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 1, 9, 40), detections=0, unique_tracks=4, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 2, 9, 5), detections=0, unique_tracks=7, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 2, 9, 20), detections=0, unique_tracks=6, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 2, 9, 40), detections=0, unique_tracks=7, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 3, 9, 5), detections=0, unique_tracks=10, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 3, 9, 20), detections=0, unique_tracks=10, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 3, 9, 40), detections=0, unique_tracks=10, avg_confidence=None, max_concurrent=0)
+
+    baseline = await repo.hourly_baseline("cam1", since=datetime.datetime(2026, 1, 1))
+
+    assert baseline["09"]["avg_total"] == 20.0
+    assert baseline["09"]["sample_days"] == 3
+
+
+async def TEST_hourly_baseline_reports_sample_days(db):
+    _, sf = db
+    repo = DetectionStatRepo(sf)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 1, 9, 5), detections=0, unique_tracks=5, avg_confidence=None, max_concurrent=0)
+
+    baseline = await repo.hourly_baseline("cam1", since=datetime.datetime(2026, 1, 1))
+
+    assert baseline["09"]["sample_days"] == 1
+
+
+async def TEST_hourly_baseline_respects_until(db):
+    _, sf = db
+    repo = DetectionStatRepo(sf)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 1, 9, 5), detections=0, unique_tracks=5, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 1, 14, 5), detections=0, unique_tracks=9, avg_confidence=None, max_concurrent=0)
+
+    baseline = await repo.hourly_baseline(
+        "cam1",
+        since=datetime.datetime(2026, 1, 1),
+        until=datetime.datetime(2026, 1, 1, 14, 0),
+    )
+
+    assert "14" not in baseline
+    assert "09" in baseline
+
+
+async def TEST_hourly_baseline_filters_by_camera(db):
+    _, sf = db
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam2", name="Cam 2", enabled=True))
+    repo = DetectionStatRepo(sf)
+    await repo.upsert_minute("cam1", datetime.datetime(2026, 1, 1, 9, 5), detections=0, unique_tracks=5, avg_confidence=None, max_concurrent=0)
+    await repo.upsert_minute("cam2", datetime.datetime(2026, 1, 1, 9, 5), detections=0, unique_tracks=99, avg_confidence=None, max_concurrent=0)
+
+    baseline = await repo.hourly_baseline("cam1", since=datetime.datetime(2026, 1, 1))
+
+    assert baseline["09"]["avg_total"] == 5.0
+
+
+async def TEST_hourly_baseline_empty_window(db):
+    _, sf = db
+    repo = DetectionStatRepo(sf)
+
+    baseline = await repo.hourly_baseline("cam1", since=datetime.datetime(2026, 1, 1))
+
+    assert baseline == {}
+
+
+async def TEST_config_repo_roundtrip_list(db):
+    _, sf = db
+    repo = ConfigRepo(sf)
+
+    await repo.set("yolo_classes", [0, 24, 28])
+    assert await repo.get("yolo_classes") == [0, 24, 28]
+
+    await repo.set("yolo_classes", [0])
+    assert await repo.get("yolo_classes") == [0]
+
+    assert await repo.get("does_not_exist", default=[0]) == [0]
 
 
 async def TEST_count_since_and_hourly_counts(db):
