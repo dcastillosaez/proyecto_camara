@@ -429,6 +429,9 @@ async def lifespan(app: FastAPI):
     )
     camera_manager = CameraManager()
 
+    from backend.api.v2 import context as context_v2_module
+    context_v2_module.configure(camera_manager)
+
     from backend.api.v2 import detection as detection_v2_module
     detection_v2_module.configure(camera_manager, event_engine)
 
@@ -599,6 +602,9 @@ app.include_router(metrics_v2_router)
 
 from backend.api.v2.detection import router as detection_v2_router
 app.include_router(detection_v2_router)
+
+from backend.api.v2.context import router as context_v2_router
+app.include_router(context_v2_router)
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
