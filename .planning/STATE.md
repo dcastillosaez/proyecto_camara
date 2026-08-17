@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Plataforma de Video Analytics
 status: in_progress
-stopped_at: "Ejecutado 27-03-PLAN.md (ObjectTracker + particion por clase en DetectionWorker). backend/tracker.py: ObjectTracker con sv.ByteTrack propio (sin DetectionsSmoother ni LineZone), PersonTracker intacto. backend/pipeline/detection.py: _split_by_class parte sv_dets por class_id dentro del try de inferencia existente; PersonTracker.update solo recibe person_dets; set_object_classes/get_object_stats/get_object_boxes nuevos; _sync_tracker_frame_rate propaga a los dos trackers. tests/test_detection_worker.py: +7 tests TEST_* de regresion del riesgo ByteTrack class-agnostic (el que reproduce el hallazgo del research con un ByteTrack compartido, LineZone, TrackRegistry, class_name, sin clases de objeto configuradas, sincronizacion de FPS, copia defensiva). Suite completa 480/480. BEH-06 NO se marca en REQUIREMENTS.md: el ROADMAP asigna esa puerta a 27-11 (BEH-06..BEH-09 de una vez). Fase 27: 3/11 planes. Sin desviaciones de codigo (solo redaccion de docstring para no chocar con el propio <verify> de la Task 1)."
+stopped_at: "Ejecutado 27-04-PLAN.md (media movil horaria + kind de zona, wave 1, sin dependencias de codigo). backend/storage/repositories.py: DetectionStatRepo.hourly_baseline() con doble GROUP BY (subquery por dia+hora, luego avg por hora) sobre unique_tracks, parametro until para excluir la hora en curso, todo parametros ligados. backend/database.py: kind en el Zone legacy (copiado caracter a caracter de storage/models.py) y en get_zones(), que main.py:468 usa para alimentar al DetectionWorker. Sin indice nuevo ni migracion (confirmado con git diff --stat vacio en models.py/migrations.py). tests: +7 tests TEST_* (5 de hourly_baseline: orden de agregacion, sample_days, until, filtro por camara, ventana vacia; 1 de ConfigRepo roundtrip de list[int]; 1 de get_zones_returns_kind). Suite completa 487/487. BEH-06/07/09 NO se marcan en REQUIREMENTS.md: el ROADMAP asigna esa puerta a 27-11. Fase 27: 4/11 planes. Sin desviaciones."
 last_updated: "2026-08-17"
 last_activity: 2026-08-17
 progress:
   total_phases: 22
   completed_phases: 10
-  total_plans: 30
-  completed_plans: 30
+  total_plans: 31
+  completed_plans: 31
   percent: 45
 previous_milestone:
   name: v1.2
@@ -86,13 +86,16 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 
 Fase 27 (Multi-clase y contexto de escena) en progreso: `27-01`
 (`ObjectAnalyzer`, dominio puro), `27-02` (D-03 + config `object_*`/
-`context_*` + `PersonDetector.set_classes()`) y `27-03` (`ObjectTracker` +
+`context_*` + `PersonDetector.set_classes()`), `27-03` (`ObjectTracker` +
 particion por clase en `DetectionWorker`, cierra el riesgo de que
 `sv.ByteTrack` — class-agnostic — transfiera un `tracker_id` entre persona
-y objeto) completos. Quedan `27-04`..`27-11` (media movil horaria,
-`emit_object`, cableado de `_analyze_objects`, router de clases activas,
-overlay MJPEG, endpoint de contexto, control de clases en el dashboard y
-puerta de fase que cierra BEH-06..BEH-09).
+y objeto) y `27-04` (`DetectionStatRepo.hourly_baseline()` — media movil
+por franja horaria sobre `unique_tracks` con doble GROUP BY, sin indice
+nuevo — y `kind` en el `Zone` legacy que alimenta al `DetectionWorker`)
+completos. Quedan `27-05`..`27-11` (`emit_object`, cableado de
+`_analyze_objects`, router de clases activas, overlay MJPEG, endpoint de
+contexto, control de clases en el dashboard y puerta de fase que cierra
+BEH-06..BEH-09).
 
 La Fase 24 (Identidad temporal — votación y máquina de estados) está
 **completa**: 6/6 planes (`24-01`..`24-06`), FACE-07..FACE-11 cerrados,
@@ -263,7 +266,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 24 — Identidad temporal | B | ✓ Completa | 2026-08-13 | — (sin checkpoints manuales; 6 checkpoints de cámara real de fases anteriores siguen abiertos, sin relación con esta fase) |
 | 25 — Re-identificación (ReID) | B | ✓ Completa (código) | 2026-08-15 | ⧗ Tasa de falsos positivos con dos personas reales (checkpoint 25-06 Task 2) |
 | 26 — Análisis de comportamiento | B | ✓ Completa (código) | 2026-08-16 | ⧗ Calibración de umbrales con cámara real (checkpoint 26-05 Task 3) |
-| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (3/11 planes) | — | 8 planes restantes (27-04..27-11) |
+| 27 — Multi-clase y contexto de escena | B | ⧗ En progreso (4/11 planes) | — | 7 planes restantes (27-05..27-11) |
 | 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
 | 29 — Vista de operaciones | C | — Sin planificar | — | Depende de 28 |
 | 30 — Event Timeline y alertas | C | — Sin planificar | — | Depende de 29 |
@@ -309,7 +312,15 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **480/480 passing** (última ejecución 2026-08-17, tras `27-03`: +7 tests
+Suite completa: **487/487 passing** (última ejecución 2026-08-17, tras `27-04`: +7 tests
+`TEST_*` en `tests/test_repositories.py`/`tests/test_database.py` — 5 de
+`DetectionStatRepo.hourly_baseline()` (orden de agregacion con datos repartidos en varios
+minutos, `sample_days` con un solo dia, `until` excluyendo la hora en curso, aislamiento por
+`camera_id`, ventana vacia sin excepcion), `TEST_config_repo_roundtrip_list` (roundtrip de
+`list[int]` en la columna JSON de `app_config`, overwrite y default) y
+`TEST_get_zones_returns_kind` (zona con `kind="exclude_objects"` y zona con `kind=None`,
+ambas expuestas por `get_zones()` del ORM legacy) — ver `27-04-SUMMARY.md`. Cifra anterior
+480/480 (última ejecución 2026-08-17, tras `27-03`: +7 tests
 `TEST_*` en `tests/test_detection_worker.py` — regresion del riesgo ByteTrack
 class-agnostic: `TEST_bytetrack_ids_do_not_migrate_between_classes` reproduce
 literalmente el hallazgo del research con un `sv.ByteTrack` compartido y demuestra
@@ -400,33 +411,29 @@ Fase 23, la Fase 25 y la Fase 26 por completamente validados en producción.
 ## Session Continuity
 
 Last session: 2026-08-17
-Stopped at: Ejecutado 27-03-PLAN.md (wave 1, sin dependencias de código). `ObjectTracker`
-  (`backend/tracker.py`): análogo por sustracción de `PersonTracker` — mismo `sv.ByteTrack`
-  + `LOST_TRACK_BUFFER` + `set_frame_rate`, sin `DetectionsSmoother` ni `LineZone`;
-  `PersonTracker` intacto (verificado con `git diff` sin líneas `-`). `DetectionWorker`
-  (`backend/pipeline/detection.py`): `_split_by_class` parte `sv_dets` por `class_id`
-  (`np.isin` contra `PERSON_CLASS_IDS=(0,)`) dentro del `try` de inferencia ya existente;
-  `PersonTracker.update` recibe siempre `person_dets`, nunca `sv_dets` completo; estado de
-  objetos nuevo en `self._object_boxes` bajo `self._lock` (nunca `TrackRegistry`);
-  `set_object_classes`/`get_object_stats`/`get_object_boxes` nuevos; `_sync_tracker_frame_rate`
-  propaga el cambio de escalón de `AdaptiveRate` a los DOS trackers. 7 tests de regresión
-  nuevos en `tests/test_detection_worker.py`: `TEST_bytetrack_ids_do_not_migrate_between_classes`
-  reproduce literalmente el hallazgo del research (un `sv.ByteTrack` COMPARTIDO transfiere
-  el id de una mochila a una persona solapada) y demuestra que con la partición no ocurre;
-  más `TEST_object_class_does_not_reach_line_zone` (igualdad de `get_counts()` con/sin
-  coche), `TEST_objects_not_in_registry`, `TEST_split_by_class_preserves_class_name`,
-  `TEST_sync_frame_rate_reaches_both_trackers`, `TEST_no_object_classes_behaves_like_today`,
-  `TEST_object_boxes_snapshot_is_a_copy`. Suite completa 480/480 (473 previos + 7). BEH-06
-  NO se marca `[x]`: el ROADMAP asigna esa puerta a `27-11` (cierra BEH-06..BEH-09 de una
-  vez con trazabilidad a los 6 criterios de éxito). Sin desviaciones de código (solo
-  redacción de docstring en `ObjectTracker` para no citar literalmente
-  `DetectionsSmoother`/`LineZone`, porque el propio `<verify>` de la Task 1 comprobaba su
-  ausencia por substring en `inspect.getsource()`) — ver `27-03-SUMMARY.md`. Quedan
-  `27-04`..`27-11` (media móvil horaria, `emit_object`, cableado de `_analyze_objects`,
+Stopped at: Ejecutado 27-04-PLAN.md (wave 1, sin dependencias de código).
+  `DetectionStatRepo.hourly_baseline()` (`backend/storage/repositories.py`): subconsulta
+  `per_day` que suma `unique_tracks` por `(dia, hora)` con `func.strftime`, query externa que
+  promedia esos totales por hora, `sample_days`/`mins` en el dict devuelto, parámetro `until`
+  opcional para excluir la hora en curso (parcial) del baseline — contrato LOCKED que
+  consumirá `27-09`. Todos los parámetros ligados; sin índice nuevo (`git diff --stat
+  backend/storage/models.py` vacío, confirma la medición de 27-RESEARCH Q7: p50 11,2 ms a
+  525.600 filas). `kind` en el `Zone` legacy (`backend/database.py`, copiado carácter a
+  carácter de `storage/models.py:168`) y en `get_zones()` — la función que `main.py:468` usa
+  para alimentar al `DetectionWorker` — sin tocar `upsert_zone` ni el endpoint `/api/zones`
+  (fuera de alcance). 7 tests nuevos: 5 de `hourly_baseline` (orden de agregación con datos
+  repartidos en varios minutos por día, `sample_days` con un solo día, `until` excluyendo la
+  hora en curso, aislamiento por `camera_id`, ventana vacía sin excepción) en
+  `tests/test_repositories.py`, más `TEST_config_repo_roundtrip_list` (primer test de
+  `ConfigRepo`, roundtrip de `list[int]` en columna JSON) y `TEST_get_zones_returns_kind`
+  (`tests/test_database.py`). Suite completa 487/487 (480 previos + 7). BEH-06/07/09 NO se
+  marcan `[x]`: el ROADMAP asigna esa puerta a `27-11` (cierra BEH-06..BEH-09 de una vez con
+  trazabilidad a los 6 criterios de éxito). Sin desviaciones de código — ver
+  `27-04-SUMMARY.md`. Quedan `27-05`..`27-11` (`emit_object`, cableado de `_analyze_objects`,
   router de clases activas, overlay MJPEG, endpoint de contexto, control de clases en el
-  dashboard y puerta de fase). Siguiente: `/gsd:execute-phase 27` para continuar con
-  `27-04`.
-Resume file: `.planning/phases/27-multi-clase-y-contexto-de-escena/27-04-PLAN.md`
+  dashboard y puerta de fase). Siguiente: `/gsd:execute-phase 27` para continuar con `27-05`.
+Resume file: ninguno registrado todavía para `27-05` — generar/ejecutar con
+  `/gsd:execute-phase 27`.
 
 Sesión anterior (2026-08-17): Ejecutado 27-02-PLAN.md (wave 1, sin dependencias reales de
   código). D-03: `yolo_model_path` por defecto pasa de `yolov8n.pt` a `yolo26n.pt`
