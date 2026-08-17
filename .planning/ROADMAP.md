@@ -277,7 +277,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 - [x] **Phase 24: Identidad temporal — votación y máquina de estados** — UNKNOWN → CANDIDATE → CONFIRMED → TEMPORARILY_LOST
 - [x] **Phase 25: Re-identificación de personas (ReID)** — Continuidad de identidad sin cara visible (completed 2026-08-15; checkpoint de tasa de falsos positivos con cámara real pendiente)
 - [x] **Phase 26: Análisis de comportamiento** — Merodeo, carrera, inmovilidad, aglomeración, zonas
-- [ ] **Phase 27: Multi-clase y contexto de escena** — Objetos abandonados/retirados + estado agregado de la escena
+- [x] **Phase 27: Multi-clase y contexto de escena** — Objetos abandonados/retirados + estado agregado de la escena (completed 2026-08-17; checkpoint de calibración de `object_person_radius_px` y tasa de falsos positivos de `OBJECT_LEFT` pendiente de cámara real)
 
 ### Bloque C — Producto
 
@@ -498,19 +498,19 @@ Plans:
   5. Escena con mochila abandonada emite un único OBJECT_LEFT; con la persona presente no lo emite
   6. Activar 6 clases no incrementa la latencia de inferencia más de un 15%
 **Spec**: SPEC_v2.md Phase 27
-**Plans**: 10/11 plans complete
+**Plans**: 11/11 plans complete (6 waves)
 Plans:
-- [x] 27-01-PLAN.md — `ObjectAnalyzer` (dominio puro): `OBJECT_LEFT`/`OBJECT_REMOVED` con guarda de warmup, zona de exclusión y gracia de oclusión
-- [x] 27-02-PLAN.md — D-03 + umbrales `object_*` en `config.py` + `validate_object_params` + `PersonDetector.set_classes()`
-- [x] 27-03-PLAN.md — `ObjectTracker` (análogo a sustracción de fondo) en `backend/tracker.py`
-- [x] 27-04-PLAN.md — `DetectionStatRepo.hourly_baseline()` — media móvil por franja horaria
-- [x] 27-05-PLAN.md — `EventEngine.emit_object()` + `config_changed()`
-- [x] 27-06-PLAN.md — Cableado: `DetectionWorker._analyze_objects` + zonas de exclusión
-- [x] 27-07-PLAN.md — `backend/api/v2/detection.py` — router GET/PUT de clases activas
-- [x] 27-08-PLAN.md — Overlay de objetos trackeados en el feed MJPEG
-- [x] 27-09-PLAN.md — `GET /api/v2/analytics/context` — resumen de contexto de escena
-- [x] 27-10-PLAN.md — Control de clases activas en el dashboard
-- [ ] 27-11-PLAN.md — Puerta de fase: criterios del ROADMAP + BEH-06..BEH-09 en REQUIREMENTS.md
+- [x] 27-01-PLAN.md — ObjectAnalyzer (dominio puro): OBJECT_LEFT/OBJECT_REMOVED con doble guarda de expiración
+- [x] 27-02-PLAN.md — D-03 (yolo26n.pt) + 14 parámetros object_*/context_* + PersonDetector.set_classes()
+- [x] 27-03-PLAN.md — ObjectTracker + partición por clase antes del tracker (riesgo ByteTrack)
+- [x] 27-04-PLAN.md — DetectionStatRepo.hourly_baseline() + kind en zonas legacy
+- [x] 27-05-PLAN.md — EventEngine.emit_object() + config_changed()
+- [x] 27-06-PLAN.md — Cableado del ObjectAnalyzer en DetectionWorker + construcción fuera de la factoría
+- [x] 27-07-PLAN.md — GET/PUT /api/v2/detection/classes con persistencia en app_config
+- [x] 27-08-PLAN.md — Overlay de objetos en el feed MJPEG
+- [x] 27-09-PLAN.md — GET /api/v2/analytics/context (BEH-08/BEH-09)
+- [x] 27-10-PLAN.md — Panel de clases activas en el dashboard
+- [x] 27-11-PLAN.md — Puerta de fase: trazabilidad de los 6 criterios + checkpoint de calibración
 
 ### Phase 28: Refactor del frontend a módulos ES
 **Goal**: index.html deja de contener lógica y el frontend pasa a ser mantenible
