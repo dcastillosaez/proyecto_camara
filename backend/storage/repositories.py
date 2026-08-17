@@ -260,6 +260,76 @@ class DetectionStatRepo:
                 for r in result.scalars().all()
             ]
 
+    async def hourly_baseline(
+        self,
+        camera_id: str,
+        since: datetime.datetime,
+        until: datetime.datetime | None = None,
+    ) -> dict[str, dict[str, float]]:
+        """Media movil por franja horaria sobre los ultimos N dias (BEH-09, D-02).
+
+        Dos niveles de agregacion, y el orden importa: primero se SUMA por (dia, hora) y
+        solo despues se PROMEDIA entre dias. Promediar directamente sobre las filas de
+        minuto daria "media por minuto", no "media por hora", y ademas ponderaria mas los
+        dias con mas minutos registrados.
+
+        Se agrupa sobre `unique_tracks`, no sobre `detections`: detections acumula
+        len(active_track_ids) UNA VEZ POR FRAME PROCESADO (engine.py:281), asi que depende
+        del FPS efectivo que AdaptiveRate haya elegido y no es comparable entre dias con
+        distinta carga de CPU. `unique_tracks` mide flujo de personas distintas, que es la
+        semantica de "nivel de actividad" acordada con el usuario.
+
+        `until` acota la ventana por arriba para que la hora EN CURSO (parcial) no
+        contamine su propio baseline. El endpoint llama a este metodo dos veces: una con
+        (now - N dias, inicio de la hora en curso) para el baseline y otra con
+        (inicio de la hora en curso, None) para el "ahora".
+
+        strftime() es especifico de SQLite; ya hay precedente en EventRepo.hourly_counts
+        (repositories.py:162). El proyecto es SQLite-only. Coste medido en 27-RESEARCH Q7:
+        p50 de 11,2 ms sobre 525.600 filas (un año) usando el indice unico
+        (camera_id, minute) que ya existe — NO hace falta indice nuevo, el WHERE se
+        resuelve con un range scan y los strftime se evaluan solo sobre las filas ya
+        filtradas.
+        """
+        conditions = [
+            models.DetectionStat.camera_id == camera_id,
+            models.DetectionStat.minute >= since,
+        ]
+        if until is not None:
+            conditions.append(models.DetectionStat.minute < until)
+        per_day = (
+            select(
+                func.strftime("%Y-%m-%d", models.DetectionStat.minute).label("day"),
+                func.strftime("%H", models.DetectionStat.minute).label("hour"),
+                func.sum(models.DetectionStat.unique_tracks).label("total"),
+                func.count().label("mins"),
+            )
+            .where(and_(*conditions))
+            .group_by(text("day"), text("hour"))
+            .subquery()
+        )
+        stmt = (
+            select(
+                per_day.c.hour,
+                func.avg(per_day.c.total).label("avg_total"),
+                func.count().label("sample_days"),
+                func.sum(per_day.c.mins).label("mins"),
+            )
+            .group_by(per_day.c.hour)
+            .order_by(per_day.c.hour)
+        )
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            return {
+                row.hour: {
+                    "avg_total": float(row.avg_total),
+                    "sample_days": int(row.sample_days),
+                    "mins": int(row.mins),
+                    "avg_per_minute": float(row.avg_total) / max(1.0, row.mins / row.sample_days),
+                }
+                for row in result.all()
+            }
+
 
 class RecordingRepo:
     """Owns the recordings table: clip metadata, upload-queue state, retention."""
