@@ -809,3 +809,13 @@ def TEST_set_object_detection_classes_does_not_restart_worker():
     detector.set_classes.assert_called_once_with([0, 24])
     pipeline.detection.set_object_classes.assert_called_once_with({24})
     pipeline.detection.stop.assert_not_called()
+
+
+# ─── StreamingWorker recibe la misma fuente de objetos que expone la API (27-08) ─
+def TEST_streaming_factory_wires_object_boxes_provider():
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline("cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock())
+    factory = pipeline.supervisor._entries["streaming"].factory
+    worker = factory()
+    assert worker._object_boxes == pipeline.get_object_boxes
