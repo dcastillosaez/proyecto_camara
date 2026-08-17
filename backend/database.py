@@ -42,6 +42,13 @@ class Zone(Base):
     polygon_json = Column(String, nullable=False)  # JSON: [[x_frac, y_frac], ...]
     enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.datetime.now)
+    # Copiada caracter a caracter de storage/models.py:168 para que ambos ORM mapeen la
+    # MISMA columna fisica. La columna ya existe en toda instalacion gracias a
+    # _add_missing_columns (migrations.py:103-108): esto es codigo, no migracion.
+    # Convencion de la Fase 27: kind == "exclude_objects" marca una zona en la que los
+    # objetos nunca son candidatos a OBJECT_LEFT (mobiliario fijo revelado despues del
+    # arranque — guarda (b) de 27-RESEARCH.md Q2).
+    kind = Column(String(30), nullable=True)
 
 
 class Capture(Base):
@@ -303,6 +310,7 @@ async def get_zones() -> list[dict[str, Any]]:
                 "name": z.name,
                 "polygon_json": z.polygon_json,
                 "enabled": bool(z.enabled),
+                "kind": z.kind,
                 "created_at": z.created_at.isoformat(),
             }
             for z in result.scalars().all()
