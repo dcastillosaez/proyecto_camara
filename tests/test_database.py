@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 import backend.database as db_module
+from backend.database import Zone
 
 
 @pytest_asyncio.fixture
@@ -307,6 +308,36 @@ async def TEST_028_purge_old_recordings_returns_zero_when_nothing_old(isolated_d
 # Se insertan 3 eventos en días distintos y se borra el rango [t1, t2];
 # el evento del día 3 debe quedar intacto con su timestamp original.
 # ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# get_zones / kind
+# ---------------------------------------------------------------------------
+
+# ─── get_zones() expone kind del ORM legacy (Fase 27, BEH-07) ────────────────
+# `zones.kind` ya existia fisicamente (migrations.py:103-108) y el ZoneRepo v2
+# ya lo devolvia; el que se habia quedado atras era el Zone legacy de este
+# fichero, que es justo el que main.py:468 usa para alimentar al
+# DetectionWorker. Sin esto, el pipeline nunca veria kind="exclude_objects".
+# ─────────────────────────────────────────────────────────────────────────────
+async def TEST_get_zones_returns_kind(isolated_db):
+    """get_zones() includes kind, both when set and when left as the default None."""
+    sf = db_module.get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            session.add(Zone(
+                id="z1", name="Furniture", polygon_json="[]", enabled=True,
+                created_at=datetime.datetime.now(), kind="exclude_objects",
+            ))
+            session.add(Zone(
+                id="z2", name="Entrance", polygon_json="[]", enabled=True,
+                created_at=datetime.datetime.now(),
+            ))
+
+    zones = await db_module.get_zones()
+    by_id = {z["id"]: z for z in zones}
+    assert by_id["z1"]["kind"] == "exclude_objects"
+    assert by_id["z2"]["kind"] is None
+
+
 async def TEST_029_delete_events_range_removes_in_range(isolated_db):
     """delete_events_range removes only events within [from_dt, to_dt]."""
     t1 = datetime.datetime(2026, 1, 1, 10, 0)

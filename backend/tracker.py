@@ -150,3 +150,55 @@ class PersonTracker:
                 triggering_anchors=[sv.Position.BOTTOM_CENTER],
                 minimum_crossing_threshold=self.CROSSING_THRESHOLD,
             )
+
+
+class ObjectTracker:
+    """ByteTrack dedicado a las clases de objeto (Fase 27, BEH-06/BEH-07).
+
+    Existe porque sv.ByteTrack es class-agnostic: el tensor que entra al matcher se
+    construye solo con xyxy y confidence (supervision/tracker/byte_tracker/core.py:104-110)
+    y el reensamblado del tracker_id es una asignacion humgara por IoU con umbral 0,5.
+    Reproducido en 27-RESEARCH.md Q4: un track de mochila le TRANSFIERE su id a una
+    persona colocada casi en la misma caja. Un tracker por grupo de clases es la unica
+    forma de que la identidad no migre entre clases.
+
+    Diferencias deliberadas con PersonTracker:
+    - SIN suavizado de detecciones entre frames: ese suavizado hace deepcopy del
+      elemento MAS VIEJO del deque y solo promedia xyxy/confidence, asi que congelaria
+      class_id hasta 5 frames (0,6 s a 8 FPS, medido) y retrasaria la desaparicion otro
+      tanto. Justo las dos señales que BEH-07 necesita frescas.
+    - SIN contador de cruce de linea (la Fase 4 en produccion): el conteo es de
+      personas y solo debe ver personas.
+    - SIN anotadores: el overlay de objetos se dibuja aparte, con color propio.
+    """
+
+    LOST_TRACK_BUFFER = 60
+
+    def __init__(self, frame_rate: int = 15) -> None:
+        # Mismo motivo que en PersonTracker (MEJORAS.md punto 14): ByteTrack calcula
+        # max_time_lost = frame_rate/30 * lost_track_buffer, asi que con el default (30)
+        # y un stream real a ~15 FPS el buffer efectivo en segundos era el doble.
+        self._byte_tracker = sv.ByteTrack(
+            lost_track_buffer=self.LOST_TRACK_BUFFER, frame_rate=frame_rate
+        )
+        self._lock = threading.Lock()
+
+    def update(self, detections: sv.Detections) -> sv.Detections:
+        """Trackea las detecciones de objeto. Devuelve solo sv.Detections: sin
+        cruces de linea, sin suavizado, sin anotar."""
+        return self._byte_tracker.update_with_detections(detections)
+
+    def set_frame_rate(self, frame_rate: float) -> None:
+        """
+        Sync ByteTrack's lost-track window to a new effective frame rate
+        (Fase 18: AdaptiveRate cambia el ritmo de detección en caliente).
+
+        Muta ``max_time_lost`` directamente en vez de recrear el
+        ``ByteTrack`` — recrearlo perdería todos los tracks activos y sus
+        IDs. Es el mismo cálculo que hace ``ByteTrack.__init__``
+        internamente (``max_time_lost = frame_rate/30 * lost_track_buffer``).
+        """
+        with self._lock:
+            self._byte_tracker.max_time_lost = int(
+                frame_rate / 30.0 * self.LOST_TRACK_BUFFER
+            )

@@ -27,6 +27,7 @@ from backend.events.types import Event, EventType
 from backend.observability.latency import LatencyTracker, Stage
 from backend.perception.behavior import BehaviorAnalyzer
 from backend.perception.face.identity import IdentityStateMachine, TemporalVoter
+from backend.perception.objects import ObjectAnalyzer, ObjectObservation
 from backend.perception.reid.gallery import TrackGallery
 from backend.pipeline.broker import Frame, FrameBroker
 from backend.pipeline.recording import RecordingWorker
@@ -360,3 +361,44 @@ def TEST_zone_entry_at_bounded():
 
     assert engine._zone_entry_at["z1"] == {}
     assert engine._zone_entry_at["z2"] == {}
+
+
+def _obj_at(tid: int) -> ObjectObservation:
+    return ObjectObservation(
+        track_id=tid, x=1.0, y=1.0, class_id=24, class_name="backpack",
+        bbox=(0.0, 0.0, 10.0, 10.0),
+    )
+
+
+# ─── ObjectAnalyzer: _aggs / _ignored no acumulan objetos efimeros ───────────
+# ByteTrack asigna ids monotonamente crecientes y nunca los reutiliza, y el
+# ObjectTracker de objetos tiene su propio contador (27-RESEARCH Q2/Q4). Sin
+# doble guarda (TTL de state_ttl + cota dura max_tracks) un proceso 24/7 haria
+# crecer _aggs con cada objeto que pasa y _ignored con cada objeto nacido dentro
+# de la ventana de warmup o dentro de una zona de exclusion.
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_object_analyzer_bounded():
+    analyzer = ObjectAnalyzer(max_tracks=256, state_ttl=30.0)
+    for tid in range(10_000):
+        now = float(tid)
+        analyzer.analyze([_obj_at(tid)], [], now)
+        analyzer.prune(now, seen_ids={tid})
+    assert len(analyzer._aggs) <= 256
+    assert len(analyzer._ignored) <= 256
+
+
+def TEST_object_analyzer_bounded_without_prune():
+    """La cota dura actua aunque el mantenimiento periodico nunca se ejecute."""
+    analyzer = ObjectAnalyzer(max_tracks=256)
+    for tid in range(10_000):
+        analyzer.analyze([_obj_at(tid)], [], float(tid))
+    assert len(analyzer._aggs) <= 256
+
+
+def TEST_object_analyzer_ignored_bounded():
+    """Los ids ignorados por warmup son la estructura NUEVA de esta fase: 10.000
+    objetos naciendo dentro de la ventana de warmup no pueden dejar 10.000 entradas."""
+    analyzer = ObjectAnalyzer(max_tracks=256, warmup_secs=1e9)
+    for tid in range(10_000):
+        analyzer.analyze([_obj_at(tid)], [], float(tid) * 0.001)
+    assert len(analyzer._ignored) <= 256

@@ -12,6 +12,7 @@ import pytest
 import supervision as sv
 
 from backend.perception.behavior import BehaviorAnalyzer, BehaviorKind
+from backend.perception.objects import ObjectAnalyzer, ObjectFinding, ObjectKind
 from backend.pipeline.broker import Frame, FrameBroker
 from backend.pipeline.detection import DetectionWorker
 from backend.pipeline.rate import AdaptiveRate
@@ -260,6 +261,22 @@ def _tracked_at(boxes, tids) -> sv.Detections:
     return det
 
 
+def _tracked_cls(boxes, tids, class_ids, names=None) -> sv.Detections:
+    """Variante de _tracked_at con class_id REAL y data["class_name"].
+
+    Los helpers existentes ponen class_id a ceros, asi que no sirven para probar la
+    particion por clase: todo pareceria persona.
+    """
+    det = sv.Detections(
+        xyxy=np.array(boxes, dtype=float),
+        confidence=np.ones(len(tids)),
+        class_id=np.array(class_ids, dtype=int),
+        data={"class_name": np.array(names or [str(c) for c in class_ids])},
+    )
+    det.tracker_id = np.array(tids)
+    return det
+
+
 # ─── PolygonZone cuenta presencia y entradas acumuladas por zona ────────────
 def test_polygon_zone_counts_presence_and_entries():
     import json
@@ -451,3 +468,354 @@ def TEST_behavior_thresholds_reach_the_analyzer():
     assert pipeline.behavior._crowd_threshold == 3
     assert pipeline.behavior._loiter_secs == 7.0
     assert pipeline.behavior._immobile_radius_px == 11.0
+
+
+# ─── Regresion: ByteTrack no es class-aware (Fase 27, 27-RESEARCH.md Q4) ─────
+# El tensor que entra al matcher se construye solo con xyxy y confidence
+# (supervision/tracker/byte_tracker/core.py:104-110) y el reensamblado del
+# tracker_id es una asignacion humgara por IoU con umbral 0,5. El research
+# reprodujo que un track de mochila le TRANSFIERE su id a una persona colocada
+# casi en la misma caja. Sin la particion por clase, activar "car" haria que los
+# vehiculos sumaran al conteo de linea de la Fase 4 — que esta en produccion —,
+# RecognitionWorker buscaria caras en mochilas y accumulate_detections
+# contaminaria detection_stats, que es la fuente del baseline de BEH-09.
+# Estos tests son la barrera que impide que eso vuelva a ser posible.
+# ───────────────────────────────────────────────────────────────────────────
+def TEST_object_class_does_not_reach_line_zone():
+    from backend.tracker import PersonTracker
+
+    worker = _worker_for_zones()
+    line_start, line_end = sv.Point(0, 300), sv.Point(640, 300)
+    # Pasos de 10px: ByteTrack matchea por IoU (umbral 0,8) entre frames, asi que
+    # saltos grandes de posicion perderian el tracker_id y falsearia el test.
+    person_ys = list(range(230, 340, 10))  # cruza y=300 hacia abajo
+
+    # Escenario A: persona cruzando la linea, con un coche solapado cada frame
+    tracker_a = PersonTracker(line_start, line_end, frame_rate=15)
+    for y in person_ys:
+        mixed = _tracked_cls(
+            boxes=[[300, y, 340, y + 60], [10, 10, 60, 60]],
+            tids=[1, 2], class_ids=[0, 2], names=["person", "car"],
+        )
+        person_dets, _ = worker._split_by_class(mixed)
+        tracker_a.update(person_dets)
+
+    # Escenario B: la misma persona, sin ningun coche en la entrada
+    tracker_b = PersonTracker(line_start, line_end, frame_rate=15)
+    for y in person_ys:
+        person_only = _tracked_cls([[300, y, 340, y + 60]], [1], [0], names=["person"])
+        tracker_b.update(person_only)
+
+    assert tracker_a.get_counts() == tracker_b.get_counts()
+    assert tracker_a.get_counts()["total"] >= 1  # confirma que la linea SI se cruzo
+
+
+def TEST_objects_not_in_registry():
+    from backend.tracker import ObjectTracker, PersonTracker
+
+    broker = FrameBroker()
+    person_tracker = PersonTracker(sv.Point(0, 300), sv.Point(640, 300), frame_rate=15)
+    object_tracker = ObjectTracker(frame_rate=15)
+    registry = TrackRegistry()
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), person_tracker, registry, AdaptiveRate(),
+        object_tracker=object_tracker, object_class_ids={2},
+    )
+
+    mixed = _tracked_cls(
+        boxes=[[300, 200, 340, 260], [500, 200, 540, 260], [10, 10, 60, 60]],
+        tids=[1, 2, 3], class_ids=[0, 0, 2], names=["person", "person", "car"],
+    )
+    person_dets, object_dets = worker._split_by_class(mixed)
+    tracked, _ = person_tracker.update(person_dets)
+    obj_tracked = object_tracker.update(object_dets)
+
+    now = time.monotonic()
+    registry.update_from_detections(tracked, now)
+    worker._emit_track_lifecycle(tracked, captured_at=0.0, processed_at=now)
+    worker._update_object_boxes(obj_tracked)
+
+    assert len(tracked) == 2  # solo las 2 personas llegaron al tracker de personas
+    assert registry.frame_ids() == {int(tid) for tid in tracked.tracker_id}
+    assert len(registry.snapshot()) == 2  # el coche NUNCA entra en el registry
+    assert len(worker.get_object_boxes()) == 1
+    assert worker.get_object_boxes()[0]["class_name"] == "car"
+
+
+def TEST_bytetrack_ids_do_not_migrate_between_classes():
+    """El test que reproduce el hallazgo (27-RESEARCH.md Q4): sv.ByteTrack construye
+    el tensor del matcher solo con xyxy y confidence
+    (supervision/tracker/byte_tracker/core.py:104-110), asi que sin particion por
+    clase el id de un track de mochila "perdido" puede reasignarse a una persona que
+    aparece casi en la misma caja (reasignacion humgara con umbral IoU 0,5).
+
+    El punto NO es que los ids sean numeros concretos (ambos ByteTrack empiezan en
+    1 de forma independiente) sino que el tracker de personas nunca procesa la caja
+    de la mochila: su primer id nace en el frame en el que aparece la persona, no se
+    hereda de otro track.
+    """
+    from backend.tracker import ObjectTracker, PersonTracker
+
+    backpack_box = [300, 300, 400, 500]
+    person_box = [300, 305, 405, 505]  # solapa fuertemente con la mochila
+
+    # --- Reproduccion del bug: un unico ByteTrack para las dos clases ---------
+    shared = sv.ByteTrack(lost_track_buffer=60, frame_rate=15)
+    out = None
+    for _ in range(5):
+        out = shared.update_with_detections(
+            _tracked_cls([backpack_box], [1], [24], names=["backpack"])
+        )
+    backpack_id = int(out.tracker_id[0])
+    # la mochila desaparece; en su lugar llega una persona casi en la misma caja
+    reassigned = shared.update_with_detections(
+        _tracked_cls([person_box], [1], [0], names=["person"])
+    )
+    assert int(reassigned.tracker_id[0]) == backpack_id  # bug reproducido
+
+    # --- Con la particion de la Fase 27: dos ByteTrack independientes ---------
+    object_tracker = ObjectTracker(frame_rate=15)
+    for _ in range(5):
+        object_tracker.update(_tracked_cls([backpack_box], [1], [24], names=["backpack"]))
+
+    person_tracker = PersonTracker(sv.Point(0, 5000), sv.Point(1, 5001), frame_rate=15)
+    assert len(person_tracker._byte_tracker.tracked_tracks) == 0  # nunca vio nada aun
+    tracked, _ = person_tracker.update(
+        _tracked_cls([person_box], [1], [0], names=["person"])
+    )
+
+    assert tracked.tracker_id is not None
+    assert int(tracked.tracker_id[0]) == 1  # nace en este frame: sin historia que heredar
+    assert object_tracker._byte_tracker is not person_tracker._byte_tracker
+
+
+def TEST_split_by_class_preserves_class_name():
+    worker = _worker_for_zones()
+    worker.set_object_classes({24})
+    mixed = _tracked_cls(
+        boxes=[[10, 10, 50, 50], [100, 100, 140, 140]],
+        tids=[1, 2], class_ids=[0, 24], names=["person", "backpack"],
+    )
+
+    person_dets, object_dets = worker._split_by_class(mixed)
+
+    assert list(person_dets.data["class_name"]) == ["person"]
+    assert list(object_dets.data["class_name"]) == ["backpack"]
+
+
+def TEST_sync_frame_rate_reaches_both_trackers():
+    broker = FrameBroker()
+    tracker = MagicMock()
+    object_tracker = MagicMock()
+    rate = MagicMock()
+    rate.effective_fps = 6.0
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), tracker, TrackRegistry(), rate,
+        object_tracker=object_tracker,
+    )
+
+    worker._sync_tracker_frame_rate()
+
+    tracker.set_frame_rate.assert_called_once_with(6.0)
+    object_tracker.set_frame_rate.assert_called_once_with(6.0)
+
+
+def TEST_no_object_classes_behaves_like_today():
+    worker = _worker_for_zones()  # object_tracker=None, object_class_ids vacio por defecto
+    sv_dets = _tracked_cls(
+        boxes=[[10, 10, 50, 50], [60, 60, 100, 100]],
+        tids=[1, 2], class_ids=[0, 0], names=["person", "person"],
+    )
+
+    person_dets, object_dets = worker._split_by_class(sv_dets)
+
+    assert len(person_dets) == len(sv_dets)
+    assert len(object_dets) == 0
+    assert worker._object_tracker is None
+
+
+def TEST_object_boxes_snapshot_is_a_copy():
+    worker = _worker_for_zones()
+    obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
+    worker._update_object_boxes(obj_tracked)
+
+    snap = worker.get_object_boxes()
+    snap[0]["class_name"] = "mutated"
+
+    assert worker.get_object_boxes()[0]["class_name"] == "backpack"
+
+
+# ─── Cableado del ObjectAnalyzer en el hilo de deteccion (Fase 27, BEH-07) ───
+
+def TEST_object_left_emitted_from_worker():
+    broker = FrameBroker()
+    event_engine = MagicMock()
+    analyzer = ObjectAnalyzer(left_secs=1.0, warmup_secs=0.0, gone_secs=0.5)
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+        event_engine=event_engine,
+        objects=analyzer,
+    )
+    no_persons = sv.Detections.empty()
+    obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
+
+    worker._analyze_objects(obj_tracked, no_persons, captured_at=0.0, processed_at=0.0)
+    worker._analyze_objects(obj_tracked, no_persons, captured_at=1.5, processed_at=1.5)
+
+    event_engine.emit_object.assert_called()
+    finding = event_engine.emit_object.call_args[0][0]
+    assert finding.kind == ObjectKind.LEFT
+
+
+def TEST_object_analysis_failure_does_not_kill_thread():
+    broker = FrameBroker()
+    event_engine = MagicMock()
+    objects = MagicMock()
+    objects.analyze.side_effect = RuntimeError("boom")
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+        event_engine=event_engine,
+        objects=objects,
+    )
+    obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
+
+    worker._analyze_objects(obj_tracked, sv.Detections.empty(), captured_at=0.0, processed_at=0.0)
+
+    assert worker._exceptions == 1
+    event_engine.emit_object.assert_not_called()
+
+
+def TEST_object_prune_findings_are_emitted():
+    """Protege contra ignorar el retorno de prune(): OBJECT_REMOVED se decide ahi."""
+    broker = FrameBroker()
+    event_engine = MagicMock()
+    objects = MagicMock()
+    objects.analyze.return_value = []
+    removed = ObjectFinding(kind=ObjectKind.REMOVED, track_id=1, class_name="backpack")
+    objects.prune.return_value = [removed]
+    worker = DetectionWorker(
+        broker.subscribe("detector"), MagicMock(), MagicMock(),
+        TrackRegistry(), AdaptiveRate(),
+        event_engine=event_engine,
+        objects=objects,
+    )
+    obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
+
+    worker._analyze_objects(obj_tracked, sv.Detections.empty(), captured_at=0.0, processed_at=0.0)
+
+    event_engine.emit_object.assert_called_once()
+    finding = event_engine.emit_object.call_args[0][0]
+    assert finding is removed
+    assert finding.kind == ObjectKind.REMOVED
+
+
+def TEST_excluded_zone_suppresses_object_candidate():
+    import json
+
+    worker = _worker_for_zones()
+    event_engine = MagicMock()
+    worker._event_engine = event_engine
+    objects = MagicMock()
+    objects.analyze.return_value = []
+    objects.prune.return_value = []
+    worker._objects = objects
+    worker.set_zones([{
+        "id": "zex", "name": "Exclusion", "kind": "exclude_objects", "enabled": True,
+        "polygon_json": json.dumps([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+    }])
+    worker._update_zones_and_heat(sv.Detections.empty(), (360, 640, 3))
+    obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
+
+    worker._analyze_objects(obj_tracked, sv.Detections.empty(), captured_at=0.0, processed_at=0.0)
+
+    observations = objects.analyze.call_args[0][0]
+    assert observations[0].excluded is True
+
+
+# ─── ObjectAnalyzer y ObjectTracker sobreviven a un reinicio del worker ──────
+# Se construyen FUERA de _make_detection (manager.py): el supervisor re-ejecuta
+# la factoria en cada reinicio y construirlos dentro borraria anclas, latches, la
+# marca de arranque y el contador de ids de objeto. Consecuencia concreta: la
+# ventana de warmup se reabriria, todo el mobiliario fijo volveria a "aparecer" y
+# a los 60 s habria una rafaga de OBJECT_LEFT — que es WARNING y por tanto sube
+# un clip a Google Drive por cada mueble. Mismo motivo que la FSM de identidad
+# (Fase 24), la galeria ReID (Fase 25) y el BehaviorAnalyzer (Fase 26).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def TEST_object_analyzer_survives_worker_restart():
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline("cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock())
+
+    factory = pipeline.supervisor._entries["detector"].factory
+    worker1 = factory()
+    analyzer = pipeline.objects
+    assert analyzer is not None
+    assert worker1._objects is analyzer
+
+    worker2 = factory()
+    assert worker2 is not worker1
+    assert pipeline.objects is analyzer      # misma instancia, no una nueva
+    assert worker2._objects is analyzer
+
+
+def TEST_object_tracker_survives_worker_restart():
+    """Si el ObjectTracker se reconstruyera, los track_id de objeto volverian a 1 y
+    todo el mobiliario "aparecería" otra vez."""
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline("cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock())
+
+    factory = pipeline.supervisor._entries["detector"].factory
+    worker1 = factory()
+    tracker = pipeline.object_tracker
+    assert tracker is not None
+    assert worker1._object_tracker is tracker
+
+    worker2 = factory()
+    assert worker2 is not worker1
+    assert pipeline.object_tracker is tracker  # misma instancia, no una nueva
+    assert worker2._object_tracker is tracker
+
+
+def TEST_objects_disabled_leaves_pipeline_without_analyzer():
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline(
+        "cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock(), objects_enabled=False
+    )
+
+    assert pipeline.objects is None
+    assert pipeline.object_tracker is None
+
+    factory = pipeline.supervisor._entries["detector"].factory
+    worker = factory()
+    assert worker is not None
+    assert worker._objects is None
+    assert worker._object_tracker is None
+
+
+def TEST_set_object_detection_classes_does_not_restart_worker():
+    from backend.pipeline.manager import CameraPipeline
+
+    detector = MagicMock()
+    pipeline = CameraPipeline("cam1", "rtsp://fake", detector=detector, tracker=MagicMock())
+    pipeline.detection = MagicMock()
+
+    pipeline.set_detection_classes([0, 24])
+
+    detector.set_classes.assert_called_once_with([0, 24])
+    pipeline.detection.set_object_classes.assert_called_once_with({24})
+    pipeline.detection.stop.assert_not_called()
+
+
+# ─── StreamingWorker recibe la misma fuente de objetos que expone la API (27-08) ─
+def TEST_streaming_factory_wires_object_boxes_provider():
+    from backend.pipeline.manager import CameraPipeline
+
+    pipeline = CameraPipeline("cam1", "rtsp://fake", detector=MagicMock(), tracker=MagicMock())
+    factory = pipeline.supervisor._entries["streaming"].factory
+    worker = factory()
+    assert worker._object_boxes == pipeline.get_object_boxes

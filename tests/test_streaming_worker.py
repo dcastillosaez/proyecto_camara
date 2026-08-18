@@ -108,3 +108,38 @@ def test_client_count_never_negative(broker):
     assert worker.stats["clients"] == 0
     worker.client_connected()
     assert worker.stats["clients"] == 1
+
+
+# ─── Overlay de objetos: color propio, via pull (Fase 27, BEH-06) ────────────
+def TEST_object_overlay_drawn_when_boxes_present():
+    boxes = [
+        {"track_id": 1, "class_id": 56, "class_name": "chair", "bbox": (10, 10, 50, 50)},
+    ]
+    worker = StreamingWorker(
+        MagicMock(), TrackRegistry(), _tracker_mock(), object_boxes=lambda: boxes
+    )
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+
+    annotated = worker._annotate(frame)
+
+    assert not np.array_equal(annotated, frame)
+
+
+def TEST_no_object_overlay_when_provider_returns_empty():
+    worker = StreamingWorker(
+        MagicMock(), TrackRegistry(), _tracker_mock(), object_boxes=lambda: []
+    )
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+
+    annotated = worker._annotate(frame)
+
+    assert np.array_equal(annotated, frame)
+
+
+def TEST_streaming_worker_without_object_boxes_provider():
+    worker = StreamingWorker(MagicMock(), TrackRegistry(), _tracker_mock())
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+
+    annotated = worker._annotate(frame)
+
+    assert np.array_equal(annotated, frame)

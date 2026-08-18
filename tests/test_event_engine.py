@@ -12,6 +12,7 @@ from backend.events.engine import EventEngine
 from backend.events.types import EventType, Severity
 from backend.perception.behavior import BehaviorFinding, BehaviorKind
 from backend.perception.face.identity import IdentityState, IdentityTransition
+from backend.perception.objects import ObjectFinding, ObjectKind
 
 
 async def wait_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> None:
@@ -397,3 +398,91 @@ async def TEST_zone_dwell_entry_is_popped_on_exit():
     await wait_until(lambda: len(received) == 2)
 
     assert 1 not in engine._zone_entry_at["z1"]
+
+
+# ─── emit_object: la severidad la pone el CATALOGO, no el emisor (Fase 27) ───
+# Al reves que los cuatro comportamientos de la Fase 26, que se quedaron en INFO
+# a proposito para no disparar subidas a Drive, aqui OBJECT_LEFT es WARNING
+# (types.py:55) y por tanto cruza upload_min_severity="warning"
+# (config.py:115 -> recording.py:309): CADA OBJECT_LEFT SUBE UN CLIP A GOOGLE
+# DRIVE. Es una decision tomada con el usuario (se mantiene el contrato ya
+# publicado del catalogo) y este test es el sitio donde queda documentada.
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def TEST_emit_object_translates_both_kinds():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.emit_object(
+        ObjectFinding(kind=ObjectKind.LEFT, track_id=11, class_name="backpack",
+                      duration_s=61.0), now,
+    )
+    engine.emit_object(
+        ObjectFinding(kind=ObjectKind.REMOVED, track_id=12, class_name="backpack",
+                      duration_s=90.0), now,
+    )
+    await wait_until(lambda: len(received) == 2)
+
+    assert {e.type for e in received} == {EventType.OBJECT_LEFT, EventType.OBJECT_REMOVED}
+
+
+async def TEST_emit_object_payload_carries_magnitudes():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.emit_object(
+        ObjectFinding(kind=ObjectKind.LEFT, track_id=11, duration_s=61.0,
+                      class_name="backpack", net_displacement_px=12.0), now,
+    )
+    await wait_until(lambda: len(received) == 1)
+
+    event = received[0]
+    assert event.payload["duration_s"] == 61.0
+    assert event.payload["class_name"] == "backpack"
+    assert "person_distance_px" not in event.payload
+    assert all(v is not None for v in event.payload.values())
+
+
+async def TEST_emit_object_severity_comes_from_catalog():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.emit_object(
+        ObjectFinding(kind=ObjectKind.LEFT, track_id=11, duration_s=61.0), now,
+    )
+    engine.emit_object(
+        ObjectFinding(kind=ObjectKind.REMOVED, track_id=12, duration_s=90.0), now,
+    )
+    await wait_until(lambda: len(received) == 2)
+
+    left = next(e for e in received if e.type is EventType.OBJECT_LEFT)
+    removed = next(e for e in received if e.type is EventType.OBJECT_REMOVED)
+    assert left.severity is Severity.WARNING
+    assert removed.severity is Severity.INFO
+
+
+async def TEST_emit_object_carries_bbox_as_first_class_field():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.emit_object(
+        ObjectFinding(kind=ObjectKind.LEFT, track_id=11, duration_s=61.0,
+                      bbox=(10.0, 20.0, 30.0, 40.0)), now,
+    )
+    await wait_until(lambda: len(received) == 1)
+
+    event = received[0]
+    assert event.bbox == (10.0, 20.0, 30.0, 40.0)
+    assert "bbox" not in event.payload
+
+
+async def TEST_config_changed_is_emitted_with_detail():
+    engine, received = make_engine()
+    now = datetime.datetime(2026, 4, 16, 18, 30)
+
+    engine.config_changed(now, classes=[0, 24])
+    await wait_until(lambda: len(received) == 1)
+
+    event = received[0]
+    assert event.type is EventType.CONFIG_CHANGED
+    assert event.payload["classes"] == [0, 24]

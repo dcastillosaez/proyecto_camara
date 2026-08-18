@@ -20,6 +20,7 @@ from backend.events.bus import EventBus
 from backend.events.types import Event, EventType, Severity
 from backend.perception.behavior import BehaviorFinding, BehaviorKind
 from backend.perception.face.identity import IdentityState, IdentityTransition
+from backend.perception.objects import ObjectFinding, ObjectKind
 from backend.storage.repositories import DetectionStatRepo
 
 if TYPE_CHECKING:
@@ -31,6 +32,11 @@ _BEHAVIOR_EVENT_TYPE: dict[BehaviorKind, EventType] = {
     BehaviorKind.RUNNING: EventType.RUNNING,
     BehaviorKind.IMMOBILE: EventType.IMMOBILE,
     BehaviorKind.CROWD: EventType.CROWD_DETECTED,
+}
+
+_OBJECT_EVENT_TYPE: dict[ObjectKind, EventType] = {
+    ObjectKind.LEFT: EventType.OBJECT_LEFT,
+    ObjectKind.REMOVED: EventType.OBJECT_REMOVED,
 }
 
 
@@ -265,6 +271,57 @@ class EventEngine:
             zone_id=finding.zone_id,
             payload=finding.magnitudes(),
         )
+
+    # ------------------------------------------------------------------
+    # Objetos (Fase 27)
+    # ------------------------------------------------------------------
+
+    def emit_object(
+        self,
+        finding: ObjectFinding,
+        now: datetime.datetime,
+        captured_at: float | None = None,
+        processed_at: float | None = None,
+    ) -> None:
+        """Publica el evento de objeto correspondiente a *finding*, si lo hay.
+
+        La guarda de idempotencia NO esta aqui: vive en el latch por episodio de
+        ObjectAnalyzer (criterio 5 del ROADMAP: una mochila abandonada emite UN unico
+        OBJECT_LEFT), igual que `emits` vive en la FSM para emit_identity y el latch en el
+        analizador para emit_behavior.
+
+        A proposito no se fuerza la severidad desde aqui: asi aplica el default del catalogo
+        (types.py:49-57), es decir OBJECT_LEFT -> WARNING y OBJECT_REMOVED -> INFO. La
+        consecuencia es deliberada y esta decidida con el usuario: WARNING cruza
+        upload_min_severity: "warning" (config.py:115 -> recording.py:309) y por tanto
+        OBJECT_LEFT SUBE EL CLIP A GOOGLE DRIVE. Un objeto abandonado es exactamente lo
+        que quieres tener grabado; lo que hay que vigilar es la tasa de falsos positivos
+        (checkpoint manual de 27-11).
+        """
+        event_type = _OBJECT_EVENT_TYPE.get(finding.kind)
+        if event_type is None:
+            return
+        self._publish(
+            event_type,
+            ts=now,
+            captured_at=captured_at,
+            processed_at=processed_at,
+            track_id=finding.track_id,
+            zone_id=finding.zone_id,
+            bbox=finding.bbox,
+            payload=finding.magnitudes(),
+        )
+
+    def config_changed(self, now: datetime.datetime, **detail: Any) -> None:
+        """Deja rastro en el historico de un cambio de configuracion en caliente.
+
+        EventType.CONFIG_CHANGED existe en el catalogo desde la Fase 19 y hasta ahora
+        nadie lo emitia. La Fase 27 lo estrena desde el PUT de clases activas: sin roles
+        en el sistema (la auth es todo-o-nada), la trazabilidad de quien/cuando cambio la
+        configuracion de deteccion es la unica mitigacion disponible (ASVS V4).
+        Sin severity= explicita: cae en INFO por el catalogo.
+        """
+        self._publish(EventType.CONFIG_CHANGED, ts=now, payload=dict(detail))
 
     # ------------------------------------------------------------------
     # Detection aggregation — one row per minute, never per detection (ADR-06)
