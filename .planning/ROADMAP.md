@@ -517,13 +517,24 @@ Plans:
 **Depends on**: Phase 21
 **Requirements**: OPS-01, OPS-02, OPS-03
 **Success Criteria**:
-  1. La estructura css/ + js/{views,components} existe e index.html baja de 1843 a menos de 300 líneas
+  1. La estructura css/ + js/{views,components} existe e index.html no contiene lógica: cero `<script>`/`<style>` inline, solo shell (marcado, contenedores con `id`, `<link>` a los 3 CSS y un único `<script type="module" src="/static/js/app.js">`). El fichero real de partida mide 2.038 líneas (no 1.843 — cifra desactualizada desde antes de la Fase 27-10) y su `<body>` sin `<style>`/`<script>` ya mide 667 líneas; el criterio de líneas no es aplicable a `index.html` en sí (ver 28-CONTEXT.md/28-RESEARCH.md Pitfall 1) — se mide por ausencia de lógica inline, no por recuento
   2. `frontend/js/app.js` es el punto de entrada real, no un placeholder
   3. Ningún módulo supera las 300 líneas y cada uno declara su responsabilidad
   4. Paridad funcional total con v1.2, con checklist manual firmada en el SUMMARY
   5. FastAPI sirve /static y el SRI de Chart.js se mantiene
   6. La carga inicial no supera 1 s en LAN
 **Spec**: SPEC_v2.md ADR-08, §8.2
+**Plans**: 0/9 plans complete (5 waves)
+Plans:
+- [ ] 28-01-PLAN.md — Contrato pytest (tests/test_frontend_modules.py) + extracción CSS (base/layout/components)
+- [ ] 28-02-PLAN.md — views/dashboard.js (núcleo) + views/dashboard-events.js (chart + eventos, ciclo de import real)
+- [ ] 28-03-PLAN.md — views/dashboard-ptz.js + views/dashboard-observability.js
+- [ ] 28-04-PLAN.md — components/videoCanvas.js (dueño de #rec-badge/#res-badge) + components/zoneEditor.js
+- [ ] 28-05-PLAN.md — components/eventCard.js + components/detectionClasses.js
+- [ ] 28-06-PLAN.md — components/personGallery.js + js/api.js
+- [ ] 28-07-PLAN.md — js/websocket.js + verificación cruzada de imports contra 28-02/28-04/28-05
+- [ ] 28-08-PLAN.md — js/app.js (bootstrap real) + reescritura de index.html a shell puro + suite completa en verde
+- [ ] 28-09-PLAN.md — Checkpoint: checklist de paridad funcional + medición de carga en LAN
 
 ### Phase 29: Vista de operaciones
 **Goal**: La pantalla principal responde en 3 segundos a las tres preguntas del operador
