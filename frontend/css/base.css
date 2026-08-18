@@ -1,0 +1,23 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #020617;
+  color: #f8fafc;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.mono { font-family: 'JetBrains Mono', monospace; }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+
+@keyframes pulse-ring {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.35; transform: scale(0.75); }
+}
+.pulse { animation: pulse-ring 2s ease-in-out infinite; }

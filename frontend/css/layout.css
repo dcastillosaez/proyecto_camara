@@ -1,0 +1,9 @@
+/* frontend/css/layout.css
+ * Vacio a proposito: el layout de columnas del dashboard esta expresado como
+ * clases de utilidad de Tailwind directamente en el marcado (frontend/index.html),
+ * no como reglas CSS propias. Verificado en 28-RESEARCH.md: 0 coincidencias de
+ * media queries en el <style> original, y el unico grid de pagina
+ * ("grid grid-cols-1 lg:grid-cols-5 gap-4") es una clase de utilidad Tailwind.
+ * El fichero existe porque la estructura css/base+layout+components esta LOCKED
+ * por ADR-08 (SPEC_v2.md Sec.8.2), aunque hoy no tenga contenido que mover.
+ */
