@@ -347,14 +347,14 @@ No hay más cambios de "estado del arte" relevantes — ES modules nativos lleva
 | A1 | Reformatear el marcado (colapsar atributos multilínea, quitar comentarios banner) puede recortar líneas de forma no trivial pero no se ha demostrado que baste para llegar a <300 líneas de `index.html` | Common Pitfalls → Pitfall 1 | Si el plan asume que "solo reformatear" es suficiente sin medirlo tras hacerlo, el criterio de éxito #1 puede quedar incumplido sin que nadie lo note hasta la puerta de fase |
 | A2 | La cifra "1843" del ROADMAP para el `index.html` de partida es un número desactualizado (no recalculado desde al menos la Fase 27-10) y no una medición reciente | Common Pitfalls → Pitfall 1 | Bajo impacto — no cambia el análisis (el fichero real mide 2038, verificado), solo explica por qué hay una discrepancia con el ROADMAP |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **¿Cómo se alcanza realmente "`index.html` < 300 líneas" dado que el marcado por sí solo mide 667 líneas?**
+1. **(RESUELTO en 28-CONTEXT.md, sección "Resolución de la Open Question...", y en `ROADMAP.md` Success Criteria #1)** ¿Cómo se alcanza realmente "`index.html` < 300 líneas" dado que el marcado por sí solo mide 667 líneas?
    - Qué sabemos: el recuento actual está verificado con precisión (667 líneas de marcado, ~685 en el `index.html` final si se mueve intacto). CONTEXT.md prohíbe explícitamente introducir un sistema de plantillas, y pide mantener los mismos `id` y el mismo marcado.
    - Qué es incierto: si "sin sistema de plantillas" también descarta cargar fragmentos de HTML estático vía `fetch()`+`innerHTML` (que no es un motor de plantillas, pero sí es una decisión de arquitectura nueva no mencionada en CONTEXT.md), o si el número "300" para `index.html` debe renegociarse como parte de esta fase.
    - Recomendación: antes de comprometer tareas de reestructuración de marcado, o bien el planificador escala esta pregunta explícitamente (nueva vuelta corta a discuss-phase, dado que es una decisión de arquitectura, no un detalle de implementación), o el plan documenta expresamente la desviación numérica esperada y por qué, dejando que la puerta de fase la revise con los números reales delante.
 
-2. **¿`videoCanvas.js` debe exponer funciones (`setRecBadge`, `setResolutionBadge`) que los demás módulos importan, o basta con que cada módulo siga tocando `#rec-badge`/`#res-badge` por `id` directamente?**
+2. **(RESUELTO en 28-PATTERNS.md e implementado en 28-04/28-07)** ¿`videoCanvas.js` debe exponer funciones (`setRecBadge`, `setResolutionBadge`) que los demás módulos importan, o basta con que cada módulo siga tocando `#rec-badge`/`#res-badge` por `id` directamente?
    - Qué sabemos: técnicamente ambas opciones funcionan porque los `id` del DOM son globales al documento, no al módulo. CONTEXT.md nombra a `videoCanvas.js` como dueño de "overlay/badges de resolución/REC/detecciones", lo que sugiere la primera opción.
    - Qué es incierto: si "dueño" implica una API exportada obligatoria o es solo una descripción de dónde vive el código que primero pinta esos badges (el `<img>`/overlay), dejando el resto de módulos libres de tocar el DOM del badge directamente como hacen hoy.
    - Recomendación: usar el patrón de funciones exportadas (ver `Code Examples`) por ser más mantenible y no tener coste adicional relevante; no es un bloqueante si el plan decide lo contrario, pero debe ser una decisión consciente, no un descuido.
