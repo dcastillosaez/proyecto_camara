@@ -2,7 +2,7 @@
 import { updateStat, setCamStatus, showToast } from './views/dashboard.js';
 import { updateChart, addEvent, hourlyToArray, bumpHourBar } from './views/dashboard-events.js';
 import { addRecording, updateRecordingStatus } from './components/eventCard.js';
-import { setRecBadge } from './components/videoCanvas.js';
+import { setRecBadge, drawTracks } from './components/videoCanvas.js';
 
 let _ws = null;
 let _wsRetry = 1000;
@@ -65,6 +65,8 @@ export async function connectWS() {
     } else if (msg.type === 'recording_failed') {
       updateRecordingStatus(msg.filename, 'failed');
       setRecBadge(false);
+    } else if (msg.type === 'tracks') {
+      drawTracks(msg.tracks);
     }
   };
 
