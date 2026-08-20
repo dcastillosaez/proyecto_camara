@@ -612,6 +612,32 @@ class RecordingRepo:
                 if row is not None:
                     row.local_path = None
 
+    async def by_trigger_event_ids(self, ids: list[str]) -> dict[str, dict]:
+        """Mapa event_id -> datos de su grabacion, para una pagina completa (<=200 ids).
+
+        events.recording_id NUNCA se escribe: el vinculo real lo pone _on_clip_ready
+        en recordings.trigger_event_id (backend/main.py:353-357). La tabla recordings
+        es pequena y no tiene indice por esa columna; el escaneo es despreciable
+        frente a anadir un quinto indice (30-RESEARCH.md Hallazgo 4).
+        """
+        if not ids:
+            return {}
+        q = (
+            select(models.Recording)
+            .where(models.Recording.trigger_event_id.in_(ids))
+            .order_by(models.Recording.id.asc())
+        )
+        async with self._sf() as session:
+            rows = list((await session.execute(q)).scalars().all())
+        out: dict[str, dict] = {}
+        for row in rows:            # orden ascendente: la ultima gana
+            out[row.trigger_event_id] = {
+                "recording_id": row.id,
+                "local_path": row.local_path,
+                "thumbnail_path": row.thumbnail_path,
+            }
+        return out
+
     async def get(self, recording_id: int) -> dict[str, Any] | None:
         async with self._sf() as session:
             row = await session.get(models.Recording, recording_id)
