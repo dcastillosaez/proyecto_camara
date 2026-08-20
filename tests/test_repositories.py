@@ -70,6 +70,112 @@ async def TEST_query_by_type_and_range(db):
     assert all(datetime.datetime(2026, 1, 1) <= e.ts <= datetime.datetime(2026, 1, 31) for e in items)
 
 
+# ─── Fase 30 (OPS-09): tipo multi-valor, filtro por regla y count() ──────────
+
+
+async def TEST_query_accepts_multiple_types(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 1, 10)))
+    await repo.insert(make_event(type=EventType.INTRUSION, ts=datetime.datetime(2026, 1, 2, 10)))
+    await repo.insert(make_event(type=EventType.UNKNOWN_PERSON, ts=datetime.datetime(2026, 1, 3, 10)))
+
+    items, _ = await repo.query(type=[EventType.INTRUSION, EventType.UNKNOWN_PERSON])
+
+    assert {e.type for e in items} == {EventType.INTRUSION, EventType.UNKNOWN_PERSON}
+    assert [e.ts for e in items] == sorted((e.ts for e in items), reverse=True)
+
+
+async def TEST_query_single_type_still_accepts_enum(db):
+    """La forma antigua (un enum suelto) es la que usa backend/database.py:166."""
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(type=EventType.LINE_CROSSED))
+    await repo.insert(make_event(type=EventType.INTRUSION))
+
+    items, _ = await repo.query(type=EventType.LINE_CROSSED)
+
+    assert len(items) == 1
+    assert items[0].type == EventType.LINE_CROSSED
+
+
+async def TEST_query_filters_by_rule_name(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(payload={"rules": ["Intrusión nocturna"]}))
+    await repo.insert(make_event(payload={"rules": ["Otra"]}))
+    await repo.insert(make_event(payload={"direction": "in"}))  # sin clave 'rules'
+
+    items, _ = await repo.query(rule="Intrusión nocturna")
+
+    assert len(items) == 1
+    assert items[0].payload["rules"] == ["Intrusión nocturna"]
+
+
+async def TEST_query_rule_filter_is_not_interpolated(db):
+    """T-30-05: el nombre de regla viaja por bindparam, jamas por f-string."""
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(payload={"rules": ["Intrusión nocturna"]}))
+
+    items, _ = await repo.query(rule="' OR 1=1 --")
+
+    assert items == []
+
+
+async def TEST_count_matches_query_filters(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1)
+    for i in range(30):
+        await repo.insert(make_event(type=EventType.INTRUSION, ts=base + datetime.timedelta(minutes=i)))
+    for i in range(10):
+        await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=base + datetime.timedelta(minutes=i)))
+
+    items, _ = await repo.query(type=EventType.INTRUSION, limit=10)
+
+    assert len(items) == 10
+    assert await repo.count(type=EventType.INTRUSION) == 30
+    assert await repo.count(type=[EventType.INTRUSION, EventType.LINE_CROSSED]) == 40
+    assert await repo.count() == 40
+
+
+async def TEST_multi_type_query_plan_uses_timeline_index(db):
+    """Pitfall 2: sin el '+' unario SQLite elige idx_events_type_ts y ordena con
+    TEMP B-TREE (medido 54 ms vs 0,52 ms @100k). Se comprueba sobre el SQL real."""
+    import sqlite3
+
+    from sqlalchemy import and_, select
+    from sqlalchemy.dialects import sqlite as sqlite_dialect
+
+    db_file, sf = db
+    seed_events(db_file, n=2_000, days=7, camera_id="cam1")
+
+    conditions, params = EventRepo._filter_conditions(
+        type=[EventType.INTRUSION, EventType.UNKNOWN_PERSON, EventType.LINE_CROSSED],
+        severity=Severity.WARNING,
+    )
+    q = (
+        select(models.Event)
+        .where(and_(*conditions))
+        .order_by(models.Event.ts.desc(), models.Event.id.desc())
+        .limit(50)
+    )
+    if params:
+        q = q.params(**params)
+    sql = str(q.compile(
+        dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}))
+
+    conn = sqlite3.connect(db_file)
+    try:
+        plan = " ".join(str(row) for row in conn.execute("EXPLAIN QUERY PLAN " + sql))
+    finally:
+        conn.close()
+
+    assert "TEMP B-TREE FOR ORDER BY" not in plan, plan
+    assert "idx_events_ts_id" in plan, plan
+
+
 async def TEST_cursor_pagination_is_stable(db):
     _, sf = db
     repo = EventRepo(sf)
