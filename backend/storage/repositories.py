@@ -39,6 +39,15 @@ def _decode_cursor(cursor: str) -> tuple[datetime.datetime, str]:
     return datetime.datetime.fromisoformat(ts_str), id_
 
 
+# Ventana y contiguidad para la asignacion retroactiva por track (Fase 30, OPS-08).
+# Los tracker_id de ByteTrack se reinician al recrear el tracker (backend/tracker.py:181)
+# y la tabla `tracks` nunca se escribe: sin estas dos cotas, un UPDATE por track_id
+# asignaria la identidad a otra persona de otro dia (30-RESEARCH.md Pitfall 3).
+# 60s es holgado: ByteTrack pierde el track a los 60 frames (~4s @15fps).
+TRACK_GAP_SECS = 60.0
+TRACK_WINDOW_HOURS = 6
+
+
 class EventRepo:
     def __init__(self, session_factory) -> None:
         self._sf = session_factory
@@ -209,6 +218,47 @@ class EventRepo:
         async with self._sf() as session:
             result = await session.execute(q)
             return int(result.scalar_one())
+
+    async def track_scope(self, event_id: str) -> dict | None:
+        """Bloque CONTIGUO de eventos del mismo track alrededor de *event_id*.
+
+        Nunca 'WHERE track_id = ?' a secas: se acota por camera_id + ventana de
+        +-TRACK_WINDOW_HOURS y se corta en el primer hueco > TRACK_GAP_SECS.
+        """
+        anchor = await self.get(event_id)
+        if anchor is None or anchor.track_id is None:
+            return None
+        window = datetime.timedelta(hours=TRACK_WINDOW_HOURS)
+        q = (
+            select(models.Event.id, models.Event.ts)
+            .where(and_(
+                models.Event.camera_id == anchor.camera_id,
+                models.Event.track_id == anchor.track_id,
+                models.Event.ts >= anchor.ts - window,
+                models.Event.ts <= anchor.ts + window,
+            ))
+            .order_by(models.Event.ts.asc(), models.Event.id.asc())
+        )
+        async with self._sf() as session:
+            rows = list((await session.execute(q)).all())
+        if not rows:
+            return None
+        idx = next((i for i, r in enumerate(rows) if r.id == anchor.id), None)
+        if idx is None:
+            return None
+        start = idx
+        while start > 0 and (rows[start].ts - rows[start - 1].ts).total_seconds() <= TRACK_GAP_SECS:
+            start -= 1
+        end = idx
+        while end + 1 < len(rows) and (rows[end + 1].ts - rows[end].ts).total_seconds() <= TRACK_GAP_SECS:
+            end += 1
+        block = rows[start:end + 1]
+        return {
+            "event_ids": [r.id for r in block],
+            "count": len(block),
+            "from": block[0].ts,
+            "to": block[-1].ts,
+        }
 
     async def count_since(self, ts_from: datetime.datetime, type: EventType | None = None) -> int:
         conditions = [models.Event.ts >= ts_from]
