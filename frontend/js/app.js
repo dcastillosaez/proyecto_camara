@@ -1,6 +1,6 @@
 // frontend/js/app.js
 import { connectWS } from './websocket.js';
-import { loadInitialData, loadCamStatus } from './views/dashboard.js';
+import { loadInitialData, loadCamStatus, loadPipelineHealth } from './views/dashboard.js';
 import { bindPtzControls } from './views/dashboard-ptz.js';
 import { bindEventFilters } from './views/dashboard-events.js';
 import { loadHealth, loadObservability } from './views/dashboard-observability.js';
@@ -39,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   loadHealth();
   setInterval(loadHealth, 30000);
+  loadPipelineHealth();
 
   loadObservability();
   setInterval(loadObservability, 5000);

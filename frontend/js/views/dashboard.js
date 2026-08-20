@@ -27,24 +27,63 @@ export function showToast(msg, type = 'info', ms = 3500) {
   setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, ms);
 }
 
-// ── Camera online/offline ─────────────────────────────
-let _isOnline = true;
-export function setCamStatus(online) {
-  if (online === _isOnline) return;
-  _isOnline = online;
+// ── Header pipeline status: 3 estados (online/degraded/offline) — OPS-04, D-03 ──
+const STATUS_STYLES = {
+  online:   { wrap: 'bg-green-500/10 border-green-500/30 text-green-400', dot: 'bg-green-400 pulse', text: 'SISTEMA ONLINE' },
+  degraded: { wrap: 'bg-amber-500/10 border-amber-500/30 text-amber-400', dot: 'bg-amber-400 pulse', text: 'SISTEMA DEGRADADO' },
+  offline:  { wrap: 'bg-red-500/10 border-red-500/30 text-red-400',       dot: 'bg-red-400',         text: 'SISTEMA OFFLINE' },
+};
+let _camState = null;
+export function setCamStatus(state) {
+  if (state === _camState) return;
+  _camState = state;
   const wrap = document.getElementById('cam-status');
   const dot  = document.getElementById('status-dot');
   const txt  = document.getElementById('status-text');
-  if (online) {
-    wrap.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-medium';
-    dot.className  = 'w-1.5 h-1.5 rounded-full bg-green-400 pulse';
-    txt.textContent = 'EN VIVO';
-  } else {
-    wrap.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium';
-    dot.className  = 'w-1.5 h-1.5 rounded-full bg-red-400';
-    txt.textContent = 'SIN SEÑAL';
-    showToast('Cámara sin señal — reintentando…', 'warn');
+  const s = STATUS_STYLES[state] || STATUS_STYLES.offline;
+  wrap.className = `flex items-center gap-1.5 px-3 py-1.5 rounded-full border ${s.wrap} text-xs font-medium`;
+  dot.className  = `w-1.5 h-1.5 rounded-full ${s.dot}`;
+  txt.textContent = s.text;
+  if (state === 'offline') showToast('Cámara sin señal — reintentando…', 'warn');
+}
+
+// ── Estado combinado: pipeline health + WebSocket (D-11) ──────────────
+let _wsConnected = true;
+let _wsCloseCount = 0;
+let _pipelineHealth = { connected: true, degraded: false };
+
+export function setWsConnected(connected, closeCount = 0) {
+  _wsConnected = connected;
+  _wsCloseCount = closeCount;
+  computeHeaderState();
+}
+
+export async function loadPipelineHealth() {
+  try {
+    const res = await fetch('/api/v2/cameras/cam1/health');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    _pipelineHealth = { connected: !!d.connected, degraded: !!d.degraded };
+  } catch {
+    _pipelineHealth = { connected: false, degraded: true };
   }
+  computeHeaderState();
+}
+setInterval(loadPipelineHealth, 4000);
+
+function computeHeaderState() {
+  // D-11: un WS caido mas de 1 ciclo de reconexion (>=2 intentos fallidos, _wsCloseCount > 1)
+  // cuenta como degradado. Nunca se usa `dropped`/`frames_dropped_total` aqui (Pitfall 3).
+  const wsDegraded = !_wsConnected && _wsCloseCount > 1;
+  let state;
+  if (!_pipelineHealth.connected) {
+    state = 'offline';
+  } else if (_pipelineHealth.degraded || wsDegraded) {
+    state = 'degraded';
+  } else {
+    state = 'online';
+  }
+  setCamStatus(state);
 }
 
 // ── Stat counter update (with pop animation) ──────────
@@ -68,10 +107,7 @@ async function fetchCounts() {
     updateStat('stat-in',    d.in    ?? 0);
     updateStat('stat-out',   d.out   ?? 0);
     document.getElementById('events-badge').textContent = d.total ?? 0;
-    setCamStatus(true);
-  } catch {
-    setCamStatus(false);
-  }
+  } catch {}
 }
 setInterval(fetchCounts, 2000);
 fetchCounts();

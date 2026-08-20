@@ -1,11 +1,12 @@
 // frontend/js/websocket.js
-import { updateStat, setCamStatus, showToast } from './views/dashboard.js';
+import { updateStat, setWsConnected, renderPersonList, showToast } from './views/dashboard.js';
 import { updateChart, addEvent, hourlyToArray, bumpHourBar } from './views/dashboard-events.js';
 import { addRecording, updateRecordingStatus } from './components/eventCard.js';
 import { setRecBadge, drawTracks } from './components/videoCanvas.js';
 
 let _ws = null;
 let _wsRetry = 1000;
+let _wsCloseCount = 0;
 
 function setWsStatus(connected) {
   const badge = document.getElementById('ws-badge');
@@ -39,7 +40,8 @@ export async function connectWS() {
   _ws.onopen = () => {
     _wsRetry = 1000;
     setWsStatus(true);
-    setCamStatus(true);
+    _wsCloseCount = 0;
+    setWsConnected(true, 0);
   };
 
   _ws.onmessage = (e) => {
@@ -67,10 +69,13 @@ export async function connectWS() {
       setRecBadge(false);
     } else if (msg.type === 'tracks') {
       drawTracks(msg.tracks);
+      renderPersonList(msg.tracks);
     }
   };
 
   _ws.onclose = () => {
+    _wsCloseCount += 1;
+    setWsConnected(false, _wsCloseCount);
     setWsStatus(false);
     setTimeout(connectWS, _wsRetry);
     _wsRetry = Math.min(_wsRetry * 2, 30000);
