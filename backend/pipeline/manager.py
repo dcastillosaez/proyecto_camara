@@ -346,6 +346,31 @@ class CameraPipeline:
     def get_object_boxes(self) -> list[dict]:
         return self.detection.get_object_boxes() if self.detection else []
 
+    def get_person_boxes(self) -> list[dict]:
+        """Bboxes de personas normalizados 0-1, solo lectura (OPS-05, 29-RESEARCH.md Pattern 2).
+
+        Filtra por frame_ids() (visibles en el frame actual), no por snapshot()
+        completo -- de lo contrario se dibujarian boxes fantasma de tracks que
+        llevan hasta 30s sin verse (TrackRegistry.prune ttl, Pitfall 2)."""
+        w, h = self.get_process_size()
+        if w <= 0 or h <= 0:
+            w, h = self.get_native_resolution()
+        if w <= 0 or h <= 0:
+            return []
+        visible = self.registry.frame_ids()
+        out: list[dict] = []
+        for tid, ts in self.registry.snapshot().items():
+            if tid not in visible:
+                continue
+            x1, y1, x2, y2 = ts.bbox
+            out.append({
+                "track_id": tid,
+                "bbox": [x1 / w, y1 / h, x2 / w, y2 / h],
+                "identity_state": ts.identity_state.value,
+                "person_name": ts.person_name,
+            })
+        return out
+
     def get_heatmap(self) -> np.ndarray | None:
         frame = self.get_frame()
         if frame is None or self.detection is None:
