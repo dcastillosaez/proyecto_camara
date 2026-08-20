@@ -567,6 +567,21 @@ Plans:
   5. "Marcar como persona" precarga el crop y actualiza retroactivamente los eventos del track
   6. El centro de alertas agrupa, permite silenciar por regla y muestra qué regla disparó
 **Spec**: SPEC_v2.md §8.1
+**Plans:** 12 plans — `.planning/phases/30-event-timeline-y-centro-de-alertas/`
+
+Plans:
+- [ ] 30-01-PLAN.md — Pipeline de eventos ordenado: `match`/`run_actions`, `payload.rules` y mensaje WS `type:"event"` (OPS-10, OPS-11)
+- [ ] 30-02-PLAN.md — Índice `idx_events_ts_id`, migración de esquema v3 y `EventRepo.query()` multi-tipo/regla + `count()` (OPS-09)
+- [ ] 30-03-PLAN.md — Alcance de track, asignación retroactiva y mapa evento→grabación (OPS-08)
+- [ ] 30-04-PLAN.md — Snapshot de evento: recorte en disco, mount `/snapshots`, throttle y retención (OPS-07, OPS-08)
+- [ ] 30-05-PLAN.md — Router `/api/v2/events`: lista paginada con `media`/`total`, detalle, track-scope y assign-person (OPS-07..09)
+- [ ] 30-06-PLAN.md — Centro de alertas backend: agrupación por regla y silenciado en `app_config` (OPS-11)
+- [ ] 30-07-PLAN.md — Marcado y estilos: card de línea temporal, campana, cajón, modal; retirada del card de eventos (OPS-07, OPS-08, OPS-11)
+- [ ] 30-08-PLAN.md — `timeline-row.js` + `timeline.js`: fila, filtros en servidor, cursor, virtualización y evento en vivo (OPS-07..10)
+- [ ] 30-09-PLAN.md — `alertCenter.js`: badge, cajón, silenciado y top-3 de la Fase 29 (OPS-11)
+- [ ] 30-10-PLAN.md — Cableado: `case 'event'` en el WebSocket, arranque en `app.js` y `LOCKED_JS` (OPS-07, OPS-10, OPS-11)
+- [ ] 30-11-PLAN.md — "Marcar como persona": recorte precargado, aviso de alcance y repintado en sitio (OPS-08)
+- [ ] 30-12-PLAN.md — Puerta de fase: criterio 3 medido con 10.000 eventos, suite completa y checkpoint visual (OPS-07..11)
 
 ### Phase 31: Vista de analítica
 **Goal**: Convertir el histórico en información operativa
