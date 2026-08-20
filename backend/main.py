@@ -196,6 +196,23 @@ async def _housekeeping_loop(interval: float = 60.0) -> None:
                 logger.exception("housekeeping: prune failed for camera %s", pipeline.camera_id)
 
 
+async def _tracks_broadcast_loop(interval: float = 0.5) -> None:
+    """Publica bboxes de personas por /ws a ritmo fijo, desacoplado del DetectionWorker
+    (OPS-05, 29-RESEARCH.md Pattern 1). Solo lectura -- ninguna corrutina ejecuta inferencia,
+    ningun hilo del pipeline se toca (CLAUDE.md invariantes 1/5/6)."""
+    while True:
+        await asyncio.sleep(interval)
+        if camera_manager is None:
+            continue
+        for pipeline in camera_manager.all():
+            boxes = pipeline.get_person_boxes()
+            await _broadcast({
+                "type": "tracks",
+                "camera_id": pipeline.camera_id,
+                "tracks": boxes,
+            })
+
+
 async def _purge_loop() -> None:
     """Delete events and recordings older than the configured retention window. Runs daily."""
     while True:
@@ -538,10 +555,12 @@ async def lifespan(app: FastAPI):
     purge_task = asyncio.create_task(_purge_loop())
     stats_flush_task = asyncio.create_task(_detection_stats_flush_loop())
     housekeeping_task = asyncio.create_task(_housekeeping_loop(settings.housekeeping_secs))
+    tracks_task = asyncio.create_task(_tracks_broadcast_loop())
 
     yield
     if metrics_sampler is not None:
         metrics_sampler.stop()
+    tracks_task.cancel()
     housekeeping_task.cancel()
     stats_flush_task.cancel()
     purge_task.cancel()
