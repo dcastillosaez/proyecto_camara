@@ -27,24 +27,63 @@ export function showToast(msg, type = 'info', ms = 3500) {
   setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, ms);
 }
 
-// ── Camera online/offline ─────────────────────────────
-let _isOnline = true;
-export function setCamStatus(online) {
-  if (online === _isOnline) return;
-  _isOnline = online;
+// ── Header pipeline status: 3 estados (online/degraded/offline) — OPS-04, D-03 ──
+const STATUS_STYLES = {
+  online:   { wrap: 'bg-green-500/10 border-green-500/30 text-green-400', dot: 'bg-green-400 pulse', text: 'SISTEMA ONLINE' },
+  degraded: { wrap: 'bg-amber-500/10 border-amber-500/30 text-amber-400', dot: 'bg-amber-400 pulse', text: 'SISTEMA DEGRADADO' },
+  offline:  { wrap: 'bg-red-500/10 border-red-500/30 text-red-400',       dot: 'bg-red-400',         text: 'SISTEMA OFFLINE' },
+};
+let _camState = null;
+export function setCamStatus(state) {
+  if (state === _camState) return;
+  _camState = state;
   const wrap = document.getElementById('cam-status');
   const dot  = document.getElementById('status-dot');
   const txt  = document.getElementById('status-text');
-  if (online) {
-    wrap.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-medium';
-    dot.className  = 'w-1.5 h-1.5 rounded-full bg-green-400 pulse';
-    txt.textContent = 'EN VIVO';
-  } else {
-    wrap.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium';
-    dot.className  = 'w-1.5 h-1.5 rounded-full bg-red-400';
-    txt.textContent = 'SIN SEÑAL';
-    showToast('Cámara sin señal — reintentando…', 'warn');
+  const s = STATUS_STYLES[state] || STATUS_STYLES.offline;
+  wrap.className = `flex items-center gap-1.5 px-3 py-1.5 rounded-full border ${s.wrap} text-xs font-medium`;
+  dot.className  = `w-1.5 h-1.5 rounded-full ${s.dot}`;
+  txt.textContent = s.text;
+  if (state === 'offline') showToast('Cámara sin señal — reintentando…', 'warn');
+}
+
+// ── Estado combinado: pipeline health + WebSocket (D-11) ──────────────
+let _wsConnected = true;
+let _wsCloseCount = 0;
+let _pipelineHealth = { connected: true, degraded: false };
+
+export function setWsConnected(connected, closeCount = 0) {
+  _wsConnected = connected;
+  _wsCloseCount = closeCount;
+  computeHeaderState();
+}
+
+export async function loadPipelineHealth() {
+  try {
+    const res = await fetch('/api/v2/cameras/cam1/health');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    _pipelineHealth = { connected: !!d.connected, degraded: !!d.degraded };
+  } catch {
+    _pipelineHealth = { connected: false, degraded: true };
   }
+  computeHeaderState();
+}
+setInterval(loadPipelineHealth, 4000);
+
+function computeHeaderState() {
+  // D-11: un WS caido mas de 1 ciclo de reconexion (>=2 intentos fallidos, _wsCloseCount > 1)
+  // cuenta como degradado. Nunca se usa `dropped`/`frames_dropped_total` aqui (Pitfall 3).
+  const wsDegraded = !_wsConnected && _wsCloseCount > 1;
+  let state;
+  if (!_pipelineHealth.connected) {
+    state = 'offline';
+  } else if (_pipelineHealth.degraded || wsDegraded) {
+    state = 'degraded';
+  } else {
+    state = 'online';
+  }
+  setCamStatus(state);
 }
 
 // ── Stat counter update (with pop animation) ──────────
@@ -68,10 +107,7 @@ async function fetchCounts() {
     updateStat('stat-in',    d.in    ?? 0);
     updateStat('stat-out',   d.out   ?? 0);
     document.getElementById('events-badge').textContent = d.total ?? 0;
-    setCamStatus(true);
-  } catch {
-    setCamStatus(false);
-  }
+  } catch {}
 }
 setInterval(fetchCounts, 2000);
 fetchCounts();
@@ -186,3 +222,69 @@ document.getElementById('btn-reboot').addEventListener('click', async () => {
   } catch { showToast('Sin respuesta del servidor', 'error'); }
   finally { setTimeout(() => { btn.disabled = false; }, 8000); }
 });
+
+// ── Filas compactas compartidas por Personas ahora / Alertas activas (D-04/D-05) ──
+function _statusRow(dotClass, mainText, sideText, sideClass = 'text-slate-600') {
+  const row = document.createElement('div');
+  row.className = 'flex items-center gap-2.5 py-1';
+  const dot = document.createElement('span');
+  dot.className = `w-1.5 h-1.5 rounded-full ${dotClass} flex-shrink-0`;
+  dot.setAttribute('aria-hidden', 'true');
+  const main = document.createElement('span');
+  main.className = 'text-xs text-slate-300 flex-1 truncate';
+  main.textContent = mainText;
+  const side = document.createElement('span');
+  side.className = `text-xs ${sideClass}`;
+  side.textContent = sideText;
+  row.append(dot, main, side);
+  return row;
+}
+
+// ── Personas ahora (D-05) — misma fuente que el overlay, sin segunda vía ──
+const IDENTITY_LABEL = { CONFIRMED: 'confirmado', CANDIDATE: 'verificando', UNKNOWN: 'desconocido', TEMPORARILY_LOST: 'desconocido' };
+const IDENTITY_DOT   = { CONFIRMED: 'bg-green-400', CANDIDATE: 'bg-amber-400', UNKNOWN: 'bg-red-400', TEMPORARILY_LOST: 'bg-red-400' };
+
+export function renderPersonList(tracks) {
+  const list  = document.getElementById('persons-now-list');
+  const empty = document.getElementById('persons-now-empty');
+  const count = document.getElementById('persons-now-count');
+  if (!list || !empty || !count) return;
+  const items = tracks || [];
+  count.textContent = items.length;
+  list.innerHTML = '';
+  empty.style.display = items.length ? 'none' : '';
+  items.forEach(t => {
+    const dotClass = IDENTITY_DOT[t.identity_state] || IDENTITY_DOT.UNKNOWN;
+    const label = IDENTITY_LABEL[t.identity_state] || IDENTITY_LABEL.UNKNOWN;
+    list.appendChild(_statusRow(dotClass, t.person_name || 'Desconocido', label));
+  });
+}
+
+// ── Alertas activas: top-3 por severidad (D-04) ────────────────────────
+const SEVERITY_RANK = { critical: 2, warning: 1, info: 0 };
+export async function loadActiveAlerts() {
+  const panel = document.getElementById('alerts-active-list');
+  const empty = document.getElementById('alerts-active-empty');
+  const checkedAt = document.getElementById('alerts-active-checked-at');
+  if (!panel || !empty) return;
+  try {
+    const res = await fetch('/api/v2/events?limit=10');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const alerts = (data.events || [])
+      .filter(e => e.severity && e.severity !== 'info')
+      .sort((a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0))
+      .slice(0, 3);
+    panel.innerHTML = '';
+    empty.style.display = alerts.length ? 'none' : '';
+    alerts.forEach(ev => {
+      const sevClass = ev.severity === 'critical' ? 'bg-red-400' : 'bg-amber-400';
+      const ts = new Date(ev.ts).toLocaleTimeString('es-ES', { hour12: false });
+      panel.appendChild(_statusRow(sevClass, ev.type.replace(/_/g, ' '), ts, 'text-slate-600 mono'));
+    });
+  } catch {
+    empty.style.display = '';
+  }
+  if (checkedAt) checkedAt.textContent = new Date().toLocaleTimeString('es-ES', { hour12: false });
+}
+setInterval(loadActiveAlerts, 5000);

@@ -8,7 +8,8 @@ la capa web: el endpoint /video_feed y el arranque/parada del pipeline.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import numpy as np
@@ -126,3 +127,38 @@ async def TEST_078_mjpeg_generator_tracks_client_lifecycle():
         await gen.aclose()
 
     pipeline.client_disconnected.assert_called_once()
+
+
+# ─── _tracks_broadcast_loop publica bboxes normalizados por /ws a ritmo fijo ──
+# El overlay del frontend (29-02-PLAN.md) depende de recibir exactamente este
+# payload {"type": "tracks", ...} — si el bucle publicara otra forma o llamara
+# a get_object_boxes() por error, el overlay dibujaria datos incorrectos.
+# ─────────────────────────────────────────────────────────────────────────────
+async def TEST_tracks_broadcast_loop_sends_normalized_payload():
+    """_tracks_broadcast_loop publica {"type": "tracks", ...} usando get_person_boxes()."""
+    import backend.main as main_module
+
+    tracks = [{"track_id": 1, "bbox": [0.1, 0.1, 0.2, 0.2], "identity_state": "CONFIRMED", "person_name": "Ana"}]
+    pipeline = MagicMock()
+    pipeline.camera_id = "cam1"
+    pipeline.get_person_boxes.return_value = tracks
+
+    manager = MagicMock()
+    manager.all.return_value = [pipeline]
+
+    broadcast_mock = AsyncMock()
+
+    with (
+        patch.object(main_module, "camera_manager", manager),
+        patch.object(main_module, "_broadcast", broadcast_mock),
+        patch("asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError()])),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await main_module._tracks_broadcast_loop(interval=0.01)
+
+    pipeline.get_person_boxes.assert_called_once()
+    broadcast_mock.assert_awaited_once_with({
+        "type": "tracks",
+        "camera_id": "cam1",
+        "tracks": tracks,
+    })

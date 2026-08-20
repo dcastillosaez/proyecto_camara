@@ -63,3 +63,75 @@ document.getElementById('resolution-select').addEventListener('change', async (e
     sel.disabled = false;
   }
 });
+
+// ── Tracks overlay canvas (OPS-05) ─────────────────────
+// D-09: colores del semáforo de identidad, 2px, sin esquinas redondeadas.
+const STATE_COLOR = {
+  CONFIRMED: '#22c55e',
+  CANDIDATE: '#f59e0b',
+  UNKNOWN: '#ef4444',
+  TEMPORARILY_LOST: '#ef4444',
+};
+
+function syncCanvasToImage(canvas, img) {
+  const rect = img.getBoundingClientRect();
+  canvas.width = rect.width;
+  canvas.height = rect.height;
+}
+
+// D-06/Pitfall 1: object-fit:cover recorta el frame fuente para llenar la
+// caja mostrada — hay que deshacer ese recorte con scale=max()+offset centrado,
+// usando naturalWidth/naturalHeight (resolución intrínseca), nunca width/height
+// (esos reflejan el tamaño mostrado, no el fuente — ver Anti-Patterns).
+function normalizedBoxToCanvasRect(box, img, canvas) {
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const cw = canvas.width, ch = canvas.height;
+  if (!iw || !ih || !cw || !ch) return null;
+  const scale = Math.max(cw / iw, ch / ih);
+  const drawW = iw * scale, drawH = ih * scale;
+  const offsetX = (cw - drawW) / 2;
+  const offsetY = (ch - drawH) / 2;
+  const [x1, y1, x2, y2] = box;
+  return {
+    x: offsetX + x1 * iw * scale,
+    y: offsetY + y1 * ih * scale,
+    w: (x2 - x1) * iw * scale,
+    h: (y2 - y1) * ih * scale,
+  };
+}
+
+// D-07/Pitfall 5: redibuja SOLO cuando se le llama (mensaje 'tracks' a 2Hz) —
+// nunca requestAnimationFrame ni temporizador propio en este módulo.
+export function drawTracks(tracks) {
+  const canvas = document.getElementById('tracks-overlay');
+  const img = document.getElementById('video-feed');
+  if (!canvas || !img) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  (tracks || []).forEach(t => {
+    const rect = normalizedBoxToCanvasRect(t.bbox, img, canvas);
+    if (!rect) return;
+    const color = STATE_COLOR[t.identity_state] || STATE_COLOR.UNKNOWN;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+
+    const label = t.person_name || 'Desconocido';
+    ctx.font = '11px "JetBrains Mono", monospace';
+    const textW = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(rect.x, Math.max(0, rect.y - 16), textW + 8, 16);
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillText(label, rect.x + 4, Math.max(11, rect.y - 4));
+  });
+}
+
+let _tracksResizeObserver = null;
+export function initTracksOverlay() {
+  const canvas = document.getElementById('tracks-overlay');
+  const img = document.getElementById('video-feed');
+  if (!canvas || !img || _tracksResizeObserver) return;
+  syncCanvasToImage(canvas, img);
+  _tracksResizeObserver = new ResizeObserver(() => syncCanvasToImage(canvas, img));
+  _tracksResizeObserver.observe(img);
+}
