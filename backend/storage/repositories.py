@@ -12,7 +12,7 @@ import json
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import and_, func, select, text, tuple_
+from sqlalchemy import String, and_, bindparam, func, select, text, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.events.types import Event as EventDTO
@@ -89,23 +89,35 @@ class EventRepo:
             row = await session.get(models.Event, event_id)
             return self._to_dto(row) if row is not None else None
 
-    async def query(
-        self,
+    @staticmethod
+    def _filter_conditions(
         *,
-        type: EventType | None = None,
+        type: EventType | list[EventType] | None = None,
         severity: Severity | None = None,
         person_id: int | None = None,
         zone_id: str | None = None,
         camera_id: str | None = None,
+        rule: str | None = None,
         ts_from: datetime.datetime | None = None,
         ts_to: datetime.datetime | None = None,
-        cursor: str | None = None,
-        limit: int = 50,
-    ) -> tuple[list[EventDTO], str | None]:
-        """Filter + cursor-paginate, newest first. Cursor is (ts, id) base64-encoded."""
-        conditions = []
-        if type is not None:
-            conditions.append(models.Event.type == type.value)
+    ) -> tuple[list, dict]:
+        """Condiciones WHERE compartidas por query() y count(). Devuelve (conditions, params).
+
+        El prefijo '+' unario del IN multi-valor desactiva idx_events_type_ts SOLO en ese
+        termino: sin el, SQLite elige ese indice y ordena con TEMP B-TREE (medido: 54ms
+        vs 0,52ms @100k, 30-RESEARCH.md Hallazgo 7).
+        """
+        conditions: list = []
+        params: dict = {}
+        types = [type] if isinstance(type, EventType) else (list(type) if type else [])
+        if len(types) == 1:
+            conditions.append(models.Event.type == types[0].value)
+        elif len(types) > 1:
+            conditions.append(
+                text("+events.type IN :types").bindparams(
+                    bindparam("types", expanding=True, type_=String))
+            )
+            params["types"] = [t.value for t in types]
         if severity is not None:
             conditions.append(models.Event.severity == severity.value)
         if person_id is not None:
@@ -114,10 +126,37 @@ class EventRepo:
             conditions.append(models.Event.zone_id == zone_id)
         if camera_id is not None:
             conditions.append(models.Event.camera_id == camera_id)
+        if rule is not None:
+            # T-30-05: el nombre de regla llega del navegador -> bindparam, nunca f-string.
+            conditions.append(text(
+                "EXISTS (SELECT 1 FROM json_each(events.payload, '$.rules') je "
+                "WHERE je.value = :rule)"
+            ))
+            params["rule"] = rule
         if ts_from is not None:
             conditions.append(models.Event.ts >= ts_from)
         if ts_to is not None:
             conditions.append(models.Event.ts <= ts_to)
+        return conditions, params
+
+    async def query(
+        self,
+        *,
+        type: EventType | list[EventType] | None = None,
+        severity: Severity | None = None,
+        person_id: int | None = None,
+        zone_id: str | None = None,
+        camera_id: str | None = None,
+        rule: str | None = None,
+        ts_from: datetime.datetime | None = None,
+        ts_to: datetime.datetime | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> tuple[list[EventDTO], str | None]:
+        """Filter + cursor-paginate, newest first. Cursor is (ts, id) base64-encoded."""
+        conditions, params = self._filter_conditions(
+            type=type, severity=severity, person_id=person_id, zone_id=zone_id,
+            camera_id=camera_id, rule=rule, ts_from=ts_from, ts_to=ts_to)
         if cursor is not None:
             cursor_ts, cursor_id = _decode_cursor(cursor)
             conditions.append(
@@ -131,6 +170,8 @@ class EventRepo:
         )
         if conditions:
             q = q.where(and_(*conditions))
+        if params:
+            q = q.params(**params)
 
         async with self._sf() as session:
             result = await session.execute(q)
@@ -139,6 +180,35 @@ class EventRepo:
         items = [self._to_dto(r) for r in rows]
         next_cursor = _encode_cursor(rows[-1].ts, rows[-1].id) if len(rows) == limit else None
         return items, next_cursor
+
+    async def count(
+        self,
+        *,
+        type: EventType | list[EventType] | None = None,
+        severity: Severity | None = None,
+        person_id: int | None = None,
+        zone_id: str | None = None,
+        camera_id: str | None = None,
+        rule: str | None = None,
+        ts_from: datetime.datetime | None = None,
+        ts_to: datetime.datetime | None = None,
+    ) -> int:
+        """COUNT(*) con los mismos filtros que query(), sin cursor ni limit.
+
+        Se llama SOLO en la primera pagina y solo si hay filtros activos: medido
+        21ms @100k / 0,9ms @10k, pedirlo en cada scroll seria malgastarlo (T-30-06).
+        """
+        conditions, params = self._filter_conditions(
+            type=type, severity=severity, person_id=person_id, zone_id=zone_id,
+            camera_id=camera_id, rule=rule, ts_from=ts_from, ts_to=ts_to)
+        q = select(func.count()).select_from(models.Event)
+        if conditions:
+            q = q.where(and_(*conditions))
+        if params:
+            q = q.params(**params)
+        async with self._sf() as session:
+            result = await session.execute(q)
+            return int(result.scalar_one())
 
     async def count_since(self, ts_from: datetime.datetime, type: EventType | None = None) -> int:
         conditions = [models.Event.ts >= ts_from]
