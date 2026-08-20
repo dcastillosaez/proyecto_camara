@@ -222,3 +222,69 @@ document.getElementById('btn-reboot').addEventListener('click', async () => {
   } catch { showToast('Sin respuesta del servidor', 'error'); }
   finally { setTimeout(() => { btn.disabled = false; }, 8000); }
 });
+
+// ── Filas compactas compartidas por Personas ahora / Alertas activas (D-04/D-05) ──
+function _statusRow(dotClass, mainText, sideText, sideClass = 'text-slate-600') {
+  const row = document.createElement('div');
+  row.className = 'flex items-center gap-2.5 py-1';
+  const dot = document.createElement('span');
+  dot.className = `w-1.5 h-1.5 rounded-full ${dotClass} flex-shrink-0`;
+  dot.setAttribute('aria-hidden', 'true');
+  const main = document.createElement('span');
+  main.className = 'text-xs text-slate-300 flex-1 truncate';
+  main.textContent = mainText;
+  const side = document.createElement('span');
+  side.className = `text-xs ${sideClass}`;
+  side.textContent = sideText;
+  row.append(dot, main, side);
+  return row;
+}
+
+// ── Personas ahora (D-05) — misma fuente que el overlay, sin segunda vía ──
+const IDENTITY_LABEL = { CONFIRMED: 'confirmado', CANDIDATE: 'verificando', UNKNOWN: 'desconocido', TEMPORARILY_LOST: 'desconocido' };
+const IDENTITY_DOT   = { CONFIRMED: 'bg-green-400', CANDIDATE: 'bg-amber-400', UNKNOWN: 'bg-red-400', TEMPORARILY_LOST: 'bg-red-400' };
+
+export function renderPersonList(tracks) {
+  const list  = document.getElementById('persons-now-list');
+  const empty = document.getElementById('persons-now-empty');
+  const count = document.getElementById('persons-now-count');
+  if (!list || !empty || !count) return;
+  const items = tracks || [];
+  count.textContent = items.length;
+  list.innerHTML = '';
+  empty.style.display = items.length ? 'none' : '';
+  items.forEach(t => {
+    const dotClass = IDENTITY_DOT[t.identity_state] || IDENTITY_DOT.UNKNOWN;
+    const label = IDENTITY_LABEL[t.identity_state] || IDENTITY_LABEL.UNKNOWN;
+    list.appendChild(_statusRow(dotClass, t.person_name || 'Desconocido', label));
+  });
+}
+
+// ── Alertas activas: top-3 por severidad (D-04) ────────────────────────
+const SEVERITY_RANK = { critical: 2, warning: 1, info: 0 };
+export async function loadActiveAlerts() {
+  const panel = document.getElementById('alerts-active-list');
+  const empty = document.getElementById('alerts-active-empty');
+  const checkedAt = document.getElementById('alerts-active-checked-at');
+  if (!panel || !empty) return;
+  try {
+    const res = await fetch('/api/v2/events?limit=10');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const alerts = (data.events || [])
+      .filter(e => e.severity && e.severity !== 'info')
+      .sort((a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0))
+      .slice(0, 3);
+    panel.innerHTML = '';
+    empty.style.display = alerts.length ? 'none' : '';
+    alerts.forEach(ev => {
+      const sevClass = ev.severity === 'critical' ? 'bg-red-400' : 'bg-amber-400';
+      const ts = new Date(ev.ts).toLocaleTimeString('es-ES', { hour12: false });
+      panel.appendChild(_statusRow(sevClass, ev.type.replace(/_/g, ' '), ts, 'text-slate-600 mono'));
+    });
+  } catch {
+    empty.style.display = '';
+  }
+  if (checkedAt) checkedAt.textContent = new Date().toLocaleTimeString('es-ES', { hour12: false });
+}
+setInterval(loadActiveAlerts, 5000);

@@ -211,6 +211,37 @@
     <!-- ─── RIGHT: Stats + Chart + WS + Events (2 columnas) ─── -->
     <section class="lg:col-span-2 flex flex-col gap-4" aria-label="Estadísticas y eventos">
 
+      <!-- ALERTAS ACTIVAS (top-3, D-04) -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <h2 class="text-sm font-semibold text-slate-200">Alertas activas</h2>
+          </div>
+        </div>
+        <div id="alerts-active-list" class="overflow-y-auto flex flex-col gap-1.5" style="max-height:140px" aria-label="Alertas activas" aria-live="polite"></div>
+        <div id="alerts-active-empty" class="flex flex-col items-center justify-center py-4 text-center">
+          <p class="text-slate-500 text-xs font-medium">Todo en orden</p>
+          <p class="text-slate-700 text-xs mt-1">Sin alertas activas. Última comprobación: <span id="alerts-active-checked-at" class="mono">--:--:--</span>.</p>
+        </div>
+      </div>
+
+      <!-- PERSONAS AHORA (D-05) -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <h2 class="text-sm font-semibold text-slate-200">Personas ahora</h2>
+          </div>
+          <span id="persons-now-count" class="text-3xl font-bold text-slate-200 tabular-nums leading-none" aria-live="polite" aria-label="Personas activas ahora">0</span>
+        </div>
+        <div id="persons-now-list" class="overflow-y-auto flex flex-col gap-1" style="max-height:140px" aria-label="Personas activas" aria-live="polite"></div>
+        <div id="persons-now-empty" class="flex flex-col items-center justify-center py-4 text-center">
+          <p class="text-slate-500 text-xs font-medium">Nadie en escena</p>
+          <p class="text-slate-700 text-xs mt-1">No se detectan personas activas en este momento.</p>
+        </div>
+      </div>
+
       <!-- STAT CARDS -->
       <div class="grid grid-cols-3 gap-3">
         <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 text-center">
