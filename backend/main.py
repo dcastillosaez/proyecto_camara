@@ -123,6 +123,68 @@ async def _broadcast_v1_compat(event: Event) -> None:
     })
 
 
+async def _broadcast_event(event: Event, media: dict | None = None) -> None:
+    """Emite el evento tipado completo por el /ws legacy (Fase 30, OPS-10).
+
+    El /ws que usa el frontend solo recibia LINE_CROSSED en formato v1 sin id,
+    severity ni zone_id (_broadcast_v1_compat): insuficiente para la linea temporal.
+    Mismo criterio que la Fase 29 con type:"tracks" — un mensaje mas en el socket
+    que ya existe, nunca una segunda conexion (30-RESEARCH.md Hallazgo 2).
+    NO marca latency_tracker.mark_ws_sent(): eso ya lo hace _broadcast_v2 y
+    marcarlo dos veces contaminaria la metrica EVENT_TO_WS.
+    """
+    await _broadcast({
+        "type": "event",
+        "event": json.loads(event.model_dump_json()),
+        "media": media or {
+            "recording_id": None,
+            "clip_url": None,
+            "thumbnail_url": None,
+            "snapshot_url": None,
+        },
+    })
+
+
+def make_event_pipeline(event_repo, rule_engine, *, broadcast_event=None,
+                        broadcast_v2=None, broadcast_v1=None, schedule=None):
+    """Suscriptor UNICO del bus: dentro de una sola corrutina el orden si esta
+    garantizado por el lenguaje, no por el scheduler (30-RESEARCH.md Hallazgo 3).
+
+    Sustituye a los cuatro subscribe() concurrentes de la Fase 19. Los parametros
+    inyectables existen para poder probar la secuencia sin levantar la app entera.
+    """
+    broadcast_event = broadcast_event or _broadcast_event
+    broadcast_v2 = broadcast_v2 or _broadcast_v2
+    broadcast_v1 = broadcast_v1 or _broadcast_v1_compat
+    schedule = schedule or asyncio.ensure_future
+
+    async def _event_pipeline(event: Event) -> None:
+        fired: list[str] = []
+        try:
+            fired = rule_engine.match(event)
+            if fired:
+                event.payload["rules"] = fired      # mutacion ANTES de cualquier lectura
+        except Exception:
+            logger.exception("RuleEngine.match failed for event %s", event.id)
+
+        try:
+            await event_repo.insert(event)          # la fila ya lleva payload.rules
+        except Exception:
+            logger.exception("Failed to persist event %s", event.id)
+
+        try:
+            await broadcast_event(event)            # /ws  {"type": "event", ...}
+            await broadcast_v2(event)               # /api/v2/ws — contrato v2 intacto
+            schedule(broadcast_v1(event))           # legacy: consulta la DB, no bloquear
+        except Exception:
+            logger.exception("Broadcast failed for event %s", event.id)
+
+        if fired:
+            schedule(rule_engine.run_actions(event, fired))  # lentas: nunca bloquean 2 ni 3
+
+    return _event_pipeline
+
+
 async def _camera_watchdog(check_interval: float = 10.0) -> None:
     """Periodically detect camera offline/online state and emit CAMERA_OFFLINE/RECOVERED."""
     was_offline = False
@@ -284,26 +346,11 @@ async def lifespan(app: FastAPI):
 
     event_repo = EventRepo(get_session_factory())
 
-    async def _persist_event(event: Event) -> None:
-        try:
-            await event_repo.insert(event)
-        except Exception:
-            logger.exception("Failed to persist event %s", event.id)
-
-    async def _apply_rules(event: Event) -> None:
-        try:
-            await rule_engine.evaluate(event)
-        except Exception:
-            logger.exception("RuleEngine evaluation failed for event %s", event.id)
-
-    # Cada suscriptor recibe el mismo objeto Event por referencia (EVT-02) y corre
-    # en su propia tarea — el orden de suscripcion no determina el de ejecucion,
-    # pero no importa aqui: el id del evento ya viene fijado (uuid4 client-side)
-    # antes de publicarse, no lo genera la persistencia.
-    event_bus.subscribe("persistence", _persist_event)
-    event_bus.subscribe("websocket_v1_compat", _broadcast_v1_compat)
-    event_bus.subscribe("websocket_v2", _broadcast_v2)
-    event_bus.subscribe("rules", _apply_rules)
+    # Un unico suscriptor ordenado (Fase 30, D-14): reglas -> payload.rules -> INSERT
+    # -> broadcast -> acciones. Con cuatro suscriptores concurrentes el orden lo decidia
+    # el scheduler (bus.py:69 lanza ensure_future por handler) y payload.rules se perdia
+    # siempre, porque _apply_rules mutaba el evento despues del INSERT.
+    event_bus.subscribe("event_pipeline", make_event_pipeline(event_repo, rule_engine))
 
     # app_config gana sobre la env var: es lo ultimo que el operador toco desde la UI
     # (27-RESEARCH.md Q6, decision del usuario). init_db() ya corrio en la linea 238, asi
