@@ -35,6 +35,8 @@ data/*.db
 # Ficheros temporales del modo WAL de SQLite
 data/*.db-shm
 data/*.db-wal
+# Copias que _backup_db() escribe antes de cada migracion pendiente
+data/backups/
 
 # Clip thumbnails (Fase 20) — generated at runtime from the trigger frame
 data/thumbnails/
