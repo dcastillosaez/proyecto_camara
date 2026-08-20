@@ -892,19 +892,22 @@ io.observe(sentinel);
 
 ## Open Questions
 
-1. **¿Se implementa el snapshot de evento (Hallazgo 4, opción 1) dentro de esta fase?**
+1. **(RESOLVED — 30-04-PLAN.md)** ¿Se implementa el snapshot de evento (Hallazgo 4, opción 1) dentro de esta fase?
    - Lo que sabemos: sin él, la miniatura cae al marcador en casi todas las filas y "Marcar como persona" no puede precargar el crop del evento (usaría el frame actual). Ambas cosas están en los criterios 1 y 5.
    - Lo que no está claro: si el usuario prefiere cerrar OPS-07/08 al 100 % ahora (+~40 líneas, +1 directorio en disco, +1 mount) o aceptar la versión degradada y dejar el snapshot para una fase de medios.
    - Recomendación: **implementarlo**, acotado (solo eventos con `bbox` y severidad ≠ `info`, con throttle por track como el de la galería) y con un setting `snapshot_dir` + `snapshot_enabled`. Es la única pieza de la fase que crea datos nuevos, así que conviene decidirlo antes de planificar, no durante.
+   - **Resuelto:** implementado en `30-04-PLAN.md` (opción 1, no la versión degradada) — `asyncio.to_thread` para `cv2.imwrite`, throttle por track, settings `snapshot_dir`/`snapshot_enabled`.
 
-2. **¿Se migra también el botón "Exportar CSV" a v2?**
+2. **(RESOLVED — 30-07-PLAN.md)** ¿Se migra también el botón "Exportar CSV" a v2?
    - `#btn-export-csv` apunta a `/api/events/export` (v1, `crossing_events`) y los filtros que le pasa (`direction`, `person_name`, `is_intrusion`) desaparecen con la barra de filtros vieja.
    - No está en OPS-07..11. Opciones: dejarlo funcionando con parámetros vacíos (exporta todo), ocultarlo, o exportar la consulta v2 actual (trabajo extra).
    - Recomendación: dejarlo intacto pero fuera de la barra de filtros nueva, y anotarlo para OPS-15 (Fase 31, "analítica exportable a CSV y JSON").
+   - **Resuelto:** se deja intacto sin tocar filtros, anotado en `30-07-PLAN.md` para OPS-15/Fase 31 — sin trabajo extra en esta fase.
 
-3. **¿El silenciado debe llegar también a las acciones (Telegram/grabación) o es solo visual?**
+3. **(RESOLVED — 30-06-PLAN.md)** ¿El silenciado debe llegar también a las acciones (Telegram/grabación) o es solo visual?
    - Este research decide "solo visual" (Hallazgo 8) por seguridad de la evidencia, pero es una decisión de producto que el usuario podría querer al revés.
    - Recomendación: confirmar en el plan con una frase explícita en el SUMMARY; si se quisiera el mute duro, sería un segundo flag por regla, no un cambio de este diseño.
+   - **Resuelto:** `30-06-PLAN.md` implementa el silenciado como solo-presentación (la regla sigue evaluando y ejecutando acciones), con criterio de aceptación explícito que lo verifica.
 
 ---
 
