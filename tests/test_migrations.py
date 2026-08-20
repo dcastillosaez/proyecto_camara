@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 import backend.database as db_v1
+from backend.storage import models
 from backend.storage.migrations import SCHEMA_VERSION, run_migrations
 
 
@@ -63,6 +64,35 @@ def make_v1_db(path, n_crossings=3, with_zone=True, with_recording=True):
                 {"now": now.isoformat(sep=" ")},
             )
     engine.dispose()
+
+
+def make_v2_db(path):
+    """Build a DB in the v2 state: full v2 schema, schema_version=2, and WITHOUT
+    the Fase 30 timeline index.
+
+    The DROP is deliberate: create_all() reads today's __table_args__, which already
+    declares idx_events_ts_id, so a plain create_all() would hand back a v3-shaped
+    database and the migration test would prove nothing. A real v2 file on disk was
+    created before that Index() existed.
+    """
+    engine = create_engine(f"sqlite:///{path}")
+    models.Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP INDEX IF EXISTS idx_events_ts_id"))
+        conn.execute(text("DELETE FROM app_config WHERE key='schema_version'"))
+        conn.execute(
+            text("INSERT INTO app_config (key, value, updated_at) VALUES ('schema_version', '2', :now)"),
+            {"now": datetime.datetime.now().isoformat(sep=" ")},
+        )
+    engine.dispose()
+
+
+def _index_names(engine, name: str) -> list[str]:
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='index' AND name=:n"), {"n": name}
+        ).fetchall()
+    return [r[0] for r in rows]
 
 
 def _schema_version(engine) -> int:
@@ -204,6 +234,42 @@ def TEST_fresh_db_supports_legacy_zone_and_recording_columns(tmp_path):
 
     assert {"polygon_json", "created_at"}.issubset(zone_cols)
     assert {"gdrive_id", "upload_status", "duration_secs", "created_at"}.issubset(recording_cols)
+
+
+# ─── v2 -> v3: indice compuesto de la linea temporal (Fase 30, OPS-09) ───────
+
+
+def TEST_migration_v3_creates_timeline_index(tmp_path):
+    db_path = tmp_path / "v2.db"
+    make_v2_db(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+    assert _index_names(engine, "idx_events_ts_id") == []  # punto de partida real
+
+    run_migrations(engine)
+
+    assert _index_names(engine, "idx_events_ts_id") == ["idx_events_ts_id"]
+    assert _schema_version(engine) == 3
+
+
+def TEST_migration_v3_is_idempotent(tmp_path):
+    db_path = tmp_path / "v2.db"
+    make_v2_db(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+    run_migrations(engine)  # must not raise
+
+    assert _index_names(engine, "idx_events_ts_id") == ["idx_events_ts_id"]
+    assert _schema_version(engine) == 3
+
+
+def TEST_fresh_db_has_timeline_index(tmp_path):
+    """Una base nueva lo hereda de Event.__table_args__, sin pasar por la migracion."""
+    db_path = tmp_path / "fresh_v3.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    models.Base.metadata.create_all(engine)
+
+    assert _index_names(engine, "idx_events_ts_id") == ["idx_events_ts_id"]
 
 
 def TEST_zones_and_recordings_preserved(tmp_path):
