@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-02-PLAN.md (wave 1, sin dependencias)
-last_updated: "2026-08-20T20:55:00.000Z"
-last_activity: 2026-08-20 -- 30-02 completado (indice de la linea temporal y filtros de servidor)
+stopped_at: Ejecutado 30-03-PLAN.md (wave 2, depende de 30-02)
+last_updated: "2026-08-20T21:20:00.000Z"
+last_activity: 2026-08-20 -- 30-03 completado (asignacion retroactiva de identidad y mapa evento -> clip)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 57
-  percent: 84
+  completed_plans: 58
+  percent: 85
 ---
 
 # Project State
@@ -27,8 +27,24 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 3 of 12 (30-01 y 30-02 completos)
+Plan: 4 of 12 (30-01, 30-02 y 30-03 completos)
 Status: Executing Phase 30
+
+30-03 añadió al repositorio las tres operaciones de "Marcar como persona":
+`EventRepo.track_scope()` (previsualiza el alcance retroactivo sin escribir),
+`EventRepo.assign_person()` (propaga la identidad y baja a `info` la severidad
+de los `UNKNOWN_PERSON`, con `UPDATE ... WHERE id IN (lista explícita)`, nunca
+por `track_id`) y `RecordingRepo.by_trigger_event_ids()` (mapa evento → clip de
+una página en una sola consulta, sobre `recordings.trigger_event_id`, que es el
+vínculo real: `events.recording_id` nunca se escribe). La clave son las dos
+constantes de módulo `TRACK_GAP_SECS=60.0` y `TRACK_WINDOW_HOURS=6`: los
+`tracker_id` de ByteTrack se reinician al recrear el tracker
+(`backend/tracker.py:181`), así que el alcance se acota por `camera_id` +
+ventana de ±6 h + corte en el primer hueco > 60 s. Dos tests de regresión
+(track homónimo separado 48 h) cierran el Pitfall 3 / T-30-08. 12 tests nuevos,
+suite 555/555 (+2 skips). Sin desviaciones de comportamiento. OPS-08 avanza
+pero no se cierra: la superficie HTTP llega en 30-05 y la marca 30-12.
+Ver `30-03-SUMMARY.md`.
 
 30-02 preparó el almacenamiento para la línea temporal: índice compuesto
 `idx_events_ts_id (ts DESC, id DESC)` en `Event.__table_args__` con su
@@ -393,7 +409,13 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **543/543 passing** (+2 skips, última ejecución 2026-08-20 tras `30-02`:
+Suite completa: **555/555 passing** (+2 skips, última ejecución 2026-08-20 tras `30-03`:
++12 tests en `tests/test_repositories.py` — 5 de `track_scope` (bloque contiguo, corte por
+hueco, track homónimo a 48 h, cota por `camera_id`, `None` sin `track_id`), 4 de
+`assign_person` (solo el bloque contiguo, downgrade de `UNKNOWN_PERSON`, `updated=0` sin
+track, homónimo intacto) y 3 de `by_trigger_event_ids` (mapeo, lista vacía sin consulta,
+gana el clip más reciente) — ver `30-03-SUMMARY.md`. Cifra anterior
+**543/543** (tras `30-02`:
 +9 tests — 3 en `tests/test_migrations.py` (índice de la línea temporal creado por la
 migración v2→v3, idempotencia y presencia en una base nueva) y 6 en
 `tests/test_repositories.py` (multi-tipo, enum suelto compatible, filtro por regla,
