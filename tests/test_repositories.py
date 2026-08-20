@@ -195,6 +195,98 @@ async def TEST_cursor_pagination_is_stable(db):
     assert len(set(seen_ids)) == 100
 
 
+# ─── Fase 30 (OPS-08): alcance retroactivo por track ─────────────────────────
+# Los tracker_id de ByteTrack se reinician al recrear el tracker (backend/tracker.py:181)
+# y la tabla `tracks` nunca se escribe: track_id=7 de hoy y track_id=7 de anteayer son
+# personas distintas. Estos tests fijan las tres cotas que lo impiden (30-RESEARCH.md
+# Pitfall 3): misma camara, ventana de +-6 h y corte en el primer hueco > 60 s.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _seed_track(repo, *, base, offsets_s, track_id=7, camera_id="cam1", **overrides):
+    """Inserta un evento por cada offset (segundos desde *base*) y devuelve sus ids."""
+    ids = []
+    for offset in offsets_s:
+        ev = make_event(
+            camera_id=camera_id,
+            track_id=track_id,
+            ts=base + datetime.timedelta(seconds=offset),
+            **overrides,
+        )
+        await repo.insert(ev)
+        ids.append(ev.id)
+    return ids
+
+
+async def TEST_track_scope_returns_contiguous_block(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    ids = await _seed_track(repo, base=base, offsets_s=[0, 10, 20, 30, 40])
+
+    scope = await repo.track_scope(ids[2])
+
+    assert scope is not None
+    assert scope["count"] == 5
+    assert set(scope["event_ids"]) == set(ids)
+    assert scope["from"] == base
+    assert scope["to"] == base + datetime.timedelta(seconds=40)
+
+
+async def TEST_track_scope_cuts_on_gap(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    first = await _seed_track(repo, base=base, offsets_s=[0, 10, 20])
+    second = await _seed_track(repo, base=base, offsets_s=[320, 330])  # hueco de 5 min
+
+    scope = await repo.track_scope(first[1])
+
+    assert scope["count"] == 3
+    assert set(scope["event_ids"]) == set(first)
+    assert not set(scope["event_ids"]) & set(second)
+
+
+async def TEST_track_scope_ignores_homonym_track_from_another_day(db):
+    """Regresion del Pitfall 3: mismo track_id, 48 h de distancia, persona distinta."""
+    _, sf = db
+    repo = EventRepo(sf)
+    recent = datetime.datetime(2026, 1, 3, 12, 0, 0)
+    old = recent - datetime.timedelta(hours=48)
+    ids_recent = await _seed_track(repo, base=recent, offsets_s=[0])
+    await _seed_track(repo, base=old, offsets_s=[0])
+
+    scope = await repo.track_scope(ids_recent[0])
+
+    assert scope["count"] == 1
+    assert scope["event_ids"] == ids_recent
+
+
+async def TEST_track_scope_respects_camera_id(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam2", name="Cam 2", enabled=True))
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    ids_cam1 = await _seed_track(repo, base=base, offsets_s=[0], camera_id="cam1")
+    ids_cam2 = await _seed_track(repo, base=base, offsets_s=[0], camera_id="cam2")
+
+    scope = await repo.track_scope(ids_cam1[0])
+
+    assert scope["event_ids"] == ids_cam1
+    assert ids_cam2[0] not in scope["event_ids"]
+
+
+async def TEST_track_scope_returns_none_without_track_id(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    ev = make_event(track_id=None)
+    await repo.insert(ev)
+
+    assert await repo.track_scope(ev.id) is None
+
+
 async def TEST_detection_stats_upsert(db):
     _, sf = db
     repo = DetectionStatRepo(sf)
