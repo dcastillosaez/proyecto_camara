@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-01-PLAN.md (wave 1, sin dependencias)
-last_updated: "2026-08-20T21:05:00.000Z"
-last_activity: 2026-08-20 -- 30-01 completado (suscriptor unico ordenado del EventBus)
+stopped_at: Ejecutado 30-02-PLAN.md (wave 1, sin dependencias)
+last_updated: "2026-08-20T20:55:00.000Z"
+last_activity: 2026-08-20 -- 30-02 completado (indice de la linea temporal y filtros de servidor)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 56
-  percent: 82
+  completed_plans: 57
+  percent: 84
 ---
 
 # Project State
@@ -27,8 +27,25 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 2 of 12 (30-01 completo)
+Plan: 3 of 12 (30-01 y 30-02 completos)
 Status: Executing Phase 30
+
+30-02 preparó el almacenamiento para la línea temporal: índice compuesto
+`idx_events_ts_id (ts DESC, id DESC)` en `Event.__table_args__` con su
+migración `_migrate_v2_to_v3` (`SCHEMA_VERSION=3`, `CREATE INDEX IF NOT
+EXISTS`, no destructiva, cubierta por el `_backup_db()` que ya existía), y
+`EventRepo` extendido: `_filter_conditions()` compartido, `query()` acepta
+`type` como enum suelto o lista (con el `+` unario del `IN` multi-valor que
+evita el `TEMP B-TREE FOR ORDER BY` — 54 ms → 0,52 ms @100k) y filtra por
+nombre de regla vía `json_each(payload,'$.rules')` con `bindparam`, más un
+`count()` nuevo para el contador "{N} de {total}". Ningún llamador de
+`query()` necesitó tocarse. Dos correcciones sobre el plan: `_record_version()`
+(el paso v1→v2 sellaba `SCHEMA_VERSION`, que al subir a 3 habría marcado v3
+antes de tiempo) y `type_=String` en el bindparam expandido (sin él la
+consulta no compila con `literal_binds` y el test de `EXPLAIN QUERY PLAN` no
+podía inspeccionar el SQL real). 9 tests nuevos, suite 543/543 (+2 skips).
+OPS-09 avanza pero no se cierra: la superficie HTTP llega en 30-05 y la
+marca 30-12. Ver `30-02-SUMMARY.md`.
 
 30-01 cerró la condición de carrera D-14: los cuatro suscriptores
 concurrentes del `EventBus` colapsan en `make_event_pipeline()` (un solo
@@ -376,7 +393,13 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **519/519 passing** (última ejecución 2026-08-17, tras `27-09`: +7 tests
+Suite completa: **543/543 passing** (+2 skips, última ejecución 2026-08-20 tras `30-02`:
++9 tests — 3 en `tests/test_migrations.py` (índice de la línea temporal creado por la
+migración v2→v3, idempotencia y presencia en una base nueva) y 6 en
+`tests/test_repositories.py` (multi-tipo, enum suelto compatible, filtro por regla,
+no interpolación del filtro con carga `' OR 1=1 --`, `count()` con los mismos filtros y
+plan de consulta sin `TEMP B-TREE FOR ORDER BY`) — ver `30-02-SUMMARY.md`. Cifra anterior
+534/534 tras `30-01`. Histórico previo: **519/519 passing** (última ejecución 2026-08-17, tras `27-09`: +7 tests
 `TEST_*` en `tests/test_scene_context.py` — 5 sobre `_person_counts`/`_classify_activity`
 puras (`TEST_known_requires_confirmed`, `TEST_person_counts_uses_frame_ids_not_active_ids`,
 `TEST_insufficient_history`, `TEST_partial_hour_normalised`, `TEST_activity_ratio_thresholds`)
