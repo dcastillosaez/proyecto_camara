@@ -282,7 +282,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 ### Bloque C — Producto
 
 - [ ] **Phase 28: Refactor del frontend a módulos ES** — index.html deja de contener lógica
-- [ ] **Phase 29: Vista de operaciones** — Centro de operaciones que responde en 3 segundos
+- [x] **Phase 29: Vista de operaciones** — Centro de operaciones que responde en 3 segundos (completed 2026-08-20; checkpoint visual de Task 3 de 29-03-PLAN.md — criterios de éxito 1/4/5/6 — pendiente de verificación en persona)
 - [ ] **Phase 30: Event Timeline y centro de alertas** — Línea temporal accionable con miniaturas
 - [ ] **Phase 31: Vista de analítica** — Ocupación, heatmap, ranking de personas, tendencias
 - [ ] **Phase 32: Vista de cámara y configuración visual** — Operar y configurar sin tocar .env
