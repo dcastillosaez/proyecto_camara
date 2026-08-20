@@ -13,7 +13,13 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.events.types import Event, EventType, Severity
 from backend.storage import models
-from backend.storage.repositories import ConfigRepo, DetectionStatRepo, EventRepo
+from backend.storage.repositories import (
+    ConfigRepo,
+    DetectionStatRepo,
+    EventRepo,
+    RecordingRepo,
+    UploadState,
+)
 from scripts.seed_events import seed_events
 
 
@@ -348,6 +354,70 @@ async def TEST_assign_person_does_not_touch_homonym_track(db):
     assert result["updated"] == 1
     assert (await repo.get(ids_recent[0])).person_id == 7
     assert (await repo.get(ids_old[0])).person_id is None
+
+
+# ─── Fase 30: mapa evento -> grabacion de una pagina completa ────────────────
+# events.recording_id NUNCA se escribe; el vinculo real lo pone _on_clip_ready en
+# recordings.trigger_event_id (backend/main.py:353-357).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _make_recording(repo, *, trigger_event_id, thumb="thumbs/x.jpg"):
+    rec_id = await repo.create(
+        camera_id="cam1",
+        filename=f"clip_{trigger_event_id}.mp4",
+        started_at=datetime.datetime(2026, 1, 1, 12, 0, 0),
+        reason="motion",
+        trigger_event_id=trigger_event_id,
+    )
+    await repo.finalize(
+        rec_id,
+        ended_at=datetime.datetime(2026, 1, 1, 12, 0, 30),
+        duration_s=30.0,
+        size_bytes=1024,
+        sha256="deadbeef",
+        thumbnail_path=thumb,
+        upload_state=UploadState.DONE,
+    )
+    return rec_id
+
+
+async def TEST_by_trigger_event_ids_maps_only_matching(db):
+    _, sf = db
+    repo = RecordingRepo(sf)
+    id_a = await _make_recording(repo, trigger_event_id="ev-a")
+    id_b = await _make_recording(repo, trigger_event_id="ev-b")
+    await _make_recording(repo, trigger_event_id="ev-c")
+
+    mapping = await repo.by_trigger_event_ids(["ev-a", "ev-b", "ev-zzz"])
+
+    assert set(mapping) == {"ev-a", "ev-b"}
+    assert mapping["ev-a"]["recording_id"] == id_a
+    assert mapping["ev-b"]["recording_id"] == id_b
+    assert mapping["ev-a"]["local_path"] == "clip_ev-a.mp4"
+    assert mapping["ev-a"]["thumbnail_path"] == "thumbs/x.jpg"
+
+
+async def TEST_by_trigger_event_ids_empty_input():
+    """Corto-circuito: con la lista vacia no se abre sesion ni se consulta."""
+
+    def exploding_factory():
+        raise AssertionError("no deberia abrirse una sesion con la lista vacia")
+
+    assert await RecordingRepo(exploding_factory).by_trigger_event_ids([]) == {}
+
+
+async def TEST_by_trigger_event_ids_keeps_latest_per_event(db):
+    _, sf = db
+    repo = RecordingRepo(sf)
+    await _make_recording(repo, trigger_event_id="ev-a", thumb="thumbs/old.jpg")
+    newer = await _make_recording(repo, trigger_event_id="ev-a", thumb="thumbs/new.jpg")
+
+    mapping = await repo.by_trigger_event_ids(["ev-a"])
+
+    assert len(mapping) == 1
+    assert mapping["ev-a"]["recording_id"] == newer
+    assert mapping["ev-a"]["thumbnail_path"] == "thumbs/new.jpg"
 
 
 async def TEST_detection_stats_upsert(db):
