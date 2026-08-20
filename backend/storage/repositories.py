@@ -12,7 +12,7 @@ import json
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import String, and_, bindparam, func, select, text, tuple_
+from sqlalchemy import String, and_, bindparam, case, func, select, text, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.events.types import Event as EventDTO
@@ -259,6 +259,34 @@ class EventRepo:
             "from": block[0].ts,
             "to": block[-1].ts,
         }
+
+    async def assign_person(self, event_id: str, person_id: int) -> dict:
+        """Propaga una identidad al bloque contiguo del track (Fase 30, OPS-08, criterio 5).
+
+        El UPDATE va por lista EXPLICITA de ids calculada por track_scope(), nunca
+        'WHERE track_id = ?': eso alcanzaria tracks homonimos de otros dias (Pitfall 3).
+        Un UNKNOWN_PERSON deja de ser advertencia al ganar identidad; el resto de
+        tipos conserva su severidad.
+        """
+        scope = await self.track_scope(event_id)
+        if scope is None or not scope["event_ids"]:
+            return {"person_id": person_id, "updated": 0, "event_ids": []}
+        ids = scope["event_ids"]
+        async with self._sf() as session:
+            async with session.begin():
+                await session.execute(
+                    update(models.Event)
+                    .where(models.Event.id.in_(ids))
+                    .values(
+                        person_id=person_id,
+                        severity=case(
+                            (models.Event.type == EventType.UNKNOWN_PERSON.value,
+                             Severity.INFO.value),
+                            else_=models.Event.severity,
+                        ),
+                    )
+                )
+        return {"person_id": person_id, "updated": len(ids), "event_ids": ids}
 
     async def count_since(self, ts_from: datetime.datetime, type: EventType | None = None) -> int:
         conditions = [models.Event.ts >= ts_from]
