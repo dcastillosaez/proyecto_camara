@@ -548,6 +548,12 @@ Plans:
   5. El WebSocket reconecta automáticamente con backoff y la UI lo indica sin recargar
   6. Un observador no familiarizado identifica si hay alerta activa en menos de 3 s
 **Spec**: SPEC_v2.md §8.3
+**Plans:** 3 plans (2 waves) — `.planning/phases/29-vista-de-operaciones/`
+
+Plans:
+- [ ] 29-01-PLAN.md — Backend: CameraPipeline.get_person_boxes() + _tracks_broadcast_loop() a 2Hz por /ws (OPS-05)
+- [ ] 29-02-PLAN.md — Frontend: canvas overlay de tracks sobre #video-feed, sincronizado con object-fit:cover (OPS-05)
+- [ ] 29-03-PLAN.md — Frontend: header de 3 estados, paneles "Personas ahora"/"Alertas activas", checkpoint visual (OPS-04, OPS-06)
 
 ### Phase 30: Event Timeline y centro de alertas
 **Goal**: Sustituir la tabla plana de eventos por una línea temporal accionable
