@@ -21,7 +21,7 @@ from backend.storage import models
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _table_exists(conn: Connection, name: str) -> bool:
@@ -88,6 +88,17 @@ def _ensure_columns(conn: Connection, table: str, columns: dict[str, str]) -> No
         logger.info("Added legacy column %s.%s", table, name)
 
 
+def _record_version(conn: Connection, version: int) -> None:
+    """Stamp app_config['schema_version']. Each migration records ITS OWN target
+    version, never SCHEMA_VERSION: writing the global constant from the v1->v2 step
+    would claim v3 before _migrate_v2_to_v3 had run."""
+    conn.execute(text("DELETE FROM app_config WHERE key='schema_version'"))
+    conn.execute(
+        text("INSERT INTO app_config (key, value, updated_at) VALUES ('schema_version', :v, :now)"),
+        {"v": json.dumps(version), "now": datetime.datetime.now().isoformat(sep=" ")},
+    )
+
+
 def _migrate_v1_to_v2(conn: Connection) -> None:
     # 1. The v1 "events" table (backend.database.CrossingEvent) collides with the
     #    new typed "events" table. Rename it out of the way first; it is never deleted.
@@ -150,15 +161,24 @@ def _migrate_v1_to_v2(conn: Connection) -> None:
         logger.info("Migrated %d crossing_events rows -> LINE_CROSSED events", len(rows))
 
     # 6. Record schema version.
-    conn.execute(text("DELETE FROM app_config WHERE key='schema_version'"))
-    conn.execute(
-        text("INSERT INTO app_config (key, value, updated_at) VALUES ('schema_version', :v, :now)"),
-        {"v": json.dumps(SCHEMA_VERSION), "now": datetime.datetime.now().isoformat(sep=" ")},
-    )
+    _record_version(conn, 2)
+
+
+def _migrate_v2_to_v3(conn: Connection) -> None:
+    """Indice compuesto para la linea temporal (Fase 30, OPS-09).
+
+    create_all() no crea indices sobre tablas que ya existen, por eso va explicito.
+    CREATE INDEX IF NOT EXISTS lo hace idempotente por sintaxis SQL, ademas del
+    guard de version de run_migrations(). No toca filas ni columnas.
+    """
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS idx_events_ts_id ON events (ts DESC, id DESC)"))
+    _record_version(conn, 3)
 
 
 MIGRATIONS: list[tuple[int, str, Callable[[Connection], None]]] = [
     (2, "esquema v2 completo", _migrate_v1_to_v2),
+    (3, "indice compuesto de la linea temporal", _migrate_v2_to_v3),
 ]
 
 
