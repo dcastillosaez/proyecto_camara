@@ -19,6 +19,19 @@ Prioridades: **baja latencia, estabilidad, CPU moderada y simplicidad**.
 - Windows 11 + Python 3.12.
 - Nunca exponer credenciales RTSP en código, logs, commits o respuestas.
 
+### Entorno de trabajo (sin worktrees)
+
+Trabajar siempre desde la raíz del repositorio (`F:\Documentos\IA\Proyecto_Camara`),
+nunca desde `.claude/worktrees/*`. Se pueden crear y cambiar ramas con normalidad,
+pero siempre en la raíz — no crear worktrees nuevos.
+
+Motivo: un git worktree no comparte los ficheros no versionados de la raíz
+(`.env`, `.venv/`), así que cada worktree nuevo arranca sin credenciales RTSP
+reales ni entorno virtual propio. Esto causó un fallo real: el backend arrancaba
+"online" pero sin imagen, porque `camera_url` caía al valor por defecto de
+`backend/config.py` al no encontrar `.env`. Trabajar siempre en la raíz evita
+esta clase de problema de entorno.
+
 ### GSD
 
 Antes de editar, usar:
