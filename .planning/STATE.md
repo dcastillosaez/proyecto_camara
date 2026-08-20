@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 27-11-PLAN.md (puerta de fase, wave 6, depende de
-last_updated: "2026-08-20T20:30:26.233Z"
-last_activity: 2026-08-20 -- Phase 30 planning complete
+stopped_at: Ejecutado 30-01-PLAN.md (wave 1, sin dependencias)
+last_updated: "2026-08-20T21:05:00.000Z"
+last_activity: 2026-08-20 -- 30-01 completado (suscriptor unico ordenado del EventBus)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 55
-  percent: 81
+  completed_plans: 56
+  percent: 82
 ---
 
 # Project State
@@ -21,13 +21,27 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** v2.0 — PLANIFICADA. Desacoplar el pipeline, motor de eventos, percepción avanzada (ArcFace + ReID + comportamiento), centro de operaciones y preparación multi-cámara.
+**Current focus:** Phase 30 — Event Timeline y centro de alertas
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 + Fase 24 + Fase 25 + Fase 26 + Fase 27 COMPLETOS** en código y tests (11/11 planes de la Fase 27, 27-01..27-11, ver `27-11-SUMMARY.md`). BEH-01..BEH-09 cerrados.
-Status: Ready to execute
+Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
+Plan: 2 of 12 (30-01 completo)
+Status: Executing Phase 30
+
+30-01 cerró la condición de carrera D-14: los cuatro suscriptores
+concurrentes del `EventBus` colapsan en `make_event_pipeline()` (un solo
+`subscribe("event_pipeline", ...)`), que evalúa las reglas con el nuevo
+`RuleEngine.match()` (puro y síncrono), escribe `payload["rules"]` en el
+evento ANTES del `INSERT`, emite `{"type": "event", "event": {...},
+"media": {...}}` por el `/ws` legacy después del `INSERT`, y difiere en
+fire-and-forget tanto `run_actions()` (Telegram/webhook/grabación) como
+`_broadcast_v1_compat`. `evaluate()` queda como wrapper compatible y los
+14 tests de `tests/test_rule_engine.py` pasan sin tocarse. 4 tests nuevos
+en `tests/test_event_bus.py` fijan el orden con un `EventRepo` real.
+Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
+30-12 con evidencia. Ver `30-01-SUMMARY.md`.
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
   compilar en Windows, `buffalo_s` descarga y ejecuta una inferencia
@@ -62,7 +76,7 @@ Status: Ready to execute
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-20 -- Phase 30 planning complete
+Last activity: 2026-08-20 -- Phase 30 execution started
 
 Progress v2.0: [█████░░░░░] ~50% (11/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01

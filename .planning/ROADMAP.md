@@ -570,7 +570,7 @@ Plans:
 **Plans:** 12 plans — `.planning/phases/30-event-timeline-y-centro-de-alertas/`
 
 Plans:
-- [ ] 30-01-PLAN.md — Pipeline de eventos ordenado: `match`/`run_actions`, `payload.rules` y mensaje WS `type:"event"` (OPS-10, OPS-11)
+- [x] 30-01-PLAN.md — Pipeline de eventos ordenado: `match`/`run_actions`, `payload.rules` y mensaje WS `type:"event"` (OPS-10, OPS-11)
 - [ ] 30-02-PLAN.md — Índice `idx_events_ts_id`, migración de esquema v3 y `EventRepo.query()` multi-tipo/regla + `count()` (OPS-09)
 - [ ] 30-03-PLAN.md — Alcance de track, asignación retroactiva y mapa evento→grabación (OPS-08)
 - [ ] 30-04-PLAN.md — Snapshot de evento: recorte en disco, mount `/snapshots`, throttle y retención (OPS-07, OPS-08)
