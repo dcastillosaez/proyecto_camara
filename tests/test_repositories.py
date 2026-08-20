@@ -287,6 +287,69 @@ async def TEST_track_scope_returns_none_without_track_id(db):
     assert await repo.track_scope(ev.id) is None
 
 
+async def TEST_assign_person_updates_only_contiguous_block(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    block = await _seed_track(repo, base=base, offsets_s=[0, 10, 20, 30, 40])
+    outside = await _seed_track(repo, base=base, offsets_s=[400, 410])
+
+    result = await repo.assign_person(block[2], person_id=7)
+
+    assert result["updated"] == 5
+    assert set(result["event_ids"]) == set(block)
+    for event_id in block:
+        assert (await repo.get(event_id)).person_id == 7
+    for event_id in outside:
+        assert (await repo.get(event_id)).person_id is None
+
+
+async def TEST_assign_person_downgrades_unknown_person_severity(db):
+    """UNKNOWN_PERSON deja de ser advertencia al ganar identidad; el resto no se toca."""
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    unknown = make_event(
+        type=EventType.UNKNOWN_PERSON, track_id=7, ts=base, severity=Severity.WARNING)
+    crossed = make_event(
+        type=EventType.LINE_CROSSED, track_id=7, ts=base + datetime.timedelta(seconds=10),
+        severity=Severity.WARNING)
+    await repo.insert(unknown)
+    await repo.insert(crossed)
+
+    await repo.assign_person(unknown.id, person_id=3)
+
+    assert (await repo.get(unknown.id)).severity == Severity.INFO
+    assert (await repo.get(crossed.id)).severity == Severity.WARNING
+
+
+async def TEST_assign_person_without_track_returns_zero(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    ev = make_event(track_id=None)
+    await repo.insert(ev)
+
+    result = await repo.assign_person(ev.id, person_id=7)
+
+    assert result == {"person_id": 7, "updated": 0, "event_ids": []}
+    assert (await repo.get(ev.id)).person_id is None
+
+
+async def TEST_assign_person_does_not_touch_homonym_track(db):
+    """T-30-08: el UPDATE va por lista explicita de ids, no por 'WHERE track_id = 7'."""
+    _, sf = db
+    repo = EventRepo(sf)
+    recent = datetime.datetime(2026, 1, 3, 12, 0, 0)
+    ids_recent = await _seed_track(repo, base=recent, offsets_s=[0])
+    ids_old = await _seed_track(repo, base=recent - datetime.timedelta(hours=48), offsets_s=[0])
+
+    result = await repo.assign_person(ids_recent[0], person_id=7)
+
+    assert result["updated"] == 1
+    assert (await repo.get(ids_recent[0])).person_id == 7
+    assert (await repo.get(ids_old[0])).person_id is None
+
+
 async def TEST_detection_stats_upsert(db):
     _, sf = db
     repo = DetectionStatRepo(sf)
