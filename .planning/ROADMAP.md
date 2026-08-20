@@ -524,17 +524,17 @@ Plans:
   5. FastAPI sirve /static y el SRI de Chart.js se mantiene
   6. La carga inicial no supera 1 s en LAN
 **Spec**: SPEC_v2.md ADR-08, §8.2
-**Plans**: 0/9 plans complete (5 waves)
+**Plans**: 8/9 plans complete (5 waves) — falta el checkpoint manual 28-09
 Plans:
-- [ ] 28-01-PLAN.md — Contrato pytest (tests/test_frontend_modules.py) + extracción CSS (base/layout/components)
-- [ ] 28-02-PLAN.md — views/dashboard.js (núcleo) + views/dashboard-events.js (chart + eventos, ciclo de import real)
-- [ ] 28-03-PLAN.md — views/dashboard-ptz.js + views/dashboard-observability.js
-- [ ] 28-04-PLAN.md — components/videoCanvas.js (dueño de #rec-badge/#res-badge) + components/zoneEditor.js
-- [ ] 28-05-PLAN.md — components/eventCard.js + components/detectionClasses.js
-- [ ] 28-06-PLAN.md — components/personGallery.js + js/api.js
-- [ ] 28-07-PLAN.md — js/websocket.js + verificación cruzada de imports contra 28-02/28-04/28-05
-- [ ] 28-08-PLAN.md — js/app.js (bootstrap real) + reescritura de index.html a shell puro + suite completa en verde
-- [ ] 28-09-PLAN.md — Checkpoint: checklist de paridad funcional + medición de carga en LAN
+- [x] 28-01-PLAN.md — Contrato pytest (tests/test_frontend_modules.py) + extracción CSS (base/layout/components)
+- [x] 28-02-PLAN.md — views/dashboard.js (núcleo) + views/dashboard-events.js (chart + eventos, ciclo de import real)
+- [x] 28-03-PLAN.md — views/dashboard-ptz.js + views/dashboard-observability.js
+- [x] 28-04-PLAN.md — components/videoCanvas.js (dueño de #rec-badge/#res-badge) + components/zoneEditor.js
+- [x] 28-05-PLAN.md — components/eventCard.js + components/detectionClasses.js
+- [x] 28-06-PLAN.md — components/personGallery.js + js/api.js
+- [x] 28-07-PLAN.md — js/websocket.js + verificación cruzada de imports contra 28-02/28-04/28-05
+- [x] 28-08-PLAN.md — js/app.js (bootstrap real) + reescritura de index.html a shell puro + suite completa en verde (525/525 + 2 skipped)
+- [ ] 28-09-PLAN.md — Checkpoint: checklist de paridad funcional + medición de carga en LAN (pendiente, requiere verificación manual del usuario)
 
 ### Phase 29: Vista de operaciones
 **Goal**: La pantalla principal responde en 3 segundos a las tres preguntas del operador
