@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-10-PLAN.md (wave 8, depende de 30-08 y 30-09)
+stopped_at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10)
 last_updated: "2026-08-21T00:00:00.000Z"
-last_activity: 2026-08-21 -- 30-10 completado (linea temporal cableada al arranque y al WebSocket, sin doble pintado del cruce de linea, y el filtro por regla del centro de alertas ya aplicado)
+last_activity: 2026-08-21 -- 30-11 completado (modal "Marcar como persona": recorte precargado, aviso de alcance retroactivo y repintado en sitio de las filas del track)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 65
+  completed_plans: 66
   percent: 94
 ---
 
@@ -27,8 +27,24 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 11 of 12 (30-01 a 30-10 completos)
+Plan: 12 of 12 (30-01 a 30-11 completos)
 Status: Executing Phase 30
+
+30-11 cerró la acción estrella de la fase. `markPerson.js` (169 líneas) escucha el
+`CustomEvent('timeline:mark-person')` que la fila ya despachaba desde 30-08 —misma
+convención que el `timeline:filter-rule` de 30-10, sin que ninguno de los dos módulos
+importe al otro—, abre el modal con el recorte del evento ya cargado y escribe el aviso
+de alcance con el N que devuelve `GET /track-scope`: el operador ve cuántos eventos
+anteriores del track van a recibir la identidad **antes** de confirmar. El enrolado sigue
+siendo dos llamadas a propósito (`POST /api/enroll_face` conserva sus validaciones de
+`content_type`, 10 MB y `max_length=100` con tests de regresión; `assign-person` solo
+propaga un `person_id` ya enrolado). Al confirmar, `applyPersonAssignment()` en
+`timeline.js` sincroniza el modelo en memoria, baja a `info` la severidad de los
+`UNKNOWN_PERSON` —mismo criterio que el `UPDATE` del backend— y repinta guardando y
+restaurando `scrollTop`: cero red, cero páginas perdidas. Suite completa en verde
+(603 passed, 2 skipped). Pendiente de comprobación manual, que firma 30-12: modal con el
+recorte real, N razonable en el aviso (si saliera en decenas o cientos sería el Pitfall 3
+asomando) y filas del track cambiando en sitio al confirmar. Ver `30-11-SUMMARY.md`.
 
 30-10 encendió la fase: hasta este plan, la línea temporal y el centro de alertas eran
 código que nadie llamaba. `websocket.js` despacha ahora `type:"event"` a `onLiveEvent()`
@@ -255,7 +271,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-21 -- Ejecutado 30-10 (linea temporal cableada al arranque y al WebSocket; filtro por regla desde el centro de alertas)
+Last activity: 2026-08-21 -- Ejecutado 30-11 (modal "Marcar como persona" con recorte precargado, aviso de alcance y repintado en sitio)
 
 Progress v2.0: [█████░░░░░] ~50% (11/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
@@ -707,6 +723,20 @@ Fase 23, la Fase 25, la Fase 26 y la Fase 27 por completamente validados
 en producción.
 
 ## Session Continuity
+
+Last session: 2026-08-21
+Stopped at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10). El modal
+  "Marcar como persona" está completo: `markPerson.js` precarga el recorte del evento,
+  muestra el aviso de alcance retroactivo con el N del servidor antes de confirmar,
+  enrola contra `/api/enroll_face` (sin duplicar sus validaciones), aplica la identidad
+  al bloque del track en una sola llamada y `applyPersonAssignment()` repinta las filas
+  en sitio conservando el `scrollTop`. `components/markPerson.js` añadido a `LOCKED_JS`.
+  Suite completa en verde (603 passed, 2 skipped). Pendiente de comprobación manual,
+  que firma 30-12: recorte real en el modal, N razonable en el aviso y filas del track
+  cambiando en sitio. Siguiente: 30-12 (puerta de fase)
+Resume file: ninguno — continuar con `.planning/phases/30-event-timeline-y-centro-de-alertas/30-12-PLAN.md`
+
+---
 
 Last session: 2026-08-21
 Stopped at: Ejecutado 30-10-PLAN.md (wave 8, depende de 30-08 y 30-09). La línea

@@ -247,7 +247,7 @@
 - [ ] **OPS-05**: El overlay de detecciones se dibuja sobre canvas alimentado por WebSocket, sin re-renderizar el stream MJPEG
 - [ ] **OPS-06**: La reconexión del WebSocket es automática y visible sin recargar la página
 - [ ] **OPS-07**: Los eventos se presentan como línea temporal con hora, severidad, descripción, zona y miniatura
-- [ ] **OPS-08**: Cada evento ofrece acciones directas: ver vídeo, ver captura, marcar como persona y descartar
+- [x] **OPS-08**: Cada evento ofrece acciones directas: ver vídeo, ver captura, marcar como persona y descartar
 - [ ] **OPS-09**: Los filtros de eventos se resuelven en servidor con paginación por cursor
 - [ ] **OPS-10**: Un evento nuevo aparece en la interfaz en menos de un segundo
 - [ ] **OPS-11**: El centro de alertas agrupa alertas activas, muestra qué regla las disparó y permite silenciarlas
