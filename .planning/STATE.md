@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-03-PLAN.md (wave 2, depende de 30-02)
-last_updated: "2026-08-20T21:20:00.000Z"
-last_activity: 2026-08-20 -- 30-03 completado (asignacion retroactiva de identidad y mapa evento -> clip)
+stopped_at: Ejecutado 30-04-PLAN.md (wave 2, depende de 30-01)
+last_updated: "2026-08-21T00:00:00.000Z"
+last_activity: 2026-08-21 -- 30-04 completado (snapshot de evento en disco, mount /snapshots, throttle y retencion)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 58
-  percent: 85
+  completed_plans: 59
+  percent: 87
 ---
 
 # Project State
@@ -27,8 +27,32 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 4 of 12 (30-01, 30-02 y 30-03 completos)
+Plan: 5 of 12 (30-01, 30-02, 30-03 y 30-04 completos)
 Status: Executing Phase 30
+
+30-04 puso en marcha el snapshot de evento: `Event.snapshot_path` existía en el
+contrato desde la Fase 19 y **nadie lo escribía**, así que la miniatura de la
+línea temporal habría caído siempre al marcador. Ahora cada evento con `bbox`
+deja un recorte JPEG en `data/snapshots/{YYYYMMDD}/{event_id}.jpg` mediante
+`_capture_event_snapshot()`, enganchada al pipeline de 30-01 como
+`snapshot_hook` **antes** del `INSERT` (la ruta entra en la fila con la primera
+escritura, sin segundo `UPDATE`) y con su propio `try/except` para que un disco
+lleno no impida persistir el evento. `cv2.imwrite` y el `shutil.rmtree` de la
+purga van siempre en `asyncio.to_thread` (T-30-14, verificado por identidad de
+función en test, no por grep). Tres cotas sobre el disco: throttle de 5 s por
+`(camera_id, track_id)` con el diccionario acotado a 256 entradas, reescalado a
+320 px y `_purge_old_snapshots()` por directorio de día dentro del `_purge_loop`
+diario. `validate_snapshot_dir` exige contención en `_PROJECT_ROOT` porque el
+directorio se sirve por `StaticFiles` bajo `/snapshots` con la misma auth global
+que `/gallery` y `/clips` (T-30-12). `snapshot_url()` vive en
+`backend/api/v2/deps.py` para que main.py y el router de 30-05 la compartan sin
+ciclo de imports, y `media.snapshot_url` ya sale resuelta en el mensaje WS.
+15 tests nuevos (11 en `tests/test_snapshots.py`, 4 en `tests/test_config.py`),
+suite 570/570 (+2 skips). Dos desviaciones menores documentadas: los tests usan
+un stub de `Settings` porque el validador nuevo rechaza el `tmp_path` de pytest
+por diseño, y se añadió `data/snapshots/` a `.gitignore`. OPS-07 avanza pero no
+se cierra: la superficie HTTP llega en 30-05 y la marca 30-12.
+Ver `30-04-SUMMARY.md`.
 
 30-03 añadió al repositorio las tres operaciones de "Marcar como persona":
 `EventRepo.track_scope()` (previsualiza el alcance retroactivo sin escribir),
@@ -409,7 +433,13 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **555/555 passing** (+2 skips, última ejecución 2026-08-20 tras `30-03`:
+Suite completa: **570/570 passing** (+2 skips, última ejecución 2026-08-21 tras `30-04`:
++15 tests — 11 en `tests/test_snapshots.py` (recorte real en disco, `bbox=None`, deshabilitado,
+throttle por track, `to_thread`, clamp de coordenadas desbordadas, purga por directorio de día,
+traducción de URL, hook antes del `INSERT` sobre `EventRepo` real, supervivencia al fallo del
+hook y presencia del mount) y 4 en `tests/test_config.py` (defaults, ruta fuera del proyecto,
+traversal y rangos numéricos) — ver `30-04-SUMMARY.md`. Cifra anterior
+**555/555** (tras `30-03`:
 +12 tests en `tests/test_repositories.py` — 5 de `track_scope` (bloque contiguo, corte por
 hueco, track homónimo a 48 h, cota por `camera_id`, `None` sin `track_id`), 4 de
 `assign_person` (solo el bloque contiguo, downgrade de `UNKNOWN_PERSON`, `updated=0` sin
