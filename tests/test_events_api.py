@@ -16,6 +16,7 @@ import datetime
 from unittest.mock import patch
 
 import httpx
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -186,4 +187,80 @@ async def TEST_get_event_returns_event_and_media(sf, client):
 
 async def TEST_get_event_404_for_unknown_event(sf, client):
     resp = await client.get("/api/v2/events/no-existe")
+    assert resp.status_code == 404
+
+
+# ─── track-scope ────────────────────────────────────────────────────────────
+async def _track_block(factory) -> Event:
+    """Cuatro eventos contiguos del mismo track; devuelve el ancla (el segundo)."""
+    base = datetime.datetime(2026, 8, 20, 18, 30, 0)
+    evs = [
+        make_event(type=EventType.UNKNOWN_PERSON, track_id=12,
+                   ts=base + datetime.timedelta(seconds=20 * i))
+        for i in range(4)
+    ]
+    await _insert(factory, *evs)
+    return evs[1]
+
+
+async def TEST_track_scope_returns_count_and_range(sf, client):
+    anchor = await _track_block(sf)
+
+    body = (await client.get(f"/api/v2/events/{anchor.id}/track-scope")).json()
+
+    assert body["count"] == 4
+    assert body["from"] and body["to"]
+    assert len(body["event_ids"]) == 4
+
+
+async def TEST_track_scope_404_for_unknown_event(sf, client):
+    resp = await client.get("/api/v2/events/no-existe/track-scope")
+    assert resp.status_code == 404
+
+
+async def TEST_track_scope_zero_without_track(sf, client):
+    ev = make_event(track_id=None)
+    await _insert(sf, ev)
+
+    resp = await client.get(f"/api/v2/events/{ev.id}/track-scope")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 0, "from": None, "to": None, "event_ids": []}
+
+
+# ─── assign-person ──────────────────────────────────────────────────────────
+async def TEST_assign_person_updates_block(sf, client):
+    anchor = await _track_block(sf)
+
+    resp = await client.post(
+        f"/api/v2/events/{anchor.id}/assign-person", json={"person_id": 7}
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["person_id"] == 7
+    assert body["updated"] == 4
+
+    listed = (await client.get("/api/v2/events", params={"person_id": 7})).json()
+    assert len(listed["events"]) == 4
+    assert {e["person_id"] for e in listed["events"]} == {7}
+
+
+@pytest.mark.parametrize("person_id", [0, -3])
+async def TEST_assign_person_requires_positive_person_id(sf, client, person_id):
+    anchor = await _track_block(sf)
+
+    resp = await client.post(
+        f"/api/v2/events/{anchor.id}/assign-person", json={"person_id": person_id}
+    )
+
+    assert resp.status_code in (400, 422)
+    listed = (await client.get("/api/v2/events")).json()
+    assert all(e["person_id"] is None for e in listed["events"])
+
+
+async def TEST_assign_person_404_for_unknown_event(sf, client):
+    resp = await client.post(
+        "/api/v2/events/no-existe/assign-person", json={"person_id": 7}
+    )
     assert resp.status_code == 404
