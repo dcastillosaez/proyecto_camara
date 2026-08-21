@@ -2,7 +2,7 @@
 import { connectWS } from './websocket.js';
 import { loadInitialData, loadCamStatus, loadPipelineHealth, loadActiveAlerts } from './views/dashboard.js';
 import { bindPtzControls } from './views/dashboard-ptz.js';
-import { bindEventFilters } from './views/dashboard-events.js';
+import { bindEventExport } from './views/dashboard-events.js';
 import { loadHealth, loadObservability } from './views/dashboard-observability.js';
 import { loadResolutions, initTracksOverlay } from './components/videoCanvas.js';
 import { loadZones, bindZoneForm } from './components/zoneEditor.js';
@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindZoneForm();
   bindEventCardControls();
   bindPersonGallery();
-  bindEventFilters();
+  bindEventExport();
 
   // Carga inicial — mismo orden que index.html:1362-2023 en el script original, para
   // minimizar diferencias de comportamiento observable (28-PATTERNS.md).

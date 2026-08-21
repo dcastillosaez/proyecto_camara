@@ -1,5 +1,5 @@
 // frontend/js/views/dashboard.js
-import { updateChart, addEvent, hourlyToArray } from './dashboard-events.js';
+import { updateChart, hourlyToArray } from './dashboard-events.js';
 
 // ── Clock ─────────────────────────────────────────────
 const clockEl = document.getElementById('clock');
@@ -106,7 +106,6 @@ async function fetchCounts() {
     updateStat('stat-total', d.total ?? 0);
     updateStat('stat-in',    d.in    ?? 0);
     updateStat('stat-out',   d.out   ?? 0);
-    document.getElementById('events-badge').textContent = d.total ?? 0;
   } catch {}
 }
 setInterval(fetchCounts, 2000);
@@ -127,32 +126,13 @@ fetchDetections();
 // ── Initial data load ──────────────────────────────────
 export async function loadInitialData() {
   try {
-    const [statsRes, eventsRes] = await Promise.all([
-      fetch('/api/stats'),
-      fetch('/api/events?limit=50'),
-    ]);
+    // La lista de eventos la carga ahora timeline.js (30-08) contra /api/v2/events;
+    // aqui solo queda la grafica horaria y el contador de la Fase 5.
+    const statsRes = await fetch('/api/stats');
     if (statsRes.ok) {
       const stats = await statsRes.json();
       updateChart(hourlyToArray(stats.hourly));
       updateStat('stat-total', stats.total_today ?? 0);
-    }
-    if (eventsRes.ok) {
-      const data   = await eventsRes.json();
-      const events = (data.events ?? []).reverse();
-      const list  = document.getElementById('events-list');
-      const empty = document.getElementById('events-empty');
-      list.querySelectorAll('.event-item').forEach(el => el.remove());
-      updateStat('events-badge', 0);
-      if (events.length === 0) {
-        empty.style.display = '';
-      } else {
-        empty.style.display = 'none';
-        let badge = 0;
-        events.forEach(ev => {
-          const ts = new Date(ev.timestamp).toLocaleTimeString('es-ES', { hour12: false });
-          addEvent(ts, ev.direction, ++badge, ev.person_name ?? null, ev.is_intrusion ?? false);
-        });
-      }
     }
   } catch {}
 }

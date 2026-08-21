@@ -1,6 +1,6 @@
 // frontend/js/websocket.js
 import { updateStat, setWsConnected, renderPersonList, showToast } from './views/dashboard.js';
-import { updateChart, addEvent, hourlyToArray, bumpHourBar } from './views/dashboard-events.js';
+import { updateChart, hourlyToArray, bumpHourBar } from './views/dashboard-events.js';
 import { addRecording, updateRecordingStatus } from './components/eventCard.js';
 import { setRecBadge, drawTracks } from './components/videoCanvas.js';
 
@@ -50,8 +50,8 @@ export async function connectWS() {
       updateChart(hourlyToArray(msg.hourly));
       updateStat('stat-total', msg.total_today ?? 0);
     } else if (msg.type === 'detection') {
-      const ts = new Date(msg.timestamp).toLocaleTimeString('es-ES', { hour12: false });
-      addEvent(ts, msg.direction, msg.total_today, msg.person_name ?? null, msg.is_intrusion ?? false);
+      // La fila de la linea temporal la inserta timeline.js (30-08) desde /api/v2/events;
+      // aqui se conservan contador, grafica horaria y toast de la Fase 5.
       updateStat('stat-total', msg.total_today);
       bumpHourBar(new Date(msg.timestamp).getHours());
       const who = msg.person_name ? ` — ${msg.person_name}` : '';
