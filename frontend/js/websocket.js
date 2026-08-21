@@ -3,6 +3,7 @@ import { updateStat, setWsConnected, renderPersonList, showToast } from './views
 import { updateChart, hourlyToArray, bumpHourBar } from './views/dashboard-events.js';
 import { addRecording, updateRecordingStatus } from './components/eventCard.js';
 import { setRecBadge, drawTracks } from './components/videoCanvas.js';
+import { onLiveEvent, setTimelineOffline } from './views/timeline.js';
 
 let _ws = null;
 let _wsRetry = 1000;
@@ -42,6 +43,7 @@ export async function connectWS() {
     setWsStatus(true);
     _wsCloseCount = 0;
     setWsConnected(true, 0);
+    setTimelineOffline(false);
   };
 
   _ws.onmessage = (e) => {
@@ -70,6 +72,12 @@ export async function connectWS() {
     } else if (msg.type === 'tracks') {
       drawTracks(msg.tracks);
       renderPersonList(msg.tracks);
+    } else if (msg.type === 'event') {
+      // Evento tipado completo (Fase 30, OPS-10). El case 'detection' de arriba sigue
+      // alimentando la grafica horaria y los contadores de la Fase 5, pero ya NO pinta
+      // filas: un LINE_CROSSED llega por los dos mensajes y se pintaria dos veces
+      // (30-RESEARCH.md Pitfall 6).
+      onLiveEvent(msg.event, msg.media);
     }
   };
 
@@ -77,6 +85,7 @@ export async function connectWS() {
     _wsCloseCount += 1;
     setWsConnected(false, _wsCloseCount);
     setWsStatus(false);
+    setTimelineOffline(true);
     setTimeout(connectWS, _wsRetry);
     _wsRetry = Math.min(_wsRetry * 2, 30000);
   };
