@@ -22,7 +22,7 @@ from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from backend.api.v2.deps import V2_RATE_LIMIT, limiter as v2_limiter, pagination_limit
+from backend.api.v2.deps import V2_RATE_LIMIT, limiter as v2_limiter, pagination_limit, snapshot_url
 from backend.auth import issue_ws_token, verify, verify_ws_token
 from backend.config import build_rtsp_url, get_settings, mask_rtsp_url
 from backend.database import (
@@ -140,7 +140,7 @@ async def _broadcast_event(event: Event, media: dict | None = None) -> None:
             "recording_id": None,
             "clip_url": None,
             "thumbnail_url": None,
-            "snapshot_url": None,
+            "snapshot_url": snapshot_url(event.snapshot_path),
         },
     })
 
@@ -221,7 +221,8 @@ async def _purge_old_snapshots(retention_days: int) -> int:
 
 
 def make_event_pipeline(event_repo, rule_engine, *, broadcast_event=None,
-                        broadcast_v2=None, broadcast_v1=None, schedule=None):
+                        broadcast_v2=None, broadcast_v1=None, schedule=None,
+                        snapshot_hook=None):
     """Suscriptor UNICO del bus: dentro de una sola corrutina el orden si esta
     garantizado por el lenguaje, no por el scheduler (30-RESEARCH.md Hallazgo 3).
 
@@ -241,6 +242,17 @@ def make_event_pipeline(event_repo, rule_engine, *, broadcast_event=None,
                 event.payload["rules"] = fired      # mutacion ANTES de cualquier lectura
         except Exception:
             logger.exception("RuleEngine.match failed for event %s", event.id)
+
+        # El snapshot va ANTES del INSERT: asi la ruta entra en la fila con la primera
+        # escritura y no hace falta un segundo UPDATE. try propio — un fallo capturando
+        # la imagen no puede impedir que el evento se persista.
+        if snapshot_hook is not None and event.snapshot_path is None:
+            try:
+                path = await snapshot_hook(event)
+                if path:
+                    event.snapshot_path = path
+            except Exception:
+                logger.exception("Snapshot capture failed for event %s", event.id)
 
         try:
             await event_repo.insert(event)          # la fila ya lleva payload.rules
@@ -366,6 +378,8 @@ async def _purge_loop() -> None:
                     logger.info("Purged %d recordings older than %d days", n, settings.recordings_retention_days)
             if settings.local_retention_days > 0:
                 await _purge_local_clip_files(settings.local_retention_days)
+            if settings.snapshot_retention_days > 0:
+                await _purge_old_snapshots(settings.snapshot_retention_days)
             if (
                 settings.persons_retention_days > 0
                 and rtsp_stream is not None
@@ -425,7 +439,8 @@ async def lifespan(app: FastAPI):
     # -> broadcast -> acciones. Con cuatro suscriptores concurrentes el orden lo decidia
     # el scheduler (bus.py:69 lanza ensure_future por handler) y payload.rules se perdia
     # siempre, porque _apply_rules mutaba el evento despues del INSERT.
-    event_bus.subscribe("event_pipeline", make_event_pipeline(event_repo, rule_engine))
+    event_bus.subscribe("event_pipeline", make_event_pipeline(
+        event_repo, rule_engine, snapshot_hook=_capture_event_snapshot))
 
     # app_config gana sobre la env var: es lo ultimo que el operador toco desde la UI
     # (27-RESEARCH.md Q6, decision del usuario). init_db() ya corrio en la linea 238, asi
@@ -757,6 +772,13 @@ app.mount("/gallery", StaticFiles(directory=str(_gallery_dir)), name="gallery")
 _clips_dir = Path(_settings.clips_dir)
 _clips_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/clips", StaticFiles(directory=str(_clips_dir)), name="clips")
+
+# Snapshots de evento bajo /snapshots/{YYYYMMDD}/{event_id}.jpg (Fase 30 — OPS-07).
+# Misma auth global que /gallery y /clips; el directorio esta contenido en el
+# proyecto por validate_snapshot_dir (T-30-12).
+_snapshots_dir = Path(_settings.snapshot_dir)
+_snapshots_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/snapshots", StaticFiles(directory=str(_snapshots_dir)), name="snapshots")
 
 
 @app.get("/")

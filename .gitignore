@@ -41,6 +41,9 @@ data/backups/
 # Clip thumbnails (Fase 20) — generated at runtime from the trigger frame
 data/thumbnails/
 
+# Snapshots de evento (Fase 30) — recortes JPEG escritos en caliente por evento
+data/snapshots/
+
 # Referencias externas
 third_party/
 

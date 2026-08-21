@@ -29,3 +29,23 @@ V2_RATE_LIMIT = "60/minute"
 def pagination_limit(default: int = 50, le: int = 200):
     """Query(...) factory for list endpoints — caps `limit` at *le* regardless of request."""
     return Query(default=default, ge=1, le=le)
+
+
+def snapshot_url(snapshot_path: str | None) -> str | None:
+    """Ruta en disco del snapshot -> URL publica servida por el mount /snapshots.
+
+    Vive aqui (y no en main.py) porque lo necesitan main.py — para el bloque `media`
+    del mensaje WS — y el router de eventos; importar main desde un router seria
+    un ciclo de imports.
+    """
+    if not snapshot_path:
+        return None
+    from pathlib import Path
+
+    from backend.config import get_settings
+
+    base = Path(get_settings().snapshot_dir).as_posix().rstrip("/")
+    p = Path(snapshot_path).as_posix()
+    if p.startswith(base + "/"):
+        p = p[len(base) + 1:]
+    return "/snapshots/" + p.lstrip("/")

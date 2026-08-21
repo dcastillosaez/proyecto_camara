@@ -149,3 +149,84 @@ async def TEST_purge_old_snapshots_removes_old_day_dirs(tmp_path, monkeypatch):
     assert removed == 1
     assert not old_dir.exists()
     assert (new_dir / "a.jpg").is_file()
+
+
+# ─── Cableado: URL publica, hook en el pipeline y mount ───────────────────────
+
+
+def TEST_snapshot_url_maps_disk_path_to_public_url():
+    """La traduccion vive en deps.py porque la comparten main.py y el router de eventos."""
+    from backend.api.v2.deps import snapshot_url
+
+    assert snapshot_url("data/snapshots/20260820/x.jpg") == "/snapshots/20260820/x.jpg"
+    assert snapshot_url(None) is None
+    assert snapshot_url("") is None
+
+
+@pytest.fixture
+async def repo(tmp_path):
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from backend.storage import models
+    from backend.storage.repositories import EventRepo
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'snap_test.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(models.Base.metadata.create_all)
+    sf = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam1", name="Cam 1", enabled=True))
+    yield EventRepo(sf)
+    await engine.dispose()
+
+
+def _rule_engine():
+    from backend.events.actions import ActionRegistry
+    from backend.events.rules import RuleEngine
+
+    return RuleEngine([], registry=ActionRegistry())
+
+
+async def _noop(event):
+    return None
+
+
+async def TEST_pipeline_writes_snapshot_path_before_insert(repo):
+    """La ruta entra en la fila con el primer INSERT: sin segundo UPDATE."""
+    hook = AsyncMock(return_value="data/snapshots/20260820/x.jpg")
+    pipeline = main.make_event_pipeline(
+        repo, _rule_engine(), broadcast_event=_noop, broadcast_v2=_noop,
+        broadcast_v1=_noop, schedule=lambda coro: coro.close(), snapshot_hook=hook,
+    )
+    event = _event(ts=datetime.datetime.now())
+
+    await pipeline(event)
+
+    stored = await repo.get(event.id)
+    assert stored is not None
+    assert stored.snapshot_path == "data/snapshots/20260820/x.jpg"
+
+
+async def TEST_pipeline_survives_snapshot_failure(repo):
+    """Un fallo capturando la imagen no puede impedir que el evento se persista."""
+    async def boom(event):
+        raise RuntimeError("disco lleno")
+
+    pipeline = main.make_event_pipeline(
+        repo, _rule_engine(), broadcast_event=_noop, broadcast_v2=_noop,
+        broadcast_v1=_noop, schedule=lambda coro: coro.close(), snapshot_hook=boom,
+    )
+    event = _event(ts=datetime.datetime.now())
+
+    await pipeline(event)
+
+    stored = await repo.get(event.id)
+    assert stored is not None
+    assert stored.snapshot_path is None
+
+
+def TEST_snapshots_mount_is_registered():
+    """/snapshots existe como mount, con la misma auth global que /gallery y /clips."""
+    assert "/snapshots" in [getattr(r, "path", "") for r in main.app.routes]
