@@ -156,5 +156,8 @@
   font-size: 12px; font-weight: 700; line-height: 1;
   display: flex; align-items: center; justify-content: center; color: #fff;
 }
+/* El selector de id gana a .hidden de Tailwind (0,1,0): sin esta regla el badge
+   se pintaria como un circulo vacio con 0 alertas. */
+#alert-badge.hidden { display: none; }
 #alert-mute-popover { display: none; position: absolute; z-index: 55; }
 #alert-mute-popover.open { display: block; }
