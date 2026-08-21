@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-04-PLAN.md (wave 2, depende de 30-01)
+stopped_at: Ejecutado 30-06-PLAN.md (wave 4, depende de 30-05)
 last_updated: "2026-08-21T00:00:00.000Z"
-last_activity: 2026-08-21 -- 30-04 completado (snapshot de evento en disco, mount /snapshots, throttle y retencion)
+last_activity: 2026-08-21 -- 30-06 completado (centro de alertas backend: agrupacion por regla y silenciado en app_config)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 59
-  percent: 87
+  completed_plans: 61
+  percent: 90
 ---
 
 # Project State
@@ -27,8 +27,29 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 6 of 12 (30-01, 30-02, 30-03, 30-04 y 30-05 completos)
+Plan: 7 of 12 (30-01 a 30-06 completos)
 Status: Executing Phase 30
+
+30-06 cerró el backend del centro de alertas. `GET /api/v2/alerts` devuelve las
+alertas de la ventana **ya agrupadas por la regla que las disparó**
+(`key: "rule:<name>"`) o, si ninguna regla intervino, por tipo de evento
+(`key: "type:<TYPE>"`, con `mutable: false` — se silencia por `Rule.name`, D-16).
+Cada grupo trae `count`, `severity` (la más alta), `last_ts`, `last_event_id`,
+`zone_id` y `muted_until`, y la respuesta añade `active_count` / `critical_count`
+/ `muted_count`, que son exactamente los números del badge de la campana: el
+navegador ya no filtra ni ordena nada. Los eventos `info` entran solo si
+dispararon una regla. El conjunto está acotado a 200 eventos por severidad con
+`truncated` en la respuesta, y `hours` a `1..168` (T-30-24). El silenciado
+(`POST /mute` / `/unmute`) persiste en `app_config`, clave `alerts.muted_rules`,
+con duración en lista blanca 15 min / 1 h / 8 h — no existe "para siempre"
+(T-30-21) —, read-modify-write serializado por un `asyncio.Lock` de módulo
+(T-30-23) y expiración perezosa sin tarea de fondo. Es **solo de presentación**
+(D-16/D-17): el módulo no toca `RuleEngine` ni `run_actions`, así que la regla se
+sigue evaluando y sus acciones siguen grabando y avisando; silenciar no hace
+perder pruebas (T-30-22). Cada silenciado/reactivación emite `CONFIG_CHANGED` con
+la regla y la duración (T-30-20). 16 tests nuevos en `tests/test_alerts.py`,
+suite **603/603** (+2 skips). OPS-11 queda cubierto por el lado del servidor; el
+cajón y la campana llegan en 30-07 y 30-09. Ver `30-06-SUMMARY.md`.
 
 30-05 cerró la superficie HTTP de la fase: `GET /api/v2/events` deja de ser un
 endpoint suelto en `main.py` (Fase 19) y pasa a `backend/api/v2/events.py` con
@@ -154,7 +175,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-21 -- Ejecutado 30-05 (router /api/v2/events)
+Last activity: 2026-08-21 -- Ejecutado 30-06 (centro de alertas backend: agrupacion por regla y silenciado)
 
 Progress v2.0: [█████░░░░░] ~50% (11/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
@@ -608,6 +629,16 @@ en producción.
 ## Session Continuity
 
 Last session: 2026-08-21
+Stopped at: Ejecutado 30-06-PLAN.md (wave 4, depende de 30-05). Router
+  `backend/api/v2/alerts.py` con `GET /api/v2/alerts` (agrupación por regla o por
+  tipo, contadores del badge, ventana 1..168 h) y `POST /mute` / `/unmute`
+  (persistencia en `app_config`, duración en lista blanca, expiración perezosa,
+  `CONFIG_CHANGED` por cada cambio). Silenciar es solo de presentación: no toca
+  `RuleEngine` ni `run_actions`. 16 tests nuevos, suite 603/603 (+2 skips).
+  Siguiente: 30-07 (marcado y estilos de la línea temporal y el cajón). Ver
+  `30-06-SUMMARY.md`.
+
+Sesión anterior (2026-08-21, misma jornada)
 Stopped at: Ejecutado 30-05-PLAN.md (wave 3, depende de 30-01..30-04).
   Router `backend/api/v2/events.py` con lista paginada (`total` condicional +
   mapa `media`), detalle, `track-scope` y `assign-person`; endpoint suelto de

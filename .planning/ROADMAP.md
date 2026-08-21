@@ -575,7 +575,7 @@ Plans:
 - [x] 30-03-PLAN.md — Alcance de track, asignación retroactiva y mapa evento→grabación (OPS-08)
 - [x] 30-04-PLAN.md — Snapshot de evento: recorte en disco, mount `/snapshots`, throttle y retención (OPS-07, OPS-08)
 - [x] 30-05-PLAN.md — Router `/api/v2/events`: lista paginada con `media`/`total`, detalle, track-scope y assign-person (OPS-07..09)
-- [ ] 30-06-PLAN.md — Centro de alertas backend: agrupación por regla y silenciado en `app_config` (OPS-11)
+- [x] 30-06-PLAN.md — Centro de alertas backend: agrupación por regla y silenciado en `app_config` (OPS-11)
 - [ ] 30-07-PLAN.md — Marcado y estilos: card de línea temporal, campana, cajón, modal; retirada del card de eventos (OPS-07, OPS-08, OPS-11)
 - [ ] 30-08-PLAN.md — `timeline-row.js` + `timeline.js`: fila, filtros en servidor, cursor, virtualización y evento en vivo (OPS-07..10)
 - [ ] 30-09-PLAN.md — `alertCenter.js`: badge, cajón, silenciado y top-3 de la Fase 29 (OPS-11)
