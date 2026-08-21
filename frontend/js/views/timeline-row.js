@@ -8,6 +8,15 @@
 
 export const SEV_COLOR = { critical: '#ef4444', warning: '#f59e0b', info: '#64748b' };
 
+// media.snapshot_url/thumbnail_url los construye siempre el backend como ruta propia
+// (/snapshots/... o /api/v2/recordings/.../thumbnail — ver backend/api/v2/deps.py::snapshot_url),
+// pero se validan igualmente antes de usarlos en un sink de URL (img.src, window.open):
+// defensa en profundidad, no confiar a ciegas en que el backend nunca cambie (CodeQL
+// js/client-side-unvalidated-url-redirection / js/xss).
+export function isSafeMediaUrl(url) {
+  return typeof url === 'string' && url.startsWith('/') && !url.startsWith('//');
+}
+
 // Lenguaje llano y en pasado (UI-SPEC "Copywriting Contract"): nunca el identificador
 // crudo del catalogo en el texto visible; el tipo tecnico vive en el title de la fila.
 // Los nombres son los de backend/events/types.py::EventType, no inventados.
@@ -127,7 +136,7 @@ export function timelineRow(ev, media, personName) {
 
   const thumb = row.querySelector('.tl-thumb');
   const src = media?.snapshot_url ?? media?.thumbnail_url;
-  if (src) {
+  if (src && isSafeMediaUrl(src)) {
     thumb.src = src;
     thumb.setAttribute('aria-label', `Ver captura del evento de las ${time}`);
   } else {

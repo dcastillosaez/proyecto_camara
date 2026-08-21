@@ -8,6 +8,7 @@
 import { apiFetch } from '../api.js';
 import { showToast } from '../views/dashboard.js';
 import { applyPersonAssignment } from '../views/timeline.js';
+import { isSafeMediaUrl } from '../views/timeline-row.js';
 
 const ALLOWED_TYPES = /^image\/(jpeg|png|webp)$/;   // mismo juego que _ALLOWED_IMAGE_TYPES
 
@@ -85,10 +86,14 @@ async function _paintKnownPersons() {
 
 async function onRequest(e) {
   const detail = e.detail ?? {};
+  // Misma cautela que timeline-row.js/timeline.js: el backend siempre construye
+  // snapshotUrl como ruta propia (/snapshots/...), pero se valida igual antes de
+  // usarla en un sink de URL (img.src, fetch) — defensa en profundidad.
+  const rawUrl = detail.snapshotUrl ?? null;
   _ctx = {
     eventId: detail.eventId,
     trackId: detail.trackId ?? null,
-    snapshotUrl: detail.snapshotUrl ?? null,
+    snapshotUrl: isSafeMediaUrl(rawUrl) ? rawUrl : null,
     scopeCount: 0,
   };
   const nameInput = $('mark-person-name');

@@ -9,7 +9,7 @@
 import { apiFetch } from '../api.js';
 import { openClipModal } from '../components/eventCard.js';
 import { showToast } from './dashboard.js';
-import { timelineRow, isDismissed, dismiss, undoToast } from './timeline-row.js';
+import { timelineRow, isDismissed, dismiss, undoToast, isSafeMediaUrl } from './timeline-row.js';
 import { paintWindow } from './timeline-virtualize.js';
 import { filterParams, clearFilter, clearAllFilters, paintActiveChips, bindFilterChips, setFocusFilter } from './timeline-filters.js';
 
@@ -118,7 +118,7 @@ export async function applyTimelineFilters() {
 // ── Acciones de fila ──────────────────────────────────────────────
 function _openSnapshot(media) {
   const url = media?.snapshot_url ?? media?.thumbnail_url;
-  if (!url) { showToast('Este evento no tiene captura.', 'info'); return; }
+  if (!url || !isSafeMediaUrl(url)) { showToast('Este evento no tiene captura.', 'info'); return; }
   // #clip-modal solo contiene un <video>: la imagen se abre aparte, sin inventar otro modal.
   window.open(url, '_blank', 'noopener');
 }
