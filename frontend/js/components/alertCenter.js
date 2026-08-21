@@ -9,6 +9,7 @@
 // textContent. El nombre de la regla lo escribe el operador en rules.yaml (T-30-31).
 
 import { apiFetch } from '../api.js';
+import { showToast } from '../views/dashboard.js';
 import { describe, SEV_COLOR } from '../views/timeline-row.js';
 
 const $ = (id) => document.getElementById(id);
@@ -20,6 +21,7 @@ const hhmmss = (d) => d.toLocaleTimeString('es-ES', { hour12: false });
 const hhmm = (d) => d.toLocaleTimeString('es-ES', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
 let _lastFocus = null;
+let _muteTarget = null;      // regla del popover abierto; nunca se guarda en el DOM
 
 // ── Grupo del cajon ───────────────────────────────────────────────────
 const GROUP_HTML = `
@@ -153,6 +155,60 @@ export async function loadAlerts() {
   paintTop3(data.groups, checked);
 }
 
+// ── Silenciado: la duracion ES la confirmacion (D-07, sin dialogo nativo) ──
+function openMutePopover(btn, ruleName) {
+  const pop = $('alert-mute-popover');
+  const title = $('alert-mute-title');
+  if (!pop || !title) return;
+  _muteTarget = ruleName;
+  title.textContent = `Silenciar «${ruleName}»`;      // dato del backend: textContent
+  pop.classList.add('open');                          // abrir antes de medir offsetWidth
+  const r = btn.getBoundingClientRect();
+  // El popover cuelga de #alert-drawer, que es position:fixed inset:0, asi que sus
+  // coordenadas absolutas coinciden con las del viewport.
+  pop.style.top = `${r.bottom + 6}px`;
+  pop.style.left = `${Math.max(8, r.right - pop.offsetWidth)}px`;
+  pop.querySelector('[data-duration]')?.focus();
+}
+
+function closeMutePopover() {
+  _muteTarget = null;
+  $('alert-mute-popover')?.classList.remove('open');
+}
+
+async function muteRule(durationSecs) {
+  const rule = _muteTarget;
+  closeMutePopover();
+  if (!rule) return;
+  try {
+    await apiFetch('/api/v2/alerts/mute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rule_name: rule, duration_secs: durationSecs }),
+    });
+    await loadAlerts();
+  } catch {
+    // Con exito o con error el estado real se relee del servidor: la UI no puede
+    // quedarse diciendo "silenciada" si el backend rechazo la duracion (T-30-34).
+    showToast('No se pudo silenciar la regla. Inténtalo de nuevo.', 'error');
+    await loadAlerts();
+  }
+}
+
+async function unmuteRule(rule) {
+  try {
+    await apiFetch('/api/v2/alerts/unmute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rule_name: rule }),
+    });
+    await loadAlerts();
+  } catch {
+    showToast('No se pudo reactivar la regla. Inténtalo de nuevo.', 'error');
+    await loadAlerts();
+  }
+}
+
 // ── Cajon lateral ─────────────────────────────────────────────────────
 export function openAlertDrawer() {
   const drawer = $('alert-drawer');
@@ -166,6 +222,7 @@ export function openAlertDrawer() {
 export function closeAlertDrawer() {
   const drawer = $('alert-drawer');
   if (!drawer || !drawer.classList.contains('open')) return;
+  closeMutePopover();
   drawer.classList.remove('open');
   ($('btn-alert-center') ?? _lastFocus)?.focus();   // el foco vuelve a la campana
   _lastFocus = null;
@@ -187,11 +244,28 @@ export function bindAlertCenter() {
   $('btn-alert-center')?.addEventListener('click', openAlertDrawer);
   $('btn-alerts-view-all')?.addEventListener('click', openAlertDrawer);
   $('btn-alert-close')?.addEventListener('click', closeAlertDrawer);
-  drawer?.addEventListener('click', (e) => { if (e.target === drawer) closeAlertDrawer(); });
+  drawer?.addEventListener('click', (e) => {
+    // El backdrop cubre el viewport entero mientras esta abierto, asi que aqui
+    // llega cualquier clic: sirve de "clic fuera" para el popover.
+    if (!e.target.closest('#alert-mute-popover, [data-slot="mute"]')) closeMutePopover();
+    if (e.target === drawer) closeAlertDrawer();
+  });
+  $('alert-groups')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-slot="mute"]');
+    if (!btn) return;
+    if (btn.dataset.act === 'unmute') unmuteRule(btn.dataset.rule);
+    else openMutePopover(btn, btn.dataset.rule);
+  });
+  $('alert-mute-popover')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-duration]');
+    if (btn) muteRule(Number(btn.dataset.duration));   // lista blanca: la fija el marcado
+  });
   document.addEventListener('keydown', (e) => {
     if (!drawer?.classList.contains('open')) return;
-    if (e.key === 'Escape') closeAlertDrawer();
-    else if (e.key === 'Tab') trapTab(e);
+    if (e.key === 'Escape') {
+      if (_muteTarget) closeMutePopover();             // Escape cierra primero el popover
+      else closeAlertDrawer();
+    } else if (e.key === 'Tab') trapTab(e);
   });
 }
 
