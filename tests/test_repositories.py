@@ -592,3 +592,101 @@ async def TEST_query_performance_100k(db, tmp_path):
 
     assert elapsed < 0.5, f"query took {elapsed:.3f}s, expected < 0.5s"
     assert isinstance(items, list)
+
+
+# --- Criterio 3 de la Fase 30: 10.000 eventos navegables sin degradacion -----------
+#
+# Presupuesto de 100 ms por consulta. 30-RESEARCH.md Hallazgo 7 midio 1,66 ms en el
+# peor caso @10k sin indice y 0,62 ms en la primera pagina @100k con idx_events_ts_id:
+# dos ordenes de magnitud de margen para que el test no sea flaky en una maquina
+# cargada, sin dejar de detectar una regresion real (un TEMP B-TREE o un scan completo
+# se van a cientos de ms).
+_BUDGET_10K_SECS = 0.1
+
+
+def _perf_repo(db_file) -> tuple:
+    """Motor propio sobre la base ya sembrada, para no medir el fixture."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+    sf = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, EventRepo(sf)
+
+
+async def TEST_timeline_first_page_under_budget_10k(db):
+    """Criterio 3: la primera pagina de la linea temporal @10k bajo presupuesto."""
+    db_file, _ = db
+    seed_events(db_file, n=10_000, days=30, camera_id="cam1")
+    engine, repo = _perf_repo(db_file)
+    try:
+        start = time.perf_counter()
+        items, cursor = await repo.query(limit=50)
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert len(items) == 50
+    assert cursor is not None
+    assert elapsed < _BUDGET_10K_SECS, f"first page took {elapsed * 1000:.1f}ms"
+
+
+async def TEST_timeline_deep_cursor_page_under_budget_10k(db):
+    """Criterio 3: la pagina 100 (~evento 5.000) cuesta lo mismo que la primera.
+
+    Es la comprobacion que importa del cursor (ts, id): con OFFSET, la pagina 100
+    tendria que descartar 5.000 filas antes de devolver 50.
+    """
+    db_file, _ = db
+    seed_events(db_file, n=10_000, days=30, camera_id="cam1")
+    engine, repo = _perf_repo(db_file)
+    try:
+        first_page, cursor = await repo.query(limit=50)
+        first_ids = {e.id for e in first_page}
+        for _ in range(98):  # paginas 2..99
+            _, cursor = await repo.query(cursor=cursor, limit=50)
+            assert cursor is not None
+
+        start = time.perf_counter()
+        deep_page, _ = await repo.query(cursor=cursor, limit=50)
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert len(deep_page) == 50
+    assert not ({e.id for e in deep_page} & first_ids), "la pagina 100 repite filas"
+    assert elapsed < _BUDGET_10K_SECS, f"deep page took {elapsed * 1000:.1f}ms"
+
+
+async def TEST_timeline_multi_type_filter_under_budget_10k(db):
+    """Criterio 3 + regresion del Pitfall 2: filtro multi-tipo + severidad @10k.
+
+    Sin el '+' unario de _filter_conditions esta consulta ordena con TEMP B-TREE y
+    se vuelve ~30x mas lenta (54 ms vs 0,52 ms @100k, 30-RESEARCH.md Hallazgo 7).
+    """
+    db_file, _ = db
+    seed_events(db_file, n=10_000, days=30, camera_id="cam1")
+    engine, repo = _perf_repo(db_file)
+    try:
+        start = time.perf_counter()
+        items, _ = await repo.query(
+            type=[EventType.INTRUSION, EventType.UNKNOWN_PERSON, EventType.LINE_CROSSED],
+            severity=Severity.WARNING,
+            limit=50,
+        )
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert len(items) == 50
+    assert all(e.severity == Severity.WARNING for e in items)
+    assert elapsed < _BUDGET_10K_SECS, f"multi-type filter took {elapsed * 1000:.1f}ms"
+
+
+async def TEST_timeline_index_exists_after_init_10k(db):
+    """Criterio 3: el indice que sostiene el presupuesto existe en la base real."""
+    db_file, sf = db
+    seed_events(db_file, n=10_000, days=30, camera_id="cam1")
+    async with sf() as session:
+        result = await session.execute(
+            text("SELECT name FROM sqlite_master WHERE type='index'"))
+        names = {row[0] for row in result.all()}
+
+    assert "idx_events_ts_id" in names
