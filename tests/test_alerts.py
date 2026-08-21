@@ -11,7 +11,7 @@ temporal — mismo criterio que test_events_api.py.
 from __future__ import annotations
 
 import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -24,7 +24,7 @@ import backend.main as main_module
 from backend.api.v2 import alerts as alerts_module
 from backend.events.types import Event, EventType
 from backend.storage import models
-from backend.storage.repositories import EventRepo
+from backend.storage.repositories import ConfigRepo, EventRepo
 
 NOW = datetime.datetime.now()
 
@@ -176,3 +176,89 @@ async def TEST_alerts_counts_match_groups(sf, client):
     assert body["muted_count"] == 0
     assert body["truncated"] is False
     assert body["checked_at"]
+
+
+# ─── Silenciado ─────────────────────────────────────────────────────────────
+async def _muted_rows(factory) -> dict:
+    return await ConfigRepo(factory).get(alerts_module.MUTED_KEY, {}) or {}
+
+
+async def TEST_mute_persists_until_in_app_config(sf, client):
+    resp = await client.post(
+        "/api/v2/alerts/mute", json={"rule_name": "R", "duration_secs": 900})
+
+    assert resp.status_code == 200
+    until = datetime.datetime.fromisoformat(resp.json()["until"])
+    assert 890 <= (until - datetime.datetime.now()).total_seconds() <= 900
+    rows = await _muted_rows(sf)
+    assert rows["R"]["until"] == resp.json()["until"]
+
+
+async def TEST_mute_rejects_arbitrary_duration(sf, client):
+    resp = await client.post(
+        "/api/v2/alerts/mute", json={"rule_name": "R", "duration_secs": 12345})
+
+    assert resp.status_code == 400
+    assert "900" in resp.json()["detail"]
+    assert await _muted_rows(sf) == {}
+
+
+async def TEST_mute_rejects_empty_rule_name(sf, client):
+    resp = await client.post(
+        "/api/v2/alerts/mute", json={"rule_name": "", "duration_secs": 900})
+
+    assert resp.status_code in (400, 422)
+    assert await _muted_rows(sf) == {}
+
+
+async def TEST_muted_rule_is_excluded_from_active_count(sf, client):
+    await _insert(
+        sf,
+        make_event(payload={"rules": ["Intrusion nocturna"]}),
+        make_event(type=EventType.UNKNOWN_PERSON),
+    )
+    before = (await client.get("/api/v2/alerts")).json()["active_count"]
+
+    await client.post(
+        "/api/v2/alerts/mute",
+        json={"rule_name": "Intrusion nocturna", "duration_secs": 3600})
+    body = (await client.get("/api/v2/alerts")).json()
+
+    assert body["active_count"] == before - 1
+    assert body["muted_count"] == 1
+    group = _by_key(body)["rule:Intrusion nocturna"]
+    assert group["muted_until"] is not None      # sigue visible, solo atenuado
+
+
+async def TEST_expired_mute_is_ignored_and_purged_on_write(sf, client):
+    past = (datetime.datetime.now() - datetime.timedelta(minutes=1)).isoformat()
+    await ConfigRepo(sf).set(alerts_module.MUTED_KEY, {"Vieja": {"until": past, "camera_id": None}})
+    await _insert(sf, make_event(payload={"rules": ["Vieja"]}))
+
+    body = (await client.get("/api/v2/alerts")).json()
+    assert body["muted_count"] == 0
+    assert _by_key(body)["rule:Vieja"]["muted_until"] is None
+
+    await client.post("/api/v2/alerts/mute", json={"rule_name": "Otra", "duration_secs": 900})
+    assert "Vieja" not in await _muted_rows(sf)
+
+
+async def TEST_unmute_removes_entry(sf, client):
+    await client.post("/api/v2/alerts/mute", json={"rule_name": "R", "duration_secs": 900})
+
+    resp = await client.post("/api/v2/alerts/unmute", json={"rule_name": "R"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"rule_name": "R", "muted": False}
+    assert await _muted_rows(sf) == {}
+
+
+async def TEST_mute_emits_config_changed(sf, client):
+    engine = MagicMock()
+    with patch.object(alerts_module, "_event_engine", engine):
+        await client.post("/api/v2/alerts/mute", json={"rule_name": "R", "duration_secs": 3600})
+
+    engine.config_changed.assert_called_once()
+    kwargs = engine.config_changed.call_args.kwargs
+    assert kwargs["muted_rule"] == "R"
+    assert kwargs["duration_secs"] == 3600
