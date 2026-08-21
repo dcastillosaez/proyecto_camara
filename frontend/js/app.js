@@ -10,6 +10,7 @@ import { loadRecordings, bindEventCardControls } from './components/eventCard.js
 import { loadDetectionClasses } from './components/detectionClasses.js';
 import { loadPersons, bindPersonGallery } from './components/personGallery.js';
 import { loadAlerts, bindAlertCenter } from './components/alertCenter.js';
+import { initTimeline, refreshPersonNames } from './views/timeline.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   // Wiring de listeners — el orden entre si no importa (no hay llamadas de red aqui,
@@ -28,6 +29,9 @@ document.addEventListener('DOMContentLoaded', () => {
   initTracksOverlay();
   loadCamStatus();
   loadInitialData();
+  // initTimeline() antes de connectWS(): el observer y los controles tienen que existir
+  // cuando lleguen los primeros mensajes type:"event" por el socket.
+  initTimeline();
   connectWS();
 
   loadRecordings();
@@ -35,6 +39,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   loadPersons();
   setInterval(loadPersons, 30000);
+  // person_name no viaja persistido en el evento: la timeline lo resuelve contra su
+  // Map<person_id, name>, que se refresca al mismo ritmo que la galeria (Hallazgo 5).
+  setInterval(refreshPersonNames, 30000);
 
   loadZones();
   loadDetectionClasses();

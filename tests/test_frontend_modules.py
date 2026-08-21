@@ -6,6 +6,10 @@ propiedades mecanicas verificables desde Python: ficheros locked por 28-CONTEXT.
 ASGI. La paridad funcional completa (video, PTZ, zonas, grabaciones, etc.) es un checklist
 manual firmado en el SUMMARY de la puerta de fase (28-09-PLAN.md), igual que 27-10.
 
+La Fase 30 anade al contrato los modulos de la linea temporal (views/timeline*.js) y el
+centro de alertas (components/alertCenter.js): mismo limite de 300 lineas, misma exigencia
+de existir en disco.
+
 La mayoria de estos tests estan en rojo hasta que 28-08-PLAN.md termina la fase: es el estado
 esperado mientras 28-02..28-07 van creando los modulos uno a uno.
 """
@@ -32,6 +36,12 @@ LOCKED_JS = [
     "components/eventCard.js",
     "components/detectionClasses.js",
     "components/personGallery.js",
+    # Fase 30: linea temporal y centro de alertas entran en el mismo contrato mecanico.
+    "views/timeline.js",
+    "views/timeline-row.js",
+    "views/timeline-virtualize.js",
+    "views/timeline-filters.js",
+    "components/alertCenter.js",
 ]
 
 
