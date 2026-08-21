@@ -118,3 +118,50 @@ async def list_alerts(
         "truncated": truncated,
         "checked_at": now.isoformat(),
     }
+
+
+@router.post("/mute")
+@limiter.limit(V2_RATE_LIMIT)
+async def mute_rule(
+    request: Request,
+    rule_name: str = Body(..., min_length=1, max_length=100),
+    duration_secs: int = Body(...),
+) -> dict[str, Any]:
+    """Silencia una regla durante un tiempo acotado (OPS-11, D-16/D-17).
+
+    Silenciar es SOLO de presentacion: la regla se sigue evaluando, sus acciones se
+    siguen ejecutando (sigue grabando el clip y mandando el aviso) y el evento se
+    sigue persistiendo. Lo unico que cambia es que su grupo sale atenuado en el cajon
+    y no cuenta para el badge. Silenciar desde la UI no debe hacerte perder pruebas
+    (30-RESEARCH.md Hallazgo 8).
+    """
+    if duration_secs not in MUTE_DURATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"duracion no valida: elige una de {MUTE_DURATIONS} segundos")
+    now = datetime.datetime.now()
+    until = now + datetime.timedelta(seconds=duration_secs)
+    async with _mute_lock:                    # read-modify-write sobre una unica fila
+        current = await _load_muted(now)      # ya purgado de caducadas
+        current[rule_name] = {"until": until.isoformat(), "camera_id": None}
+        await _config_repo().set(MUTED_KEY, current)
+    if _event_engine is not None:
+        _event_engine.config_changed(now, muted_rule=rule_name, duration_secs=duration_secs)
+    return {"rule_name": rule_name, "until": until.isoformat()}
+
+
+@router.post("/unmute")
+@limiter.limit(V2_RATE_LIMIT)
+async def unmute_rule(
+    request: Request,
+    rule_name: str = Body(..., embed=True, min_length=1, max_length=100),
+) -> dict[str, Any]:
+    """Reactiva una regla silenciada antes de que expire su duracion."""
+    now = datetime.datetime.now()
+    async with _mute_lock:
+        current = await _load_muted(now)
+        current.pop(rule_name, None)
+        await _config_repo().set(MUTED_KEY, current)
+    if _event_engine is not None:
+        _event_engine.config_changed(now, unmuted_rule=rule_name)
+    return {"rule_name": rule_name, "muted": False}
