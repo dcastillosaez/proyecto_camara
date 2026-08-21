@@ -22,7 +22,7 @@ from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from backend.api.v2.deps import V2_RATE_LIMIT, limiter as v2_limiter, pagination_limit, snapshot_url
+from backend.api.v2.deps import V2_RATE_LIMIT, limiter as v2_limiter, snapshot_url
 from backend.auth import issue_ws_token, verify, verify_ws_token
 from backend.config import build_rtsp_url, get_settings, mask_rtsp_url
 from backend.database import (
@@ -762,6 +762,9 @@ app.include_router(detection_v2_router)
 from backend.api.v2.context import router as context_v2_router
 app.include_router(context_v2_router)
 
+from backend.api.v2.events import router as events_v2_router
+app.include_router(events_v2_router)
+
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 # Gallery images served as static files under /gallery/{person_id}/{filename}
@@ -970,39 +973,8 @@ async def websocket_endpoint(ws: WebSocket, token: str | None = Query(default=No
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/v2/events")
-@v2_limiter.limit(V2_RATE_LIMIT)
-async def api_v2_events(
-    request: Request,
-    type: str | None = Query(default=None),
-    severity: str | None = Query(default=None),
-    person_id: int | None = Query(default=None),
-    zone_id: str | None = Query(default=None),
-    camera_id: str | None = Query(default=None),
-    from_dt: datetime.datetime | None = Query(default=None, alias="from"),
-    to_dt: datetime.datetime | None = Query(default=None, alias="to"),
-    cursor: str | None = Query(default=None),
-    limit: int = pagination_limit(),
-):
-    """Typed events with filters and cursor pagination (EventRepo.query)."""
-    from backend.events.types import Severity
-
-    try:
-        event_type = EventType(type) if type else None
-        event_severity = Severity(severity) if severity else None
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    repo = EventRepo(get_session_factory())
-    items, next_cursor = await repo.query(
-        type=event_type, severity=event_severity, person_id=person_id,
-        zone_id=zone_id, camera_id=camera_id, ts_from=from_dt, ts_to=to_dt,
-        cursor=cursor, limit=limit,
-    )
-    return {
-        "events": [json.loads(e.model_dump_json()) for e in items],
-        "cursor": next_cursor,
-    }
+# GET /api/v2/events vive desde la Fase 30 en backend/api/v2/events.py (router
+# events_v2_router, registrado mas arriba): mismo envelope mas `total` y `media`.
 
 
 @app.get("/api/v2/rules")
