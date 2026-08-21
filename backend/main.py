@@ -145,6 +145,81 @@ async def _broadcast_event(event: Event, media: dict | None = None) -> None:
     })
 
 
+# Throttle de snapshots por (camera_id, track_id). Acotado a proposito: sin cota seria
+# estado global creciente (CLAUDE.md "no crear estado global oculto").
+_snapshot_last: dict[tuple[str, int], float] = {}
+_SNAPSHOT_STATE_CAP = 256
+
+
+async def _capture_event_snapshot(event: Event) -> str | None:
+    """Recorta el bbox del ultimo frame y lo escribe como JPEG (Fase 30, OPS-07/08).
+
+    Devuelve la ruta relativa en disco o None. El imwrite va SIEMPRE en
+    asyncio.to_thread: esta funcion la llama _event_pipeline, que es una corrutina,
+    y un imwrite sincrono ahi produce micro-pausas en MJPEG y WS.
+    """
+    settings = get_settings()
+    if not settings.snapshot_enabled or event.bbox is None:
+        return None
+    key = (event.camera_id, event.track_id if event.track_id is not None else -1)
+    now = time.monotonic()
+    last = _snapshot_last.get(key)
+    if last is not None and (now - last) < settings.snapshot_min_interval_secs:
+        return None
+    pipeline = camera_manager.get(event.camera_id) if camera_manager is not None else None
+    frame = pipeline.get_frame() if pipeline is not None else None
+    if frame is None:
+        return None
+    if len(_snapshot_last) >= _SNAPSHOT_STATE_CAP:
+        cutoff = now - max(settings.snapshot_min_interval_secs * 10, 60.0)
+        for k in [k for k, t in _snapshot_last.items() if t < cutoff]:
+            del _snapshot_last[k]
+    _snapshot_last[key] = now
+
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = (int(v) for v in event.bbox)
+    x1 = max(0, min(x1, w - 1))
+    y1 = max(0, min(y1, h - 1))
+    x2 = max(x1 + 1, min(x2, w))
+    y2 = max(y1 + 1, min(y2, h))
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+    if crop.shape[1] > settings.snapshot_max_width:
+        scale = settings.snapshot_max_width / crop.shape[1]
+        crop = cv2.resize(crop, (settings.snapshot_max_width, max(1, int(crop.shape[0] * scale))))
+
+    day_dir = Path(settings.snapshot_dir) / event.ts.strftime("%Y%m%d")
+    day_dir.mkdir(parents=True, exist_ok=True)
+    path = day_dir / f"{event.id}.jpg"   # nombre derivado del uuid4, nunca de entrada del usuario
+    ok = await asyncio.to_thread(cv2.imwrite, str(path), crop)
+    if not ok:
+        logger.warning("No se pudo escribir el snapshot del evento %s", event.id)
+        return None
+    return path.as_posix()
+
+
+async def _purge_old_snapshots(retention_days: int) -> int:
+    """Borra los directorios YYYYMMDD de snapshots anteriores al corte. Devuelve ficheros borrados."""
+    import shutil
+
+    base = Path(get_settings().snapshot_dir)
+    if not base.is_dir():
+        return 0
+    cutoff = (datetime.datetime.now() - datetime.timedelta(days=retention_days)).strftime("%Y%m%d")
+    removed = 0
+    for child in base.iterdir():
+        if not child.is_dir() or len(child.name) != 8 or not child.name.isdigit():
+            continue
+        if child.name >= cutoff:
+            continue
+        removed += sum(1 for _ in child.glob("*"))
+        await asyncio.to_thread(shutil.rmtree, str(child), True)
+    if removed:
+        logger.info("Purgados %d snapshots anteriores a %s", removed, cutoff)
+    return removed
+
+
 def make_event_pipeline(event_repo, rule_engine, *, broadcast_event=None,
                         broadcast_v2=None, broadcast_v1=None, schedule=None):
     """Suscriptor UNICO del bus: dentro de una sola corrutina el orden si esta
