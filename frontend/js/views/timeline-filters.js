@@ -3,6 +3,7 @@
 //
 // Todo filtro se resuelve en SERVIDOR (OPS-09 / T-30-30): aqui solo se construye el
 // querystring que viaja a GET /api/v2/events. Nunca se filtra el array ya descargado.
+import { describe } from './timeline-row.js';
 
 const TYPE_CHIPS = [
   ['INTRUSION', 'Intrusión'], ['UNKNOWN_PERSON', 'Desconocido'], ['LINE_CROSSED', 'Cruce'],
@@ -10,6 +11,25 @@ const TYPE_CHIPS = [
 ];
 
 const $ = (id) => document.getElementById(id);
+
+// Foco puesto desde el centro de alertas ("Ver en la linea temporal"). Vive aqui, con el
+// resto del estado de filtros, porque `rule` no tiene control propio en la barra: el
+// operador no puede teclear un nombre de regla, solo llegar a el desde una alerta.
+let _focusRule = null;
+let _focusType = null;
+
+/** Deja como unico filtro la regla de la alerta (o su tipo, si el grupo no tiene regla). */
+export function setFocusFilter(ruleName, eventType) {
+  clearAllFilters();
+  if (ruleName) { _focusRule = ruleName; return; }
+  if (!eventType) return;
+  // Si el tipo tiene chip propio en la barra, se enciende: asi la barra refleja el filtro.
+  // Se compara por dataset, nunca montando un selector con texto del servidor.
+  const chip = [...document.querySelectorAll('#tl-filter-types .filter-chip')]
+    .find((c) => c.dataset.type === eventType);
+  if (chip) chip.classList.add('active');
+  else _focusType = eventType;
+}
 
 function personIdFor(persons, name) {
   const target = name.trim().toLowerCase();
@@ -25,6 +45,8 @@ export function filterParams(persons, pageSize) {
     p.append('type', c.dataset.type);
     chips.push([`type:${c.dataset.type}`, c.textContent]);
   });
+  if (_focusRule) { p.set('rule', _focusRule); chips.push(['rule', `Regla: ${_focusRule}`]); }
+  if (_focusType) { p.append('type', _focusType); chips.push(['focus-type', describe({ type: _focusType })]); }
   const sev = document.querySelector('#tl-filter-severity .filter-chip.active');
   if (sev) { p.set('severity', sev.dataset.severity); chips.push(['severity', sev.textContent]); }
   const zone = $('tl-filter-zone')?.value ?? '';
@@ -45,7 +67,9 @@ export function filterParams(persons, pageSize) {
 }
 
 export function clearFilter(key) {
-  if (key.startsWith('type:')) {
+  if (key === 'rule') { _focusRule = null; }
+  else if (key === 'focus-type') { _focusType = null; }
+  else if (key.startsWith('type:')) {
     document.querySelector(`#tl-filter-types .filter-chip[data-type="${key.slice(5)}"]`)?.classList.remove('active');
   } else if (key === 'severity') {
     document.querySelector('#tl-filter-severity .filter-chip.active')?.classList.remove('active');
@@ -56,6 +80,8 @@ export function clearFilter(key) {
 }
 
 export function clearAllFilters() {
+  _focusRule = null;
+  _focusType = null;
   document.querySelectorAll('#tl-filter-types .filter-chip, #tl-filter-severity .filter-chip')
     .forEach((c) => c.classList.remove('active'));
   ['tl-filter-zone', 'tl-filter-person', 'tl-filter-from', 'tl-filter-to']

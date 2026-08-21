@@ -11,7 +11,7 @@ import { openClipModal } from '../components/eventCard.js';
 import { showToast } from './dashboard.js';
 import { timelineRow, isDismissed, dismiss, undoToast } from './timeline-row.js';
 import { paintWindow } from './timeline-virtualize.js';
-import { filterParams, clearFilter, clearAllFilters, paintActiveChips, bindFilterChips } from './timeline-filters.js';
+import { filterParams, clearFilter, clearAllFilters, paintActiveChips, bindFilterChips, setFocusFilter } from './timeline-filters.js';
 
 const PAGE_SIZE = 50;
 const MAX_ROWS = 400;   // plan B si el salto al recortar se nota: subir a 1000 y no recortar
@@ -202,6 +202,12 @@ export function initTimeline() {
     e.currentTarget.classList.add('hidden');
     render({ start: 0 });
   });
+  // "Ver en la linea temporal" del centro de alertas: alertCenter.js despacha y aqui se
+  // escucha, sin que ninguno de los dos modulos importe al otro (30-09).
+  document.addEventListener('timeline:filter-rule', (e) => {
+    setFocusFilter(e.detail?.ruleName, e.detail?.eventType);
+    applyTimelineFilters();
+  });
   list.addEventListener('click', _onListClick);
   list.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('tl-thumb')) {
@@ -227,6 +233,10 @@ function _matchesActiveFilters(ev) {
   if (types.length && !types.includes(ev.type)) return false;
   const sev = params.get('severity');
   if (sev && ev.severity !== sev) return false;
+  // El filtro `rule` casa contra payload.rules en servidor (json_each); aqui se replica esa
+  // misma pertenencia para que un evento en vivo de otra regla no se cuele en la lista.
+  const rule = params.get('rule');
+  if (rule && !(ev.payload?.rules ?? []).includes(rule)) return false;
   const zone = params.get('zone_id');
   if (zone && ev.zone_id !== zone) return false;
   const person = params.get('person_id');
