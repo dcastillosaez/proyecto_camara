@@ -182,3 +182,23 @@ export function dismiss(eventId) {
 export function undismiss(eventId) {
   writeDismissed(readDismissed().filter((id) => id !== eventId));
 }
+
+// Descartar no pide confirmacion: la salida es un toast con "Deshacer" de 5 s (UI-SPEC).
+// showToast() de dashboard.js solo admite texto plano, y aqui hace falta un boton dentro.
+export function undoToast(eventId, onUndo) {
+  const wrap = document.getElementById('toast-container');
+  if (!wrap) return;
+  const el = document.createElement('div');
+  el.className = 'toast bg-slate-800 border-slate-700 text-slate-200 border rounded-xl px-4 py-2.5 text-xs shadow-xl pointer-events-auto flex items-center gap-2';
+  el.setAttribute('role', 'alert');
+  el.append('Evento descartado —');
+  const undo = document.createElement('button');
+  undo.type = 'button';
+  undo.className = 'text-blue-400 font-semibold cursor-pointer';
+  undo.textContent = 'Deshacer';
+  undo.addEventListener('click', () => { undismiss(eventId); el.remove(); onUndo(); });
+  el.appendChild(undo);
+  wrap.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 5000);
+}
