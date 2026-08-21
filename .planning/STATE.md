@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: 30-12-PLAN.md en curso — Task 1 completada (criterio 3 medido @10k, suite 607/607); PARADO en el checkpoint visual bloqueante de Task 2, Task 3 (cierre de fase) sin ejecutar
-last_updated: "2026-08-21T12:00:00.000Z"
-last_activity: 2026-08-21 -- 30-12 Task 1 completada (4 tests de rendimiento con 10.000 eventos sembrados, suite completa en verde); esperando el checkpoint visual con cámara real
+stopped_at: Fase 30 completa (12/12 planes) — línea temporal accionable, centro de alertas y "Marcar como persona" en producción; criterio 3 medido @10k, suite 607 passed/2 skipped, OPS-07..OPS-11 cerrados. El checkpoint visual de 30-12 Task 2 se verificó con navegador real contra el servidor en marcha en todo lo que no exige cámara; lo que sí la exige queda diferido como 11º checkpoint manual
+last_updated: "2026-08-21T15:30:00.000Z"
+last_activity: 2026-08-21 -- Fase 30 cerrada: 30-12 Task 2 verificada con navegador real (criterios 1, 2, 6 parcial, 7 y 8) y Task 3 ejecutada (OPS-07..OPS-11 marcados, ROADMAP y STATE actualizados)
 progress:
   total_phases: 32
-  completed_phases: 14
+  completed_phases: 15
   total_plans: 68
-  completed_plans: 66
-  percent: 94
+  completed_plans: 67
+  percent: 96
 ---
 
 # Project State
@@ -21,34 +21,61 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 30 — Event Timeline y centro de alertas
+**Current focus:** Phase 31 — Vista de analítica (sin planificar)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 12 of 12 (30-01 a 30-11 completos; 30-12 a medias)
-Status: Executing Phase 30 — parado en el checkpoint visual de 30-12
+Phase: 30 (Event Timeline y centro de alertas) — COMPLETA (12/12 planes)
+Plan: 12 of 12 — 30-12 cerrada
+Status: Fase 30 cerrada; siguiente paso `/gsd:plan-phase 31`
 
-**30-12 (puerta de fase) está a medias.** La Task 1 ya está: cuatro tests nuevos en
-`tests/test_repositories.py` miden el criterio 3 con 10.000 eventos sembrados por
-`scripts/seed_events.py` (nunca un generador ad hoc) contra un presupuesto de 100 ms
-por consulta. Medido en esta máquina: primera página 12,9 ms (incluye abrir la
-conexión), página 100 —unos 5.000 eventos dentro— 2,0 ms, y filtro de tres tipos más
-severidad 4,2 ms. Que la página profunda cueste menos que la primera es justo lo que
-tenía que salir: con el cursor `(ts, id)` la profundidad no se paga, con `OFFSET` se
-habrían descartado 5.000 filas antes de devolver 50. La suite completa quedó en
-**607 passed, 2 skipped** (603 previos + 4), con `test_architecture.py`,
-`test_security_regression.py` y `test_rule_engine.py` verdes — este último sin un solo
-commit de la Fase 30, como exigía el plan.
+**La Fase 30 está completa.** El card plano de "Eventos recientes" ya no existe:
+en su sitio hay una línea temporal accionable de filas de 52 px con barra de
+severidad, miniatura del snapshot, descripción en lenguaje llano, chips de zona y
+de regla y cuatro acciones, filtros combinables resueltos **en servidor** con
+paginación por cursor, scroll infinito con ventana de 400 filas, eventos en vivo
+por el `/ws` que ya existía, centro de alertas en cajón lateral con agrupación por
+regla y silenciado temporal, y "Marcar como persona" con el recorte precargado y
+actualización retroactiva del track. OPS-07..OPS-11 quedan marcados.
 
-Lo que falta es el **checkpoint visual bloqueante de la Task 2**: ocho puntos con
-navegador y cámara real (contenido de la fila, fluidez del scroll con miles de
-eventos, evento nuevo en <1 s, marcar como persona, centro de alertas, reconexión,
-zero-scroll y consola limpia). Tres de los seis criterios del ROADMAP no se pueden
-automatizar sin runner JS y se firman ahí. Hasta que ese checkpoint se resuelva, la
-**Task 3 no se ejecuta**: OPS-07..OPS-11 siguen en `[ ]`, la Fase 30 sigue sin marcar
-en `ROADMAP.md` y esta sección no refleja todavía el cierre de la fase.
+**30-12 (puerta de fase) cerró las tres piezas.** La Task 1: cuatro tests nuevos
+en `tests/test_repositories.py` miden el criterio 3 con 10.000 eventos sembrados
+por `scripts/seed_events.py` (nunca un generador ad hoc) contra un presupuesto de
+100 ms por consulta. Medido en esta máquina: primera página 12,9 ms (incluye abrir
+la conexión), página 100 —unos 5.000 eventos dentro— 2,0 ms, y filtro de tres tipos
+más severidad 4,2 ms. Que la página profunda cueste menos que la primera es justo
+lo que tenía que salir: con el cursor `(ts, id)` la profundidad no se paga, con
+`OFFSET` se habrían descartado 5.000 filas antes de devolver 50. Suite completa en
+**607 passed, 2 skipped**, con `test_architecture.py`, `test_security_regression.py`
+y `test_rule_engine.py` verdes — este último sin un solo commit de la Fase 30, como
+exigía el plan.
+
+La Task 2 (checkpoint visual) se resolvió **con el servidor real en marcha** y
+navegador contra `http://localhost:8000/` sobre 58 eventos históricos reales.
+Verificado con evidencia: contenido de la fila (criterio 1) —barra de severidad por
+`--sev`, hora monoespaciada, miniatura con `role="button"` y su `aria-label`,
+descripción en lenguaje llano y nunca `CAMERA_OFFLINE` crudo, chips ocultos cuando
+no aplican, acciones deshabilitadas con el `title` exacto del UI-SPEC—; barra de
+filtros completa (criterio 2); campana, badge, apertura/cierre del cajón y trampa de
+foco (criterio 6, parcial); zero-scroll a 1366×768 con el borde inferior del vídeo en
+530 px y los paneles de la Fase 29 en 102/213 px, más `Escape` devolviendo el foco a
+`#btn-alert-center` y la fila sin `tabindex` propio (criterio 7); y consola limpia
+(criterio 8). **La cámara real (192.168.1.132) no es alcanzable desde este entorno**
+—`CaptureWorker cam1: reconnecting in 30.0s...` confirma el backoff del invariante 8,
+pero no hay señal—, así que los criterios 3 (fluidez percibida del scroll), 4 (evento
+nuevo en <1 s desde una detección real), 5 (marcar como persona sobre un
+`UNKNOWN_PERSON` con recorte y `track_id`) y el ciclo completo silenciar → atenuar →
+reactivar quedan **diferidos como 11º checkpoint manual**, decisión explícita del
+usuario y mismo patrón no bloqueante que los diez anteriores.
+
+Durante el recorrido apareció un fallo **preexistente y ajeno a la fase**:
+`GET /api/v2/cameras/cam1/health` devuelve 500 con
+`ValueError: Out of range float values are not JSON compliant: inf` cuando no fluyen
+frames (FPS calculado con divisor cero). `git log main..HEAD` sobre
+`backend/api/v2/metrics.py`, `backend/observability.py` y `backend/pipeline/rate.py`
+sale **vacío**: ningún commit de la Fase 30 toca esos ficheros, así que no es una
+regresión de esta fase. Merece un `/gsd:debug` propio.
 
 30-11 cerró la acción estrella de la fase. `markPerson.js` (169 líneas) escucha el
 `CustomEvent('timeline:mark-person')` que la fila ya despachaba desde 30-08 —misma
@@ -273,7 +300,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   uno a uno con comando `pytest -k` en `24-06-SUMMARY.md` (criterio 6:
   87.5% de reducción de inferencias faciales sobre un track no
   confirmado, umbral exigido ≥70%). FACE-07..FACE-11 cerrados.
-  Quedan **9 checkpoints con cámara real** sin ejecutar, ninguno
+  Quedan **11 checkpoints con cámara real** sin ejecutar, ninguno
   bloqueante para seguir programando: 19-01 Task 5 (migrar BD real),
   19-02 Task 5 (validación de reglas en vivo), 20-02 Task 4 (validación
   visual del pre-buffer), 21-01 Task 5 (coste de instrumentación y
@@ -287,13 +314,22 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   tests deterministas con trayectorias sintéticas), y 27-11 Task 2
   (calibración de `object_person_radius_px` y tasa de falsos positivos
   de `OBJECT_LEFT` — 150 px ya cubierto por tests deterministas con
-  trayectorias sintéticas, `OBJECT_LEFT` sigue en `Severity.WARNING`).
+  trayectorias sintéticas, `OBJECT_LEFT` sigue en `Severity.WARNING`),
+  29-03 Task 3 (checkpoint visual de la vista de operaciones: criterios
+  de éxito 1, 4, 5 y 6 del ROADMAP), y 30-12 Task 2 (los cuatro puntos
+  del checkpoint visual de la línea temporal que exigen señal de cámara:
+  fluidez percibida del scroll con miles de filas, evento nuevo en <1 s
+  desde una detección real, "Marcar como persona" sobre un
+  `UNKNOWN_PERSON` reciente con recorte y `track_id`, y el ciclo
+  silenciar → atenuar → reactivar sobre un grupo con regla activa — el
+  resto del checkpoint sí se verificó con navegador y servidor reales,
+  ver `30-12-SUMMARY.md`).
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-21 -- Ejecutado 30-11 (modal "Marcar como persona" con recorte precargado, aviso de alcance y repintado en sitio)
+Last activity: 2026-08-21 -- Fase 30 completa: ejecutado 30-12 (criterio 3 medido @10k, checkpoint visual verificado en lo que no exige cámara, OPS-07..OPS-11 cerrados)
 
-Progress v2.0: [█████░░░░░] ~50% (11/22 fases completas)
+Progress v2.0: [██████░░░░] ~64% (14/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
 
 ## Mediciones acumuladas del bloque A y Fase 23
@@ -311,34 +347,35 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 ## Siguiente paso
 
 ```
-/gsd:execute-phase 28
+/gsd:plan-phase 31
 ```
 
-La Fase 28 (Refactor del frontend a módulos ES) está **planificada**: 9
-planes en 5 waves (`28-01`..`28-09`), plan-checker verde sin bloqueantes.
-`frontend/index.html` (2038 líneas, `<script>` único de ~1240) se extrae
-1:1 a `css/{base,layout,components}.css` + `js/{app,api,websocket}.js` +
-`js/views/dashboard{,-ptz,-events,-observability}.js` +
-`js/components/{videoCanvas,zoneEditor,eventCard,detectionClasses,personGallery}.js`,
-sin construir todavía las vistas de operaciones/timeline/analytics/cámara/
-configuración (Fases 29-32) ni `js/store.js` (diferido a la Fase 29) — así
-lo cerró el usuario en `28-CONTEXT.md`. La investigación (`28-RESEARCH.md`)
-midió con precisión que el `<body>` actual sin `<style>`/`<script>` ya
-ocupa 667 líneas, lo que hacía inalcanzable el criterio original del
-ROADMAP ("`index.html` < 300 líneas") sin fragmentar el marcado con
-`fetch()+innerHTML` — arquitectura nueva no pedida. El usuario optó por
-redefinir el criterio en vez de añadir esa complejidad: `ROADMAP.md`
-Success Criteria #1 de la Fase 28 ahora mide "cero `<script>`/`<style>`
-inline", no un recuento de líneas. `28-PATTERNS.md` verificó contra el
-fichero real 3 correcciones al mapeo inicial de RESEARCH (`bindPtzControls`
-→ `dashboard-ptz.js`, `loadResolutions` → `videoCanvas.js`, `#clip-modal`
-vive fuera del rango de marcado 121-784 y debe preservarse) y un ciclo de
-import real entre `dashboard.js`/`dashboard-events.js` resuelto creando
-ambos en el mismo plan (28-02). `frontend/app.js` (stub v1.2 de 2 líneas)
-se borra en 28-08 al crear el entry point real. Ningún módulo nuevo supera
-300 líneas (el mayor, `dashboard-events.js`, ~204). Wave 5 (28-09) es un
-checkpoint no autónomo: checklist manual de paridad funcional (13 áreas) +
-medición de carga inicial desde un segundo dispositivo de la LAN.
+La **Fase 30 (Event Timeline y centro de alertas) está completa**: 12/12 planes
+(`30-01`..`30-12`), OPS-07..OPS-11 cerrados, suite **607 passed, 2 skipped**. La
+línea temporal accionable sustituye al card plano de eventos, con filtros
+resueltos en servidor por cursor, scroll infinito, centro de alertas agrupado por
+regla con silenciado temporal y "Marcar como persona" con alcance retroactivo. Las
+decisiones no obvias de la fase: un **suscriptor único ordenado** del `EventBus`
+(`make_event_pipeline()`) como solución a la carrera de reglas de D-14 —evaluar,
+escribir `payload.rules`, `INSERT`, emitir por WS, y solo después diferir
+`run_actions()`—; el **silenciado persistido en `app_config`** (clave
+`alerts.muted_rules`, duraciones en lista blanca, sin "para siempre") y **solo de
+presentación**, de modo que la regla silenciada sigue grabando su clip y mandando
+su aviso; el `GET /api/v2/timeline` que planteaba SPEC_v2 se **descartó** en favor
+de extender `/api/v2/events`, que ya tenía consumidor; el **snapshot de evento**
+—`Event.snapshot_path` existía desde la Fase 19 y nadie lo escribía— se implementó
+en 30-04 para que la miniatura no cayera siempre al marcador; y `person_name` se
+**resuelve en el cliente** contra el `Map` de `/persons` en vez de denormalizarlo
+en cada fila de `events`.
+
+La Fase 31 (Vista de analítica, OPS-12..OPS-15: personas por hora, ocupación por
+zona, heatmap, ranking, tendencias y export CSV/JSON, con las agregaciones en base
+de datos y no en el navegador) es la siguiente y **no está planificada todavía**.
+
+Las Fases 28 (Refactor del frontend a módulos ES) y 29 (Vista de operaciones)
+están **completas en código** y aportan cada una un checkpoint manual pendiente
+—paridad funcional y carga en LAN la 28, verificación visual de los criterios
+1/4/5/6 la 29—, ninguno bloqueante.
 
 La Fase 27 (Multi-clase y contexto de escena) está **completa**: 11/11
 planes (`27-01`..`27-11`), BEH-06..BEH-09 cerrados, suite 519/519.
@@ -546,9 +583,9 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 25 — Re-identificación (ReID) | B | ✓ Completa (código) | 2026-08-15 | ⧗ Tasa de falsos positivos con dos personas reales (checkpoint 25-06 Task 2) |
 | 26 — Análisis de comportamiento | B | ✓ Completa (código) | 2026-08-16 | ⧗ Calibración de umbrales con cámara real (checkpoint 26-05 Task 3) |
 | 27 — Multi-clase y contexto de escena | B | ✓ Completa (código) | 2026-08-17 | ⧗ Calibración de `object_person_radius_px` y tasa de falsos positivos (checkpoint 27-11 Task 2) |
-| 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
-| 29 — Vista de operaciones | C | ✓ Completa (código) | — | ⧗ Checkpoint visual Task 3 de 29-03 (criterios éxito 1/4/5/6 del ROADMAP) |
-| 30 — Event Timeline y alertas | C | — Sin planificar | — | Depende de 29 |
+| 28 — Frontend a módulos ES | C | ✓ Completa (código) | 2026-08-20 | ⧗ Checklist de paridad funcional + medición de carga en LAN (28-09) |
+| 29 — Vista de operaciones | C | ✓ Completa (código) | 2026-08-20 | ⧗ Checkpoint visual Task 3 de 29-03 (criterios éxito 1/4/5/6 del ROADMAP) |
+| 30 — Event Timeline y alertas | C | ✓ Completa (código) | 2026-08-21 | ⧗ Cuatro puntos del checkpoint visual 30-12 Task 2 que exigen cámara real (criterios 3, 4 y 5 del ROADMAP y el ciclo completo de silenciado) |
 | 31 — Vista de analítica | C | — Sin planificar | — | Depende de 30 |
 | 32 — Vista de cámara y config visual | C | — Sin planificar | — | Depende de 31 |
 | 33 — Editores visuales | C | — Sin planificar | — | Depende de 32 |
@@ -591,7 +628,13 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **570/570 passing** (+2 skips, última ejecución 2026-08-21 tras `30-04`:
+Suite completa: **607 passed, 2 skipped** (última ejecución 2026-08-21 tras `30-12`,
+puerta de la Fase 30: +4 tests de rendimiento en `tests/test_repositories.py` que miden el
+criterio 3 con 10.000 eventos sembrados por `scripts/seed_events.py` — primera página,
+página 100 por cursor, filtro multi-tipo y existencia de `idx_events_ts_id` —, todos por
+debajo del presupuesto de 100 ms; `test_architecture.py`, `test_security_regression.py` y
+`test_rule_engine.py` verdes, este último sin un solo commit en toda la fase. Cifra
+anterior **570/570** (tras `30-04`:
 +15 tests — 11 en `tests/test_snapshots.py` (recorte real en disco, `bbox=None`, deshabilitado,
 throttle por track, `to_thread`, clamp de coordenadas desbordadas, purga por directorio de día,
 traducción de URL, hook antes del `INSERT` sobre `EventRepo` real, supervivencia al fallo del

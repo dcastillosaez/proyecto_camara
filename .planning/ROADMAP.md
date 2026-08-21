@@ -283,7 +283,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 
 - [ ] **Phase 28: Refactor del frontend a módulos ES** — index.html deja de contener lógica
 - [x] **Phase 29: Vista de operaciones** — Centro de operaciones que responde en 3 segundos (completed 2026-08-20; checkpoint visual de Task 3 de 29-03-PLAN.md — criterios de éxito 1/4/5/6 — pendiente de verificación en persona)
-- [ ] **Phase 30: Event Timeline y centro de alertas** — Línea temporal accionable con miniaturas
+- [x] **Phase 30: Event Timeline y centro de alertas** — Línea temporal accionable con miniaturas (completed 2026-08-21; checkpoint visual de Task 2 de 30-12-PLAN.md — criterios de éxito 3/4/5 del ROADMAP y el ciclo completo de silenciado — diferido por falta de cámara real)
 - [ ] **Phase 31: Vista de analítica** — Ocupación, heatmap, ranking de personas, tendencias
 - [ ] **Phase 32: Vista de cámara y configuración visual** — Operar y configurar sin tocar .env
 - [ ] **Phase 33: Editores visuales de zonas, líneas y reglas** — Dibujar sobre el vídeo, componer reglas por formulario
@@ -567,7 +567,7 @@ Plans:
   5. "Marcar como persona" precarga el crop y actualiza retroactivamente los eventos del track
   6. El centro de alertas agrupa, permite silenciar por regla y muestra qué regla disparó
 **Spec**: SPEC_v2.md §8.1
-**Plans:** 12 plans — `.planning/phases/30-event-timeline-y-centro-de-alertas/`
+**Plans:** 12/12 plans complete — `.planning/phases/30-event-timeline-y-centro-de-alertas/`
 
 Plans:
 - [x] 30-01-PLAN.md — Pipeline de eventos ordenado: `match`/`run_actions`, `payload.rules` y mensaje WS `type:"event"` (OPS-10, OPS-11)
@@ -581,7 +581,7 @@ Plans:
 - [x] 30-09-PLAN.md — `alertCenter.js`: badge, cajón, silenciado y top-3 de la Fase 29 (OPS-11)
 - [x] 30-10-PLAN.md — Cableado: `case 'event'` en el WebSocket, arranque en `app.js` y `LOCKED_JS` (OPS-07, OPS-10, OPS-11)
 - [x] 30-11-PLAN.md — "Marcar como persona": recorte precargado, aviso de alcance y repintado en sitio (OPS-08)
-- [ ] 30-12-PLAN.md — Puerta de fase: criterio 3 medido con 10.000 eventos, suite completa y checkpoint visual (OPS-07..11)
+- [x] 30-12-PLAN.md — Puerta de fase: criterio 3 medido con 10.000 eventos, suite completa y checkpoint visual (OPS-07..11)
 
 ### Phase 31: Vista de analítica
 **Goal**: Convertir el histórico en información operativa
