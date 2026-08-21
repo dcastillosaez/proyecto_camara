@@ -166,8 +166,14 @@ class RuleEngine:
         for k in stale:
             del self._last_fired[k]
 
-    async def evaluate(self, event: Event) -> list[str]:
-        """Return the names of every rule that matched (and wasn't debounced), in order."""
+    def match(self, event: Event) -> list[str]:
+        """Reglas que casan y no estan en debounce. Puro: sin await, sin efectos externos.
+
+        El bookkeeping de debounce SI ocurre aqui — una regla "casada" cuenta como
+        disparada aunque sus acciones se ejecuten despues (30-RESEARCH.md Pattern 2).
+        Es sincrono a proposito: make_event_pipeline() lo llama antes del INSERT,
+        y un await ahi reabriria la carrera que esta fase viene a cerrar (D-14).
+        """
         self._purge_stale(event.ts)
         fired: list[str] = []
         for rule in self._rules:
@@ -177,10 +183,16 @@ class RuleEngine:
                 continue
             if self._is_debounced(rule, event):
                 continue
-
             self._last_fired[self._debounce_key(rule, event)] = event.ts
             fired.append(rule.name)
+        return fired
 
+    async def run_actions(self, event: Event, fired: list[str]) -> None:
+        """Ejecuta las acciones de las reglas ya casadas por match(). Lento: Telegram,
+        webhook, grabacion. Nunca debe correr antes del INSERT (30-RESEARCH.md Hallazgo 3)."""
+        for rule in self._rules:
+            if rule.name not in fired:
+                continue
             for action in rule.actions:
                 handler = self._registry.get(action.type)
                 if handler is None:
@@ -190,4 +202,9 @@ class RuleEngine:
                     await handler(event, action, rule.name)
                 except Exception:
                     logger.exception("Accion %r de regla %r fallo", action.type, rule.name)
+
+    async def evaluate(self, event: Event) -> list[str]:
+        """Compatibilidad: match + run_actions, misma firma y semantica que antes del corte."""
+        fired = self.match(event)
+        await self.run_actions(event, fired)
         return fired

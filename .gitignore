@@ -35,9 +35,14 @@ data/*.db
 # Ficheros temporales del modo WAL de SQLite
 data/*.db-shm
 data/*.db-wal
+# Copias que _backup_db() escribe antes de cada migracion pendiente
+data/backups/
 
 # Clip thumbnails (Fase 20) — generated at runtime from the trigger frame
 data/thumbnails/
+
+# Snapshots de evento (Fase 30) — recortes JPEG escritos en caliente por evento
+data/snapshots/
 
 # Referencias externas
 third_party/
@@ -50,3 +55,4 @@ data/token.json
 
 # Modelos ONNX descargados por scripts/fetch_models.py (Fase 25) — ~900 KB de binario
 models/
+.claude-server.log

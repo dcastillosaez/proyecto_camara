@@ -13,7 +13,13 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.events.types import Event, EventType, Severity
 from backend.storage import models
-from backend.storage.repositories import ConfigRepo, DetectionStatRepo, EventRepo
+from backend.storage.repositories import (
+    ConfigRepo,
+    DetectionStatRepo,
+    EventRepo,
+    RecordingRepo,
+    UploadState,
+)
 from scripts.seed_events import seed_events
 
 
@@ -70,6 +76,112 @@ async def TEST_query_by_type_and_range(db):
     assert all(datetime.datetime(2026, 1, 1) <= e.ts <= datetime.datetime(2026, 1, 31) for e in items)
 
 
+# ─── Fase 30 (OPS-09): tipo multi-valor, filtro por regla y count() ──────────
+
+
+async def TEST_query_accepts_multiple_types(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 1, 10)))
+    await repo.insert(make_event(type=EventType.INTRUSION, ts=datetime.datetime(2026, 1, 2, 10)))
+    await repo.insert(make_event(type=EventType.UNKNOWN_PERSON, ts=datetime.datetime(2026, 1, 3, 10)))
+
+    items, _ = await repo.query(type=[EventType.INTRUSION, EventType.UNKNOWN_PERSON])
+
+    assert {e.type for e in items} == {EventType.INTRUSION, EventType.UNKNOWN_PERSON}
+    assert [e.ts for e in items] == sorted((e.ts for e in items), reverse=True)
+
+
+async def TEST_query_single_type_still_accepts_enum(db):
+    """La forma antigua (un enum suelto) es la que usa backend/database.py:166."""
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(type=EventType.LINE_CROSSED))
+    await repo.insert(make_event(type=EventType.INTRUSION))
+
+    items, _ = await repo.query(type=EventType.LINE_CROSSED)
+
+    assert len(items) == 1
+    assert items[0].type == EventType.LINE_CROSSED
+
+
+async def TEST_query_filters_by_rule_name(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(payload={"rules": ["Intrusión nocturna"]}))
+    await repo.insert(make_event(payload={"rules": ["Otra"]}))
+    await repo.insert(make_event(payload={"direction": "in"}))  # sin clave 'rules'
+
+    items, _ = await repo.query(rule="Intrusión nocturna")
+
+    assert len(items) == 1
+    assert items[0].payload["rules"] == ["Intrusión nocturna"]
+
+
+async def TEST_query_rule_filter_is_not_interpolated(db):
+    """T-30-05: el nombre de regla viaja por bindparam, jamas por f-string."""
+    _, sf = db
+    repo = EventRepo(sf)
+    await repo.insert(make_event(payload={"rules": ["Intrusión nocturna"]}))
+
+    items, _ = await repo.query(rule="' OR 1=1 --")
+
+    assert items == []
+
+
+async def TEST_count_matches_query_filters(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1)
+    for i in range(30):
+        await repo.insert(make_event(type=EventType.INTRUSION, ts=base + datetime.timedelta(minutes=i)))
+    for i in range(10):
+        await repo.insert(make_event(type=EventType.LINE_CROSSED, ts=base + datetime.timedelta(minutes=i)))
+
+    items, _ = await repo.query(type=EventType.INTRUSION, limit=10)
+
+    assert len(items) == 10
+    assert await repo.count(type=EventType.INTRUSION) == 30
+    assert await repo.count(type=[EventType.INTRUSION, EventType.LINE_CROSSED]) == 40
+    assert await repo.count() == 40
+
+
+async def TEST_multi_type_query_plan_uses_timeline_index(db):
+    """Pitfall 2: sin el '+' unario SQLite elige idx_events_type_ts y ordena con
+    TEMP B-TREE (medido 54 ms vs 0,52 ms @100k). Se comprueba sobre el SQL real."""
+    import sqlite3
+
+    from sqlalchemy import and_, select
+    from sqlalchemy.dialects import sqlite as sqlite_dialect
+
+    db_file, sf = db
+    seed_events(db_file, n=2_000, days=7, camera_id="cam1")
+
+    conditions, params = EventRepo._filter_conditions(
+        type=[EventType.INTRUSION, EventType.UNKNOWN_PERSON, EventType.LINE_CROSSED],
+        severity=Severity.WARNING,
+    )
+    q = (
+        select(models.Event)
+        .where(and_(*conditions))
+        .order_by(models.Event.ts.desc(), models.Event.id.desc())
+        .limit(50)
+    )
+    if params:
+        q = q.params(**params)
+    sql = str(q.compile(
+        dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}))
+
+    conn = sqlite3.connect(db_file)
+    try:
+        plan = " ".join(str(row) for row in conn.execute("EXPLAIN QUERY PLAN " + sql))
+    finally:
+        conn.close()
+
+    assert "TEMP B-TREE FOR ORDER BY" not in plan, plan
+    assert "idx_events_ts_id" in plan, plan
+
+
 async def TEST_cursor_pagination_is_stable(db):
     _, sf = db
     repo = EventRepo(sf)
@@ -87,6 +199,225 @@ async def TEST_cursor_pagination_is_stable(db):
 
     assert len(seen_ids) == 100
     assert len(set(seen_ids)) == 100
+
+
+# ─── Fase 30 (OPS-08): alcance retroactivo por track ─────────────────────────
+# Los tracker_id de ByteTrack se reinician al recrear el tracker (backend/tracker.py:181)
+# y la tabla `tracks` nunca se escribe: track_id=7 de hoy y track_id=7 de anteayer son
+# personas distintas. Estos tests fijan las tres cotas que lo impiden (30-RESEARCH.md
+# Pitfall 3): misma camara, ventana de +-6 h y corte en el primer hueco > 60 s.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _seed_track(repo, *, base, offsets_s, track_id=7, camera_id="cam1", **overrides):
+    """Inserta un evento por cada offset (segundos desde *base*) y devuelve sus ids."""
+    ids = []
+    for offset in offsets_s:
+        ev = make_event(
+            camera_id=camera_id,
+            track_id=track_id,
+            ts=base + datetime.timedelta(seconds=offset),
+            **overrides,
+        )
+        await repo.insert(ev)
+        ids.append(ev.id)
+    return ids
+
+
+async def TEST_track_scope_returns_contiguous_block(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    ids = await _seed_track(repo, base=base, offsets_s=[0, 10, 20, 30, 40])
+
+    scope = await repo.track_scope(ids[2])
+
+    assert scope is not None
+    assert scope["count"] == 5
+    assert set(scope["event_ids"]) == set(ids)
+    assert scope["from"] == base
+    assert scope["to"] == base + datetime.timedelta(seconds=40)
+
+
+async def TEST_track_scope_cuts_on_gap(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    first = await _seed_track(repo, base=base, offsets_s=[0, 10, 20])
+    second = await _seed_track(repo, base=base, offsets_s=[320, 330])  # hueco de 5 min
+
+    scope = await repo.track_scope(first[1])
+
+    assert scope["count"] == 3
+    assert set(scope["event_ids"]) == set(first)
+    assert not set(scope["event_ids"]) & set(second)
+
+
+async def TEST_track_scope_ignores_homonym_track_from_another_day(db):
+    """Regresion del Pitfall 3: mismo track_id, 48 h de distancia, persona distinta."""
+    _, sf = db
+    repo = EventRepo(sf)
+    recent = datetime.datetime(2026, 1, 3, 12, 0, 0)
+    old = recent - datetime.timedelta(hours=48)
+    ids_recent = await _seed_track(repo, base=recent, offsets_s=[0])
+    await _seed_track(repo, base=old, offsets_s=[0])
+
+    scope = await repo.track_scope(ids_recent[0])
+
+    assert scope["count"] == 1
+    assert scope["event_ids"] == ids_recent
+
+
+async def TEST_track_scope_respects_camera_id(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam2", name="Cam 2", enabled=True))
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    ids_cam1 = await _seed_track(repo, base=base, offsets_s=[0], camera_id="cam1")
+    ids_cam2 = await _seed_track(repo, base=base, offsets_s=[0], camera_id="cam2")
+
+    scope = await repo.track_scope(ids_cam1[0])
+
+    assert scope["event_ids"] == ids_cam1
+    assert ids_cam2[0] not in scope["event_ids"]
+
+
+async def TEST_track_scope_returns_none_without_track_id(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    ev = make_event(track_id=None)
+    await repo.insert(ev)
+
+    assert await repo.track_scope(ev.id) is None
+
+
+async def TEST_assign_person_updates_only_contiguous_block(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    block = await _seed_track(repo, base=base, offsets_s=[0, 10, 20, 30, 40])
+    outside = await _seed_track(repo, base=base, offsets_s=[400, 410])
+
+    result = await repo.assign_person(block[2], person_id=7)
+
+    assert result["updated"] == 5
+    assert set(result["event_ids"]) == set(block)
+    for event_id in block:
+        assert (await repo.get(event_id)).person_id == 7
+    for event_id in outside:
+        assert (await repo.get(event_id)).person_id is None
+
+
+async def TEST_assign_person_downgrades_unknown_person_severity(db):
+    """UNKNOWN_PERSON deja de ser advertencia al ganar identidad; el resto no se toca."""
+    _, sf = db
+    repo = EventRepo(sf)
+    base = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    unknown = make_event(
+        type=EventType.UNKNOWN_PERSON, track_id=7, ts=base, severity=Severity.WARNING)
+    crossed = make_event(
+        type=EventType.LINE_CROSSED, track_id=7, ts=base + datetime.timedelta(seconds=10),
+        severity=Severity.WARNING)
+    await repo.insert(unknown)
+    await repo.insert(crossed)
+
+    await repo.assign_person(unknown.id, person_id=3)
+
+    assert (await repo.get(unknown.id)).severity == Severity.INFO
+    assert (await repo.get(crossed.id)).severity == Severity.WARNING
+
+
+async def TEST_assign_person_without_track_returns_zero(db):
+    _, sf = db
+    repo = EventRepo(sf)
+    ev = make_event(track_id=None)
+    await repo.insert(ev)
+
+    result = await repo.assign_person(ev.id, person_id=7)
+
+    assert result == {"person_id": 7, "updated": 0, "event_ids": []}
+    assert (await repo.get(ev.id)).person_id is None
+
+
+async def TEST_assign_person_does_not_touch_homonym_track(db):
+    """T-30-08: el UPDATE va por lista explicita de ids, no por 'WHERE track_id = 7'."""
+    _, sf = db
+    repo = EventRepo(sf)
+    recent = datetime.datetime(2026, 1, 3, 12, 0, 0)
+    ids_recent = await _seed_track(repo, base=recent, offsets_s=[0])
+    ids_old = await _seed_track(repo, base=recent - datetime.timedelta(hours=48), offsets_s=[0])
+
+    result = await repo.assign_person(ids_recent[0], person_id=7)
+
+    assert result["updated"] == 1
+    assert (await repo.get(ids_recent[0])).person_id == 7
+    assert (await repo.get(ids_old[0])).person_id is None
+
+
+# ─── Fase 30: mapa evento -> grabacion de una pagina completa ────────────────
+# events.recording_id NUNCA se escribe; el vinculo real lo pone _on_clip_ready en
+# recordings.trigger_event_id (backend/main.py:353-357).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _make_recording(repo, *, trigger_event_id, thumb="thumbs/x.jpg"):
+    rec_id = await repo.create(
+        camera_id="cam1",
+        filename=f"clip_{trigger_event_id}.mp4",
+        started_at=datetime.datetime(2026, 1, 1, 12, 0, 0),
+        reason="motion",
+        trigger_event_id=trigger_event_id,
+    )
+    await repo.finalize(
+        rec_id,
+        ended_at=datetime.datetime(2026, 1, 1, 12, 0, 30),
+        duration_s=30.0,
+        size_bytes=1024,
+        sha256="deadbeef",
+        thumbnail_path=thumb,
+        upload_state=UploadState.DONE,
+    )
+    return rec_id
+
+
+async def TEST_by_trigger_event_ids_maps_only_matching(db):
+    _, sf = db
+    repo = RecordingRepo(sf)
+    id_a = await _make_recording(repo, trigger_event_id="ev-a")
+    id_b = await _make_recording(repo, trigger_event_id="ev-b")
+    await _make_recording(repo, trigger_event_id="ev-c")
+
+    mapping = await repo.by_trigger_event_ids(["ev-a", "ev-b", "ev-zzz"])
+
+    assert set(mapping) == {"ev-a", "ev-b"}
+    assert mapping["ev-a"]["recording_id"] == id_a
+    assert mapping["ev-b"]["recording_id"] == id_b
+    assert mapping["ev-a"]["local_path"] == "clip_ev-a.mp4"
+    assert mapping["ev-a"]["thumbnail_path"] == "thumbs/x.jpg"
+
+
+async def TEST_by_trigger_event_ids_empty_input():
+    """Corto-circuito: con la lista vacia no se abre sesion ni se consulta."""
+
+    def exploding_factory():
+        raise AssertionError("no deberia abrirse una sesion con la lista vacia")
+
+    assert await RecordingRepo(exploding_factory).by_trigger_event_ids([]) == {}
+
+
+async def TEST_by_trigger_event_ids_keeps_latest_per_event(db):
+    _, sf = db
+    repo = RecordingRepo(sf)
+    await _make_recording(repo, trigger_event_id="ev-a", thumb="thumbs/old.jpg")
+    newer = await _make_recording(repo, trigger_event_id="ev-a", thumb="thumbs/new.jpg")
+
+    mapping = await repo.by_trigger_event_ids(["ev-a"])
+
+    assert len(mapping) == 1
+    assert mapping["ev-a"]["recording_id"] == newer
+    assert mapping["ev-a"]["thumbnail_path"] == "thumbs/new.jpg"
 
 
 async def TEST_detection_stats_upsert(db):
@@ -261,3 +592,101 @@ async def TEST_query_performance_100k(db, tmp_path):
 
     assert elapsed < 0.5, f"query took {elapsed:.3f}s, expected < 0.5s"
     assert isinstance(items, list)
+
+
+# --- Criterio 3 de la Fase 30: 10.000 eventos navegables sin degradacion -----------
+#
+# Presupuesto de 100 ms por consulta. 30-RESEARCH.md Hallazgo 7 midio 1,66 ms en el
+# peor caso @10k sin indice y 0,62 ms en la primera pagina @100k con idx_events_ts_id:
+# dos ordenes de magnitud de margen para que el test no sea flaky en una maquina
+# cargada, sin dejar de detectar una regresion real (un TEMP B-TREE o un scan completo
+# se van a cientos de ms).
+_BUDGET_10K_SECS = 0.1
+
+
+def _perf_repo(db_file) -> tuple:
+    """Motor propio sobre la base ya sembrada, para no medir el fixture."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+    sf = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, EventRepo(sf)
+
+
+async def TEST_timeline_first_page_under_budget_10k(db):
+    """Criterio 3: la primera pagina de la linea temporal @10k bajo presupuesto."""
+    db_file, _ = db
+    seed_events(db_file, n=10_000, days=30, camera_id="cam1")
+    engine, repo = _perf_repo(db_file)
+    try:
+        start = time.perf_counter()
+        items, cursor = await repo.query(limit=50)
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert len(items) == 50
+    assert cursor is not None
+    assert elapsed < _BUDGET_10K_SECS, f"first page took {elapsed * 1000:.1f}ms"
+
+
+async def TEST_timeline_deep_cursor_page_under_budget_10k(db):
+    """Criterio 3: la pagina 100 (~evento 5.000) cuesta lo mismo que la primera.
+
+    Es la comprobacion que importa del cursor (ts, id): con OFFSET, la pagina 100
+    tendria que descartar 5.000 filas antes de devolver 50.
+    """
+    db_file, _ = db
+    seed_events(db_file, n=10_000, days=30, camera_id="cam1")
+    engine, repo = _perf_repo(db_file)
+    try:
+        first_page, cursor = await repo.query(limit=50)
+        first_ids = {e.id for e in first_page}
+        for _ in range(98):  # paginas 2..99
+            _, cursor = await repo.query(cursor=cursor, limit=50)
+            assert cursor is not None
+
+        start = time.perf_counter()
+        deep_page, _ = await repo.query(cursor=cursor, limit=50)
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert len(deep_page) == 50
+    assert not ({e.id for e in deep_page} & first_ids), "la pagina 100 repite filas"
+    assert elapsed < _BUDGET_10K_SECS, f"deep page took {elapsed * 1000:.1f}ms"
+
+
+async def TEST_timeline_multi_type_filter_under_budget_10k(db):
+    """Criterio 3 + regresion del Pitfall 2: filtro multi-tipo + severidad @10k.
+
+    Sin el '+' unario de _filter_conditions esta consulta ordena con TEMP B-TREE y
+    se vuelve ~30x mas lenta (54 ms vs 0,52 ms @100k, 30-RESEARCH.md Hallazgo 7).
+    """
+    db_file, _ = db
+    seed_events(db_file, n=10_000, days=30, camera_id="cam1")
+    engine, repo = _perf_repo(db_file)
+    try:
+        start = time.perf_counter()
+        items, _ = await repo.query(
+            type=[EventType.INTRUSION, EventType.UNKNOWN_PERSON, EventType.LINE_CROSSED],
+            severity=Severity.WARNING,
+            limit=50,
+        )
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert len(items) == 50
+    assert all(e.severity == Severity.WARNING for e in items)
+    assert elapsed < _BUDGET_10K_SECS, f"multi-type filter took {elapsed * 1000:.1f}ms"
+
+
+async def TEST_timeline_index_exists_after_init_10k(db):
+    """Criterio 3: el indice que sostiene el presupuesto existe en la base real."""
+    db_file, sf = db
+    seed_events(db_file, n=10_000, days=30, camera_id="cam1")
+    async with sf() as session:
+        result = await session.execute(
+            text("SELECT name FROM sqlite_master WHERE type='index'"))
+        names = {row[0] for row in result.all()}
+
+    assert "idx_events_ts_id" in names

@@ -1,12 +1,20 @@
 """Tests for backend.events.bus — EventBus async pub/sub."""
 
 import asyncio
+import datetime
 import threading
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
+from backend.events.actions import ActionRegistry
 from backend.events.bus import EventBus
+from backend.events.rules import Rule, RuleEngine, When
 from backend.events.types import Event, EventType
+from backend.storage import models
+from backend.storage.repositories import EventRepo
 
 
 def make_event(**overrides) -> Event:
@@ -158,3 +166,148 @@ async def TEST_queue_is_bounded():
 
     assert bus.stats["published"] == 10
     assert bus.stats["dropped"] == 5
+
+
+# --- Fase 30 (D-14): el suscriptor unico ordenado make_event_pipeline() ---------------
+#
+# Con los cuatro suscriptores concurrentes de la Fase 19 el orden lo decidia el
+# scheduler y `payload.rules` se perdia SIEMPRE (_apply_rules mutaba el evento
+# despues de que _persist_event ya lo hubiera escrito). Estos cuatro tests fijan el
+# contrato nuevo: reglas -> payload -> INSERT -> broadcast -> acciones.
+
+RULE_NAME = "Intrusión nocturna"
+
+
+@pytest_asyncio.fixture
+async def repo(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'pipeline_test.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(models.Base.metadata.create_all)
+    sf = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam1", name="Cam 1", enabled=True))
+    yield EventRepo(sf)
+    await engine.dispose()
+
+
+def make_intrusion() -> Event:
+    return Event(type=EventType.INTRUSION, camera_id="cam1", ts=datetime.datetime.now(), track_id=12)
+
+
+def make_engine(actions=None, registry=None) -> RuleEngine:
+    rule = Rule(name=RULE_NAME, when=When(event=EventType.INTRUSION),
+                actions=actions or [], enabled=True, debounce_secs=0)
+    return RuleEngine([rule], registry=registry or ActionRegistry())
+
+
+async def _noop(event):
+    return None
+
+
+async def TEST_rules_are_persisted_in_payload_before_insert(repo):
+    from backend.main import make_event_pipeline
+
+    scheduled: list = []
+
+    def _collect(coro):
+        scheduled.append(coro)
+        return coro
+
+    event = make_intrusion()
+    pipeline = make_event_pipeline(repo, make_engine(), broadcast_event=_noop,
+                                   broadcast_v2=_noop, broadcast_v1=_noop, schedule=_collect)
+    await pipeline(event)
+    for coro in scheduled:
+        await coro
+
+    stored = await repo.get(event.id)
+    assert stored is not None
+    assert stored.payload["rules"] == [RULE_NAME]
+
+
+async def TEST_ws_event_broadcast_happens_after_insert_and_carries_rules(repo):
+    from backend.main import make_event_pipeline
+
+    scheduled: list = []
+    seen: dict = {}
+
+    def _collect(coro):
+        scheduled.append(coro)
+        return coro
+
+    async def fake_broadcast(event):
+        # read-your-writes: en el momento del broadcast la fila ya debe existir
+        seen["row"] = await repo.get(event.id)
+        seen["event"] = event
+
+    event = make_intrusion()
+    pipeline = make_event_pipeline(repo, make_engine(), broadcast_event=fake_broadcast,
+                                   broadcast_v2=_noop, broadcast_v1=_noop, schedule=_collect)
+    await pipeline(event)
+    for coro in scheduled:
+        await coro
+
+    assert seen["row"] is not None, "el broadcast salio antes del INSERT"
+    assert seen["row"].payload["rules"] == [RULE_NAME]
+    assert seen["event"].payload["rules"] == [RULE_NAME]
+
+
+async def TEST_slow_rule_actions_do_not_block_persistence(repo):
+    from backend.main import make_event_pipeline
+
+    scheduled: list = []
+    ran: list[str] = []
+
+    def _collect(coro):
+        scheduled.append(coro)
+        return coro
+
+    async def slow_handler(event, action, rule_name):
+        await asyncio.sleep(0.05)
+        ran.append(rule_name)
+
+    registry = ActionRegistry()
+    registry.register("log", slow_handler)
+    engine = make_engine(actions=[{"type": "log"}], registry=registry)
+
+    event = make_intrusion()
+    pipeline = make_event_pipeline(repo, engine, broadcast_event=_noop,
+                                   broadcast_v2=_noop, broadcast_v1=_noop, schedule=_collect)
+    await pipeline(event)
+
+    # El await del pipeline ya termino: la fila esta, las acciones lentas todavia no.
+    assert await repo.get(event.id) is not None
+    assert ran == []
+
+    for coro in scheduled:
+        await coro
+    assert ran == [RULE_NAME]
+
+
+async def TEST_match_failure_does_not_prevent_persistence(repo):
+    from backend.main import make_event_pipeline
+
+    scheduled: list = []
+
+    def _collect(coro):
+        scheduled.append(coro)
+        return coro
+
+    engine = make_engine()
+
+    def boom(event):
+        raise RuntimeError("match roto")
+
+    engine.match = boom
+
+    event = make_intrusion()
+    pipeline = make_event_pipeline(repo, engine, broadcast_event=_noop,
+                                   broadcast_v2=_noop, broadcast_v1=_noop, schedule=_collect)
+    await pipeline(event)
+    for coro in scheduled:
+        await coro
+
+    stored = await repo.get(event.id)
+    assert stored is not None
+    assert "rules" not in stored.payload

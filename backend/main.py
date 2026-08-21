@@ -22,7 +22,7 @@ from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from backend.api.v2.deps import V2_RATE_LIMIT, limiter as v2_limiter, pagination_limit
+from backend.api.v2.deps import V2_RATE_LIMIT, limiter as v2_limiter, snapshot_url
 from backend.auth import issue_ws_token, verify, verify_ws_token
 from backend.config import build_rtsp_url, get_settings, mask_rtsp_url
 from backend.database import (
@@ -121,6 +121,155 @@ async def _broadcast_v1_compat(event: Event) -> None:
         "person_name": event.payload.get("person_name"),
         "is_intrusion": bool(event.payload.get("is_intrusion", False)),
     })
+
+
+async def _broadcast_event(event: Event, media: dict | None = None) -> None:
+    """Emite el evento tipado completo por el /ws legacy (Fase 30, OPS-10).
+
+    El /ws que usa el frontend solo recibia LINE_CROSSED en formato v1 sin id,
+    severity ni zone_id (_broadcast_v1_compat): insuficiente para la linea temporal.
+    Mismo criterio que la Fase 29 con type:"tracks" — un mensaje mas en el socket
+    que ya existe, nunca una segunda conexion (30-RESEARCH.md Hallazgo 2).
+    NO marca latency_tracker.mark_ws_sent(): eso ya lo hace _broadcast_v2 y
+    marcarlo dos veces contaminaria la metrica EVENT_TO_WS.
+    """
+    await _broadcast({
+        "type": "event",
+        "event": json.loads(event.model_dump_json()),
+        "media": media or {
+            "recording_id": None,
+            "clip_url": None,
+            "thumbnail_url": None,
+            "snapshot_url": snapshot_url(event.snapshot_path),
+        },
+    })
+
+
+# Throttle de snapshots por (camera_id, track_id). Acotado a proposito: sin cota seria
+# estado global creciente (CLAUDE.md "no crear estado global oculto").
+_snapshot_last: dict[tuple[str, int], float] = {}
+_SNAPSHOT_STATE_CAP = 256
+
+
+async def _capture_event_snapshot(event: Event) -> str | None:
+    """Recorta el bbox del ultimo frame y lo escribe como JPEG (Fase 30, OPS-07/08).
+
+    Devuelve la ruta relativa en disco o None. El imwrite va SIEMPRE en
+    asyncio.to_thread: esta funcion la llama _event_pipeline, que es una corrutina,
+    y un imwrite sincrono ahi produce micro-pausas en MJPEG y WS.
+    """
+    settings = get_settings()
+    if not settings.snapshot_enabled or event.bbox is None:
+        return None
+    key = (event.camera_id, event.track_id if event.track_id is not None else -1)
+    now = time.monotonic()
+    last = _snapshot_last.get(key)
+    if last is not None and (now - last) < settings.snapshot_min_interval_secs:
+        return None
+    pipeline = camera_manager.get(event.camera_id) if camera_manager is not None else None
+    frame = pipeline.get_frame() if pipeline is not None else None
+    if frame is None:
+        return None
+    if len(_snapshot_last) >= _SNAPSHOT_STATE_CAP:
+        cutoff = now - max(settings.snapshot_min_interval_secs * 10, 60.0)
+        for k in [k for k, t in _snapshot_last.items() if t < cutoff]:
+            del _snapshot_last[k]
+    _snapshot_last[key] = now
+
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = (int(v) for v in event.bbox)
+    x1 = max(0, min(x1, w - 1))
+    y1 = max(0, min(y1, h - 1))
+    x2 = max(x1 + 1, min(x2, w))
+    y2 = max(y1 + 1, min(y2, h))
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+    if crop.shape[1] > settings.snapshot_max_width:
+        scale = settings.snapshot_max_width / crop.shape[1]
+        crop = cv2.resize(crop, (settings.snapshot_max_width, max(1, int(crop.shape[0] * scale))))
+
+    day_dir = Path(settings.snapshot_dir) / event.ts.strftime("%Y%m%d")
+    day_dir.mkdir(parents=True, exist_ok=True)
+    path = day_dir / f"{event.id}.jpg"   # nombre derivado del uuid4, nunca de entrada del usuario
+    ok = await asyncio.to_thread(cv2.imwrite, str(path), crop)
+    if not ok:
+        logger.warning("No se pudo escribir el snapshot del evento %s", event.id)
+        return None
+    return path.as_posix()
+
+
+async def _purge_old_snapshots(retention_days: int) -> int:
+    """Borra los directorios YYYYMMDD de snapshots anteriores al corte. Devuelve ficheros borrados."""
+    import shutil
+
+    base = Path(get_settings().snapshot_dir)
+    if not base.is_dir():
+        return 0
+    cutoff = (datetime.datetime.now() - datetime.timedelta(days=retention_days)).strftime("%Y%m%d")
+    removed = 0
+    for child in base.iterdir():
+        if not child.is_dir() or len(child.name) != 8 or not child.name.isdigit():
+            continue
+        if child.name >= cutoff:
+            continue
+        removed += sum(1 for _ in child.glob("*"))
+        await asyncio.to_thread(shutil.rmtree, str(child), True)
+    if removed:
+        logger.info("Purgados %d snapshots anteriores a %s", removed, cutoff)
+    return removed
+
+
+def make_event_pipeline(event_repo, rule_engine, *, broadcast_event=None,
+                        broadcast_v2=None, broadcast_v1=None, schedule=None,
+                        snapshot_hook=None):
+    """Suscriptor UNICO del bus: dentro de una sola corrutina el orden si esta
+    garantizado por el lenguaje, no por el scheduler (30-RESEARCH.md Hallazgo 3).
+
+    Sustituye a los cuatro subscribe() concurrentes de la Fase 19. Los parametros
+    inyectables existen para poder probar la secuencia sin levantar la app entera.
+    """
+    broadcast_event = broadcast_event or _broadcast_event
+    broadcast_v2 = broadcast_v2 or _broadcast_v2
+    broadcast_v1 = broadcast_v1 or _broadcast_v1_compat
+    schedule = schedule or asyncio.ensure_future
+
+    async def _event_pipeline(event: Event) -> None:
+        fired: list[str] = []
+        try:
+            fired = rule_engine.match(event)
+            if fired:
+                event.payload["rules"] = fired      # mutacion ANTES de cualquier lectura
+        except Exception:
+            logger.exception("RuleEngine.match failed for event %s", event.id)
+
+        # El snapshot va ANTES del INSERT: asi la ruta entra en la fila con la primera
+        # escritura y no hace falta un segundo UPDATE. try propio — un fallo capturando
+        # la imagen no puede impedir que el evento se persista.
+        if snapshot_hook is not None and event.snapshot_path is None:
+            try:
+                path = await snapshot_hook(event)
+                if path:
+                    event.snapshot_path = path
+            except Exception:
+                logger.exception("Snapshot capture failed for event %s", event.id)
+
+        try:
+            await event_repo.insert(event)          # la fila ya lleva payload.rules
+        except Exception:
+            logger.exception("Failed to persist event %s", event.id)
+
+        try:
+            await broadcast_event(event)            # /ws  {"type": "event", ...}
+            await broadcast_v2(event)               # /api/v2/ws — contrato v2 intacto
+            schedule(broadcast_v1(event))           # legacy: consulta la DB, no bloquear
+        except Exception:
+            logger.exception("Broadcast failed for event %s", event.id)
+
+        if fired:
+            schedule(rule_engine.run_actions(event, fired))  # lentas: nunca bloquean 2 ni 3
+
+    return _event_pipeline
 
 
 async def _camera_watchdog(check_interval: float = 10.0) -> None:
@@ -229,6 +378,8 @@ async def _purge_loop() -> None:
                     logger.info("Purged %d recordings older than %d days", n, settings.recordings_retention_days)
             if settings.local_retention_days > 0:
                 await _purge_local_clip_files(settings.local_retention_days)
+            if settings.snapshot_retention_days > 0:
+                await _purge_old_snapshots(settings.snapshot_retention_days)
             if (
                 settings.persons_retention_days > 0
                 and rtsp_stream is not None
@@ -284,26 +435,12 @@ async def lifespan(app: FastAPI):
 
     event_repo = EventRepo(get_session_factory())
 
-    async def _persist_event(event: Event) -> None:
-        try:
-            await event_repo.insert(event)
-        except Exception:
-            logger.exception("Failed to persist event %s", event.id)
-
-    async def _apply_rules(event: Event) -> None:
-        try:
-            await rule_engine.evaluate(event)
-        except Exception:
-            logger.exception("RuleEngine evaluation failed for event %s", event.id)
-
-    # Cada suscriptor recibe el mismo objeto Event por referencia (EVT-02) y corre
-    # en su propia tarea — el orden de suscripcion no determina el de ejecucion,
-    # pero no importa aqui: el id del evento ya viene fijado (uuid4 client-side)
-    # antes de publicarse, no lo genera la persistencia.
-    event_bus.subscribe("persistence", _persist_event)
-    event_bus.subscribe("websocket_v1_compat", _broadcast_v1_compat)
-    event_bus.subscribe("websocket_v2", _broadcast_v2)
-    event_bus.subscribe("rules", _apply_rules)
+    # Un unico suscriptor ordenado (Fase 30, D-14): reglas -> payload.rules -> INSERT
+    # -> broadcast -> acciones. Con cuatro suscriptores concurrentes el orden lo decidia
+    # el scheduler (bus.py:69 lanza ensure_future por handler) y payload.rules se perdia
+    # siempre, porque _apply_rules mutaba el evento despues del INSERT.
+    event_bus.subscribe("event_pipeline", make_event_pipeline(
+        event_repo, rule_engine, snapshot_hook=_capture_event_snapshot))
 
     # app_config gana sobre la env var: es lo ultimo que el operador toco desde la UI
     # (27-RESEARCH.md Q6, decision del usuario). init_db() ya corrio en la linea 238, asi
@@ -451,6 +588,9 @@ async def lifespan(app: FastAPI):
 
     from backend.api.v2 import detection as detection_v2_module
     detection_v2_module.configure(camera_manager, event_engine)
+
+    from backend.api.v2 import alerts as alerts_v2_module
+    alerts_v2_module.configure(event_engine)
 
     pipeline = camera_manager.add(
         "cam1",
@@ -625,6 +765,12 @@ app.include_router(detection_v2_router)
 from backend.api.v2.context import router as context_v2_router
 app.include_router(context_v2_router)
 
+from backend.api.v2.events import router as events_v2_router
+app.include_router(events_v2_router)
+
+from backend.api.v2.alerts import router as alerts_v2_router
+app.include_router(alerts_v2_router)
+
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 # Gallery images served as static files under /gallery/{person_id}/{filename}
@@ -635,6 +781,13 @@ app.mount("/gallery", StaticFiles(directory=str(_gallery_dir)), name="gallery")
 _clips_dir = Path(_settings.clips_dir)
 _clips_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/clips", StaticFiles(directory=str(_clips_dir)), name="clips")
+
+# Snapshots de evento bajo /snapshots/{YYYYMMDD}/{event_id}.jpg (Fase 30 — OPS-07).
+# Misma auth global que /gallery y /clips; el directorio esta contenido en el
+# proyecto por validate_snapshot_dir (T-30-12).
+_snapshots_dir = Path(_settings.snapshot_dir)
+_snapshots_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/snapshots", StaticFiles(directory=str(_snapshots_dir)), name="snapshots")
 
 
 @app.get("/")
@@ -826,39 +979,8 @@ async def websocket_endpoint(ws: WebSocket, token: str | None = Query(default=No
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/v2/events")
-@v2_limiter.limit(V2_RATE_LIMIT)
-async def api_v2_events(
-    request: Request,
-    type: str | None = Query(default=None),
-    severity: str | None = Query(default=None),
-    person_id: int | None = Query(default=None),
-    zone_id: str | None = Query(default=None),
-    camera_id: str | None = Query(default=None),
-    from_dt: datetime.datetime | None = Query(default=None, alias="from"),
-    to_dt: datetime.datetime | None = Query(default=None, alias="to"),
-    cursor: str | None = Query(default=None),
-    limit: int = pagination_limit(),
-):
-    """Typed events with filters and cursor pagination (EventRepo.query)."""
-    from backend.events.types import Severity
-
-    try:
-        event_type = EventType(type) if type else None
-        event_severity = Severity(severity) if severity else None
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    repo = EventRepo(get_session_factory())
-    items, next_cursor = await repo.query(
-        type=event_type, severity=event_severity, person_id=person_id,
-        zone_id=zone_id, camera_id=camera_id, ts_from=from_dt, ts_to=to_dt,
-        cursor=cursor, limit=limit,
-    )
-    return {
-        "events": [json.loads(e.model_dump_json()) for e in items],
-        "cursor": next_cursor,
-    }
+# GET /api/v2/events vive desde la Fase 30 en backend/api/v2/events.py (router
+# events_v2_router, registrado mas arriba): mismo envelope mas `total` y `media`.
 
 
 @app.get("/api/v2/rules")

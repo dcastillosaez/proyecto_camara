@@ -283,7 +283,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 
 - [ ] **Phase 28: Refactor del frontend a módulos ES** — index.html deja de contener lógica
 - [x] **Phase 29: Vista de operaciones** — Centro de operaciones que responde en 3 segundos (completed 2026-08-20; checkpoint visual de Task 3 de 29-03-PLAN.md — criterios de éxito 1/4/5/6 — pendiente de verificación en persona)
-- [ ] **Phase 30: Event Timeline y centro de alertas** — Línea temporal accionable con miniaturas
+- [x] **Phase 30: Event Timeline y centro de alertas** — Línea temporal accionable con miniaturas (completed 2026-08-21; checkpoint visual de Task 2 de 30-12-PLAN.md — criterios de éxito 3/4/5 del ROADMAP y el ciclo completo de silenciado — diferido por falta de cámara real)
 - [ ] **Phase 31: Vista de analítica** — Ocupación, heatmap, ranking de personas, tendencias
 - [ ] **Phase 32: Vista de cámara y configuración visual** — Operar y configurar sin tocar .env
 - [ ] **Phase 33: Editores visuales de zonas, líneas y reglas** — Dibujar sobre el vídeo, componer reglas por formulario
@@ -567,6 +567,21 @@ Plans:
   5. "Marcar como persona" precarga el crop y actualiza retroactivamente los eventos del track
   6. El centro de alertas agrupa, permite silenciar por regla y muestra qué regla disparó
 **Spec**: SPEC_v2.md §8.1
+**Plans:** 12/12 plans complete — `.planning/phases/30-event-timeline-y-centro-de-alertas/`
+
+Plans:
+- [x] 30-01-PLAN.md — Pipeline de eventos ordenado: `match`/`run_actions`, `payload.rules` y mensaje WS `type:"event"` (OPS-10, OPS-11)
+- [x] 30-02-PLAN.md — Índice `idx_events_ts_id`, migración de esquema v3 y `EventRepo.query()` multi-tipo/regla + `count()` (OPS-09)
+- [x] 30-03-PLAN.md — Alcance de track, asignación retroactiva y mapa evento→grabación (OPS-08)
+- [x] 30-04-PLAN.md — Snapshot de evento: recorte en disco, mount `/snapshots`, throttle y retención (OPS-07, OPS-08)
+- [x] 30-05-PLAN.md — Router `/api/v2/events`: lista paginada con `media`/`total`, detalle, track-scope y assign-person (OPS-07..09)
+- [x] 30-06-PLAN.md — Centro de alertas backend: agrupación por regla y silenciado en `app_config` (OPS-11)
+- [x] 30-07-PLAN.md — Marcado y estilos: card de línea temporal, campana, cajón, modal; retirada del card de eventos (OPS-07, OPS-08, OPS-11)
+- [x] 30-08-PLAN.md — `timeline-row.js` + `timeline.js`: fila, filtros en servidor, cursor, virtualización y evento en vivo (OPS-07..10)
+- [x] 30-09-PLAN.md — `alertCenter.js`: badge, cajón, silenciado y top-3 de la Fase 29 (OPS-11)
+- [x] 30-10-PLAN.md — Cableado: `case 'event'` en el WebSocket, arranque en `app.js` y `LOCKED_JS` (OPS-07, OPS-10, OPS-11)
+- [x] 30-11-PLAN.md — "Marcar como persona": recorte precargado, aviso de alcance y repintado en sitio (OPS-08)
+- [x] 30-12-PLAN.md — Puerta de fase: criterio 3 medido con 10.000 eventos, suite completa y checkpoint visual (OPS-07..11)
 
 ### Phase 31: Vista de analítica
 **Goal**: Convertir el histórico en información operativa

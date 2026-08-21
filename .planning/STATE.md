@@ -1,22 +1,17 @@
 ---
 gsd_state_version: 1.0
 milestone: v2.0
-milestone_name: Plataforma de Video Analytics
-status: in_progress
-stopped_at: "Ejecutado 27-06-PLAN.md (cableado de ObjectAnalyzer en DetectionWorker, wave 3, depende de 27-01+27-03+27-04+27-05). backend/pipeline/detection.py: _analyze_objects(obj_tracked, tracked, captured_at, processed_at) — mismo patron de aislamiento de fallos que _analyze_behavior (try envolviendo analyze+prune, except con self._exceptions += 1, emision fuera del try), anclas BOTTOM_CENTER para objetos y personas, findings += self._objects.prune(...) recogido explicitamente (el retorno NO se ignora); _excluded_object_ids/_object_zone_ids reutilizan sv.PolygonZone.trigger() sobre los mismos _zone_states (kind propagado en _rebuild_zone_states). backend/pipeline/manager.py: self.objects/self.object_tracker construidos en CameraPipeline.__init__ ANTES de _make_detection, gateados por objects_enabled — cuarto precedente (tras FSM Fase 24, ReID Fase 25, BehaviorAnalyzer Fase 26) de estado que sobrevive a un reinicio del DetectionWorker; set_detection_classes/get_object_stats/get_object_boxes en la fachada. backend/main.py propaga los 10 parametros object_*/objects_enabled desde Settings. 8 tests nuevos TEST_* en tests/test_detection_worker.py (emision real de OBJECT_LEFT, aislamiento de fallos, retorno de prune no ignorado, exclusion por zona, supervivencia de analizador y tracker a reinicio, objects_enabled=False, set_detection_classes sin reiniciar worker). Suite completa 500/500. Dos discrepancias de conteo en los <verify> automatizados del plan (no funcionales, documentadas en 27-06-SUMMARY.md): grep -c \"object_\" backend/main.py da 9 no >=10 (objects_enabled no matchea el patron por la 's' de plural, nombre fijado por el contrato LOCKED) y pytest -k object recoge 12 no >=13 (el plan asumia que los 7 tests de 27-03 matcheaban todos 'object', solo 4 lo hacen). BEH-06/07 NO se marcan en REQUIREMENTS.md: el ROADMAP sigue asignando esa puerta a 27-11. Fase 27: 6/11 planes. Ejecutado 27-07-PLAN.md (wave 4, depende de 27-02+27-04+27-06): backend/api/v2/detection.py — GET/PUT /api/v2/detection/classes con configure(camera_manager, event_engine) (molde metrics.py, nunca el global rtsp_stream), catalogo AVAILABLE_CLASSES de 6 clases COCO, LOCKED_CLASS_IDS={0}; el PUT valida en orden vacia/rango 0..79/duplicados/person-obligatoria (400 con detail en lenguaje llano) y solo entonces persiste en app_config (ConfigRepo, key=yolo_classes) ANTES de propagar via pipeline.set_detection_classes y emitir EventEngine.config_changed. backend/main.py: _resolve_active_classes(persisted, settings_value) extraida como funcion modulo-privada (app_config gana sobre YOLO_CLASSES, fila [] persistida se trata como ausente) llamada antes de construir PersonDetector; detection_v2_module.configure() cableado tras crear camera_manager; pipeline.set_detection_classes(active_classes) tras camera_manager.add() para que el reparto persona/objeto arranque coherente con la BD; include_router junto a recordings/metrics. 8 tests nuevos TEST_* en tests/test_detection_config_api.py (GET catalogo, 4 rechazos 400 con aserciones sobre detail, camino feliz con mocks de camera_manager/event_engine, orden persistir-antes-de-propagar, precedencia de arranque). Suite completa 508/508 (500 previos + 8). BEH-06 contribuido pero NO marcado en REQUIREMENTS.md (mismo criterio que 27-06: el ROADMAP cierra BEH-06/07 en la puerta de fase 27-11, que tambien exige el panel visual de 27-10). Fase 27: 7/11 planes. Quedan 27-08..27-11 (overlay MJPEG, endpoint de contexto, control de clases en el dashboard, puerta de fase). Ejecutado 27-08-PLAN.md (wave 4, depende de 27-03+27-06): backend/pipeline/streaming.py — StreamingWorker.__init__ acepta object_boxes: Callable[[], list[dict]] | None = None (via pull, mismo patron que registry/tracker; set_zone_overlay descartado por no tener llamadores), _annotate dibuja cada caja en magenta (255, 0, 255) con etiqueta class_name #track_id tras el bloque de zonas. backend/pipeline/manager.py: _make_streaming pasa object_boxes=self.get_object_boxes (metodo bound de CameraPipeline, 27-06), sin logica nueva ni segundo registry — sobrevive a un reinicio del supervisor porque el metodo bound resuelve self.detection en cada llamada. 4 tests nuevos TEST_* (3 en tests/test_streaming_worker.py sobre _annotate en aislamiento, 1 en tests/test_detection_worker.py de identidad de referencia del Callable cableado por la factoria). Suite completa 512/512 (508 previos + 4). Sin desviaciones de codigo. BEH-06 contribuido pero NO marcado en REQUIREMENTS.md: el ROADMAP cierra BEH-06/07 en la puerta de fase 27-11. Fase 27: 8/11 planes. Quedan 27-09..27-11 (endpoint de contexto, control de clases en el dashboard, puerta de fase). Ejecutado 27-09-PLAN.md (wave 5, depende de 27-04+27-06+27-07): backend/api/v2/context.py — GET /api/v2/analytics/context, molde configure()/APIRouter de metrics.py; _person_counts(registry) puro (frame_ids() nunca active_ids(), known solo identity_state is CONFIRMED, nunca person_id is not None que set_identity() escribe antes de confirmar la votacion) y _classify_activity(baseline_entry, now_entry, minutes_elapsed, settings) puro (tasa por minuto en los dos lados para no sesgar por hora parcial, unknown explicito con sample_days<context_min_sample_days o minutos_elapsed<5). hourly_baseline() (27-04) se llama dos veces: until=inicio de hora para el baseline, since=inicio de hora para el ahora. backend/main.py: context_v2_module.configure(camera_manager) justo tras crear CameraManager (antes de camera_manager.add), include_router junto al resto de la superficie v2. Desviacion Rule 3 (bloqueante, sin cambio de comportamiento): el fichero ya existia sin comprometer de un intento previo cortado por limite de API; su docstring de modulo y el de _person_counts citaban literalmente \"person_id\"/\"person_name\" para explicar la decision de diseno, lo que hacia fallar el propio <verify> automatizado del plan (que exige la ausencia literal de esas subcadenas en todo el fichero) — reescritas sin la subcadena literal, mismo significado. 7 tests nuevos TEST_* en tests/test_scene_context.py (5 sobre las funciones puras sin BD/HTTP: known vs pending vs unknown, frame_ids() vs active_ids(), historial insuficiente, sesgo de hora parcial, umbrales low/normal/high con Settings() real; 2 de integracion ASGI parcheando context_module._stat_repo en vez de get_session_factory, patron ya usado en test_detection_config_api.py: forma del JSON con los 6 bloques y ausencia de person_id/person_name en el cuerpo crudo de la respuesta). Suite completa 519/519 (512 previos + 7). BEH-08/BEH-09 contribuidos pero NO marcados en REQUIREMENTS.md, mismo criterio que BEH-06/07: el ROADMAP cierra BEH-06..09 en la puerta de fase 27-11. Fase 27: 9/11 planes. Quedan 27-10..27-11 (control de clases en el dashboard, puerta de fase). Ejecutado 27-10-PLAN.md (wave 5, depende de 27-07): frontend/index.html — card \"Clases detectadas\" insertado tras el card de zonas (molde identico: header con icono, contenedor con scroll), checkboxes por cada una de las 6 clases del catalogo devuelto por GET /api/v2/detection/classes, persona (id 0) siempre disabled porque el backend la manda en locked (la UI nunca decide por su cuenta que clase bloquear); guardado inmediato al marcar/desmarcar (evento change dispara saveDetectionClasses, sin boton separado, a diferencia del CRUD abierto de zonas); un 400 muestra d.detail (mensaje en lenguaje llano de 27-07) y recarga desde el servidor con loadDetectionClasses(), igual en fallo de red, para que la UI nunca mienta sobre el estado real. Todo inline en el <script> existente junto a loadZones(), cero cambios en frontend/app.js (sigue stub hasta la Fase 28), cero dependencias nuevas. Sin tests automatizados (no hay framework JS en el repo, verificacion funcional diferida al checkpoint manual de 27-11). Suite completa 519/519 sin cambios (plan solo toca frontend). BEH-06 contribuido pero NO marcado en REQUIREMENTS.md, mismo criterio que 27-06/27-07/27-08/27-09: el ROADMAP cierra BEH-06..09 en la puerta de fase 27-11. Fase 27: 10/11 planes. Queda 27-11 (puerta de fase). Ejecutado 27-11-PLAN.md (puerta de fase, wave 6, depende de 27-08+27-09+27-10): suite completa reejecutada verde 519/519 sin cambios de codigo, los 6 criterios de exito del ROADMAP trazados a comandos pytest -k que pasan (ver 27-11-SUMMARY.md), mas la regresion ByteTrack (TEST_object_class_does_not_reach_line_zone/TEST_objects_not_in_registry/TEST_bytetrack_ids_do_not_migrate) verde. BEH-06/BEH-08/BEH-09 marcados [x] en REQUIREMENTS.md (BEH-07 ya lo estaba desde 27-01); ROADMAP.md y STATE.md cierran la Fase 27 (11/11 planes). El checkpoint de calibracion de object_person_radius_px y de la tasa de falsos positivos de OBJECT_LEFT con camara real se DIFIERE explicitamente (9no checkpoint manual, mismo patron que los 8 anteriores: 19-01, 19-02, 20-02, 21-01, 22-01, 23-02, 25-06, 26-05) — no bloquea el cierre de la Fase 27 en codigo/tests ni el avance a la Fase 28; 150px (1,9x loiter_radius_px) ya esta cubierto por tests deterministas con trayectorias sinteticas. Fase 27 completa: 11/11 planes. Planificada la Fase 28 (Refactor del frontend a modulos ES): 28-CONTEXT.md fija el alcance (extraccion 1:1 de frontend/index.html a css/{base,layout,components}.css + js/{app,api,websocket}.js + js/views/dashboard*.js + js/components/{videoCanvas,zoneEditor,eventCard,detectionClasses,personGallery}.js, sin construir aun las vistas Timeline/Analytics/Camera/Settings de las Fases 29-32 ni js/store.js, diferido a la Fase 29); 28-RESEARCH.md midio con precision que el <body> actual sin <style>/<script> ya mide 667 lineas, lo que hizo el criterio original de ROADMAP ('index.html < 300 lineas') inalcanzable sin introducir fragmentacion de marcado — se opto por redefinir el criterio (cero <script>/<style> inline, no un recuento de lineas) en vez de anadir arquitectura nueva no pedida, decision del usuario reflejada en ROADMAP.md Success Criteria #1 de la Fase 28; 28-PATTERNS.md verifico contra el fichero real 3 correcciones sobre el mapeo inicial (bindPtzControls a dashboard-ptz.js no al core, loadResolutions a videoCanvas.js no al core, #clip-modal vive fuera del rango de marcado 121-784 y debe preservarse) y un ciclo de import real entre dashboard.js/dashboard-events.js resuelto creando ambos en el mismo plan (28-02); 9 PLAN.md en 5 waves (28-01 tests de contrato + 3 CSS; 28-02..28-06 en paralelo, 5 modulos JS sin solape de ficheros; 28-07 websocket.js depende de 02/04/05; 28-08 app.js real + index.html shell + suite completa; 28-09 checkpoint no autonomo de paridad funcional + medicion de carga en LAN), plan-checker paso sin bloqueantes (519/519 sin tocar, ningun modulo nuevo supera 300 lineas, dashboard-events.js el mayor con ~204). Ejecutados 28-01..28-08 (8/9 planes, ejecucion secuencial sin worktrees por falta de gsd-sdk en este entorno): frontend/index.html reescrito a shell puro (2038 -> 695 lineas), frontend/js/app.js como bootstrap real, stub frontend/app.js borrado, suite completa en verde (525 passed, 2 skipped = 519 previos + 8 de tests/test_frontend_modules.py nuevo). PR abierto: https://github.com/dcastillosaez/proyecto_camara/pull/12. Queda 28-09 (checkpoint no autonomo: checklist de paridad funcional de 13 areas + medicion de carga en LAN), servidor real arrancado en http://192.168.1.199:8000/ para la verificacion, respuesta del usuario pendiente. Fase 29 (Vista de operaciones) disenada y planificada en un worktree separado (fase-29-design) sin esperar al cierre de 28-09, que no la bloquea: 29-UI-SPEC.md aprobado (6/6 dimensiones tras 1 ronda de revision por 3 pesos de fuente en la tabla de Typography); 29-CONTEXT.md generado directamente por el orquestador (sin sesion interactiva de discuss-phase, contexto ya suficiente); 29-RESEARCH.md (confianza alta, cero dependencias nuevas) resolvio que el nuevo mensaje WS type=tracks a 2Hz reutiliza el canal legacy /ws (no /api/v2/ws, que hoy no tiene clientes) y que el publicador es un bucle asyncio nuevo en main.py (molde _housekeeping_loop) que llama a un nuevo CameraPipeline.get_person_boxes() analogo a get_object_boxes() de la Fase 27; 29-VALIDATION.md creado por el orquestador (Nyquist obligatorio por config, ausente en la primera pasada del plan-checker); 3 PLAN.md en 2 waves (29-01 backend WS/tracks, 29-02 canvas overlay frontend, ambos wave 1; 29-03 header de 3 estados + paneles Personas ahora/Alertas activas + checkpoint visual manual, wave 2, depende de 29-01+29-02), plan-checker verde tras 1 ronda de revision (blocker inicial: dashboard.js habria superado el limite de 300 lineas de TEST_line_limit, resuelto extrayendo un helper _statusRow compartido). Nota de proceso: el subagente gsd-planner hizo un commit automatico no solicitado (\"docs(29): planificar Vista de operaciones\", commit a840206) al escribir los planes por primera vez -- no se le pidio explicitamente comitear; los cambios de la ronda de revision (29-03-PLAN.md corregido + 29-VALIDATION.md) se dejaron deliberadamente sin comitear a la espera de que el usuario decida que hacer con ese commit. Fase 29 ejecutada: 29-01 (backend, get_person_boxes + _tracks_broadcast_loop a 2Hz por /ws) y 29-02 (canvas overlay frontend) completos y verdes (530/530 tras 29-01, tests dirigidos en verde tras 29-02). 29-03 (header de 3 estados + paneles Personas ahora/Alertas activas) completo en Tasks 1-2 (commits f6d6c06, cc8aa31), pero su Task 3 — checkpoint humano bloqueante que verifica los criterios de éxito 1, 4, 5 y 6 del ROADMAP (zero-scroll 1366x768, overlay sin re-render MJPEG, reconexión WS visible, reconocimiento de alerta en <3s) — QUEDA PENDIENTE, sin la señal de reanudación del usuario: la sesión se desvió a diagnosticar un bug de entorno real (el worktree usado para disenar/planificar/ejecutar la fase no tenia .env/.venv propios, camera_url caia al default sin credenciales, la camara arrancaba \"online\" pero sin imagen) y a mover toda la rama de worktrees/fase-29-design-0f70ff a la raiz del repo. Nueva politica anadida a CLAUDE.md (commit dec9191): prohibido trabajar en worktrees, siempre desde la raiz con ramas normales. Ver 29-03-SUMMARY.md para el detalle exacto de lo pendiente y como retomarlo. Este es el 10o checkpoint manual pendiente del proyecto (mismo patron que 19-01, 19-02, 20-02, 21-01, 22-01, 23-02, 25-06, 26-05, 27-11) — no bloquea cerrar el PR de la fase, pero la Fase 29 no debe darse por completamente validada hasta que se verifique en persona. Siguiente: cerrar 28-09 (checkpoint independiente), retomar el checkpoint de 29-03 Task 3 cuando haya acceso visual/humano, luego /gsd:plan-phase 30."
-last_updated: "2026-08-20"
-last_activity: 2026-08-20
+milestone_name: La v1.2 resolvió el pipeline funcional completo
+status: executing
+stopped_at: Fase 30 completa (12/12 planes) — línea temporal accionable, centro de alertas y "Marcar como persona" en producción; criterio 3 medido @10k, suite 607 passed/2 skipped, OPS-07..OPS-11 cerrados. El checkpoint visual de 30-12 Task 2 se verificó con navegador real contra el servidor en marcha en todo lo que no exige cámara; lo que sí la exige queda diferido como 11º checkpoint manual
+last_updated: "2026-08-21T15:30:00.000Z"
+last_activity: 2026-08-21 -- Fase 30 cerrada: 30-12 Task 2 verificada con navegador real (criterios 1, 2, 6 parcial, 7 y 8) y Task 3 ejecutada (OPS-07..OPS-11 marcados, ROADMAP y STATE actualizados)
 progress:
-  total_phases: 22
-  completed_phases: 11
-  total_plans: 33
-  completed_plans: 33
-  percent: 50
-previous_milestone:
-  name: v1.2
-  status: complete
-  phases: 16/16
-  completed: 2026-05-01
+  total_phases: 32
+  completed_phases: 15
+  total_plans: 68
+  completed_plans: 67
+  percent: 96
 ---
 
 # Project State
@@ -26,13 +21,269 @@ previous_milestone:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** v2.0 — PLANIFICADA. Desacoplar el pipeline, motor de eventos, percepción avanzada (ArcFace + ReID + comportamiento), centro de operaciones y preparación multi-cámara.
+**Current focus:** Phase 31 — Vista de analítica (sin planificar)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: **Bloque A (17-22) + Fase 23 + Fase 24 + Fase 25 + Fase 26 + Fase 27 COMPLETOS** en código y tests (11/11 planes de la Fase 27, 27-01..27-11, ver `27-11-SUMMARY.md`). BEH-01..BEH-09 cerrados.
-Status: Bloque A cerrado (310/310), Fase 23 (Migración a InsightFace/
+Phase: 30 (Event Timeline y centro de alertas) — COMPLETA (12/12 planes)
+Plan: 12 of 12 — 30-12 cerrada
+Status: Fase 30 cerrada; siguiente paso `/gsd:plan-phase 31`
+
+**La Fase 30 está completa.** El card plano de "Eventos recientes" ya no existe:
+en su sitio hay una línea temporal accionable de filas de 52 px con barra de
+severidad, miniatura del snapshot, descripción en lenguaje llano, chips de zona y
+de regla y cuatro acciones, filtros combinables resueltos **en servidor** con
+paginación por cursor, scroll infinito con ventana de 400 filas, eventos en vivo
+por el `/ws` que ya existía, centro de alertas en cajón lateral con agrupación por
+regla y silenciado temporal, y "Marcar como persona" con el recorte precargado y
+actualización retroactiva del track. OPS-07..OPS-11 quedan marcados.
+
+**30-12 (puerta de fase) cerró las tres piezas.** La Task 1: cuatro tests nuevos
+en `tests/test_repositories.py` miden el criterio 3 con 10.000 eventos sembrados
+por `scripts/seed_events.py` (nunca un generador ad hoc) contra un presupuesto de
+100 ms por consulta. Medido en esta máquina: primera página 12,9 ms (incluye abrir
+la conexión), página 100 —unos 5.000 eventos dentro— 2,0 ms, y filtro de tres tipos
+más severidad 4,2 ms. Que la página profunda cueste menos que la primera es justo
+lo que tenía que salir: con el cursor `(ts, id)` la profundidad no se paga, con
+`OFFSET` se habrían descartado 5.000 filas antes de devolver 50. Suite completa en
+**607 passed, 2 skipped**, con `test_architecture.py`, `test_security_regression.py`
+y `test_rule_engine.py` verdes — este último sin un solo commit de la Fase 30, como
+exigía el plan.
+
+La Task 2 (checkpoint visual) se resolvió **con el servidor real en marcha** y
+navegador contra `http://localhost:8000/` sobre 58 eventos históricos reales.
+Verificado con evidencia: contenido de la fila (criterio 1) —barra de severidad por
+`--sev`, hora monoespaciada, miniatura con `role="button"` y su `aria-label`,
+descripción en lenguaje llano y nunca `CAMERA_OFFLINE` crudo, chips ocultos cuando
+no aplican, acciones deshabilitadas con el `title` exacto del UI-SPEC—; barra de
+filtros completa (criterio 2); campana, badge, apertura/cierre del cajón y trampa de
+foco (criterio 6, parcial); zero-scroll a 1366×768 con el borde inferior del vídeo en
+530 px y los paneles de la Fase 29 en 102/213 px, más `Escape` devolviendo el foco a
+`#btn-alert-center` y la fila sin `tabindex` propio (criterio 7); y consola limpia
+(criterio 8). **La cámara real (192.168.1.132) no es alcanzable desde este entorno**
+—`CaptureWorker cam1: reconnecting in 30.0s...` confirma el backoff del invariante 8,
+pero no hay señal—, así que los criterios 3 (fluidez percibida del scroll), 4 (evento
+nuevo en <1 s desde una detección real), 5 (marcar como persona sobre un
+`UNKNOWN_PERSON` con recorte y `track_id`) y el ciclo completo silenciar → atenuar →
+reactivar quedan **diferidos como 11º checkpoint manual**, decisión explícita del
+usuario y mismo patrón no bloqueante que los diez anteriores.
+
+Durante el recorrido apareció un fallo **preexistente y ajeno a la fase**:
+`GET /api/v2/cameras/cam1/health` devuelve 500 con
+`ValueError: Out of range float values are not JSON compliant: inf` cuando no fluyen
+frames (FPS calculado con divisor cero). `git log main..HEAD` sobre
+`backend/api/v2/metrics.py`, `backend/observability.py` y `backend/pipeline/rate.py`
+sale **vacío**: ningún commit de la Fase 30 toca esos ficheros, así que no es una
+regresión de esta fase. Merece un `/gsd:debug` propio.
+
+30-11 cerró la acción estrella de la fase. `markPerson.js` (169 líneas) escucha el
+`CustomEvent('timeline:mark-person')` que la fila ya despachaba desde 30-08 —misma
+convención que el `timeline:filter-rule` de 30-10, sin que ninguno de los dos módulos
+importe al otro—, abre el modal con el recorte del evento ya cargado y escribe el aviso
+de alcance con el N que devuelve `GET /track-scope`: el operador ve cuántos eventos
+anteriores del track van a recibir la identidad **antes** de confirmar. El enrolado sigue
+siendo dos llamadas a propósito (`POST /api/enroll_face` conserva sus validaciones de
+`content_type`, 10 MB y `max_length=100` con tests de regresión; `assign-person` solo
+propaga un `person_id` ya enrolado). Al confirmar, `applyPersonAssignment()` en
+`timeline.js` sincroniza el modelo en memoria, baja a `info` la severidad de los
+`UNKNOWN_PERSON` —mismo criterio que el `UPDATE` del backend— y repinta guardando y
+restaurando `scrollTop`: cero red, cero páginas perdidas. Suite completa en verde
+(603 passed, 2 skipped). Pendiente de comprobación manual, que firma 30-12: modal con el
+recorte real, N razonable en el aviso (si saliera en decenas o cientos sería el Pitfall 3
+asomando) y filas del track cambiando en sitio al confirmar. Ver `30-11-SUMMARY.md`.
+
+30-10 encendió la fase: hasta este plan, la línea temporal y el centro de alertas eran
+código que nadie llamaba. `websocket.js` despacha ahora `type:"event"` a `onLiveEvent()`
+con un `else if` más en el `onmessage` —mismo molde que el `'tracks'` de la Fase 29, ni una
+segunda conexión— y `app.js` llama a `initTimeline()` **antes** de `connectWS()`, para que
+el `IntersectionObserver` y los controles existan cuando llegue el primer mensaje. El
+riesgo real era el doble pintado del `LINE_CROSSED`, que el backend emite por
+`type:"detection"` y por `type:"event"`: queda cortado por dos sitios independientes —el
+`case 'detection'` ya no pinta filas desde 30-07 y `onLiveEvent()` descarta ids repetidos—
+y solo conserva contador, gráfica horaria y toast. El aviso de "sin tiempo real" se cuelga
+del `onopen`/`onclose` que ya existían, sin tocar el backoff de 1 s→30 s. `LOCKED_JS` pasa
+a vigilar los cinco módulos de la fase.
+
+**El hueco de 30-09 queda cerrado**: `timeline.js` escucha `timeline:filter-rule` y
+`setFocusFilter()` (en `timeline-filters.js`, con el resto del estado de filtros) traduce
+el nombre de regla al parámetro `rule` del servidor —que lo resuelve con
+`json_each(payload,'$.rules')`— o enciende el chip del tipo cuando el grupo no tiene regla.
+De paso salió un bug: `_matchesActiveFilters()` no comprobaba `rule`, así que con el filtro
+puesto un evento en vivo de otra regla se colaba en la lista. Suite completa en verde
+(603 passed, 2 skipped). Pendiente de comprobación manual, que firma 30-12: evento real en
+<1 s sin recargar, cruce de línea una sola vez, barra ámbar al caer el socket y filtro
+aplicado al pulsar "Ver en la línea temporal". Ver `30-10-SUMMARY.md`.
+
+30-09 cerró el centro de alertas del navegador. `alertCenter.js` (272 líneas) pide
+`GET /api/v2/alerts?hours=24` y con esa única respuesta repinta tres sitios: el badge
+de la campana (oculto con 0, "9+" desde 10, rojo si hay crítica y ámbar si solo hay
+avisos), el cajón lateral con un grupo por regla, y el top-3 "Alertas activas" de la
+Fase 29. No hay ni un `.filter()` ni un `.sort()` sobre los datos — el orden por
+severidad, la agrupación y el silenciado los decide el servidor (30-06), que era el
+motivo de construir ese endpoint. Silenciar usa un popover cuya duración **es** la
+confirmación (15 min / 1 h / 8 h desde `dataset.duration`, cero `confirm()` nuevos,
+D-07), y tras silenciar o reactivar —con éxito o con error— siempre se relee el estado
+del servidor. Los grupos silenciados siguen visibles, atenuados y con "Reactivar regla".
+El cajón es `role="dialog"` con foco atrapado y `Escape` que cierra primero el popover.
+`loadActiveAlerts()`/`SEVERITY_RANK` salieron de `dashboard.js` (290 → 244 líneas,
+recuperando margen sobre `TEST_line_limit`). Dos desviaciones: el cableado de `app.js`
+que el plan dejaba para 30-10 hubo que adelantarlo (retirar el símbolo de `dashboard.js`
+dejaba un import roto que habría dejado el dashboard en blanco), y una regla CSS para
+que `.hidden` de Tailwind gane al selector de id del badge.
+
+~~Hueco abierto para 30-10~~ **cerrado en 30-10**: `gotoTimeline()` despachaba
+`timeline:filter-rule` sin que nadie lo escuchara; el oyente ya está en `timeline.js`.
+Ver `30-09-SUMMARY.md`.
+
+30-08 dio comportamiento a ese andamiaje: la línea temporal ya pide páginas de 50
+a `/api/v2/events` con cursor, filtra **en servidor** (tipo multi-valor, severidad
+excluyente, zona, persona resuelta contra el `Map` de `/persons`, y rango de
+fechas), pagina con `IntersectionObserver` (`rootMargin: 200px`, sin un solo
+listener de `scroll`) y mantiene el DOM en 400 filas compensando `scrollTop` al
+recortar. El array completo vive en memoria y el DOM es solo una ventana sobre él,
+así que volver a subir se repinta desde memoria y **no hace falta el cursor
+inverso** que planteaba el UI-SPEC. Un evento en vivo entra arriba con `slide-in`
+si la lista está al principio, y si el operador ha bajado se acumula en la píldora
+"{N} eventos nuevos" sin tocarle el scroll. La fila monta los siete elementos del
+UI-SPEC con el patrón anti-XSS del repo (plantilla vacía + `textContent`), el
+descarte vive en `localStorage` y "Marcar como persona" solo despacha
+`timeline:mark-person` — 30-11 es quien escucha. Cuatro módulos en vez de los dos
+previstos (`timeline.js` 283, `timeline-row.js` 204, `timeline-filters.js` 133,
+`timeline-virtualize.js` 67) porque el tope de 300 líneas no daba para menos.
+Se cargan desde 30-10. Ver `30-08-SUMMARY.md`.
+
+30-07 puso el andamiaje del frontend de la fase. El card "Eventos recientes" de la
+columna derecha es ahora "Línea temporal" en el mismo sitio (sin vista nueva ni
+router) con los ids que 30-08, 30-09 y 30-11 consumen como contrato:
+`#timeline-list` y sus cuatro estados (vacío, vacío por filtros, error, cargando),
+centinela de 1px para el `IntersectionObserver`, pill de eventos nuevos y barra de
+"sin tiempo real"; barra de filtros `tl-*` (tipo, severidad, zona, persona con
+`datalist`, dos fechas) y `#tl-active-filters`. En la cabecera, campana de 44×44
+con `#alert-badge`, y "Ver todas" en el panel "Alertas activas" de la Fase 29;
+ambos abrirán `#alert-drawer` (cajón de 380px con contador héroe, grupos, pie y
+popover de silenciado con las tres duraciones). Modal propio `#mark-person-modal`
+en vez de reutilizar `#enroll-modal` — su `submit` ya está enlazado por
+`personGallery.js` con otra semántica. `components.css` pasa de 81 a 158 líneas con
+las medidas exactas del UI-SPEC (fila de 52px, acciones 32×32, miniatura 64×36,
+chips de 20px, 4 tamaños de fuente). En el mismo plan se retiró el JS que apuntaba
+al marcado borrado —`addEvent`, `applyFilters`, `bindEventFilters`, el bloque de
+`#events-list` de `loadInitialData()` y la escritura en `#events-badge`—, que era
+justo lo que habría reventado el arranque de `app.js`; el export CSV sobrevive en
+`bindEventExport()` y el borrado por rango no se tocó. Sin comportamiento todavía:
+la lista se llena en 30-08. Ver `30-07-SUMMARY.md`.
+
+30-06 cerró el backend del centro de alertas. `GET /api/v2/alerts` devuelve las
+alertas de la ventana **ya agrupadas por la regla que las disparó**
+(`key: "rule:<name>"`) o, si ninguna regla intervino, por tipo de evento
+(`key: "type:<TYPE>"`, con `mutable: false` — se silencia por `Rule.name`, D-16).
+Cada grupo trae `count`, `severity` (la más alta), `last_ts`, `last_event_id`,
+`zone_id` y `muted_until`, y la respuesta añade `active_count` / `critical_count`
+/ `muted_count`, que son exactamente los números del badge de la campana: el
+navegador ya no filtra ni ordena nada. Los eventos `info` entran solo si
+dispararon una regla. El conjunto está acotado a 200 eventos por severidad con
+`truncated` en la respuesta, y `hours` a `1..168` (T-30-24). El silenciado
+(`POST /mute` / `/unmute`) persiste en `app_config`, clave `alerts.muted_rules`,
+con duración en lista blanca 15 min / 1 h / 8 h — no existe "para siempre"
+(T-30-21) —, read-modify-write serializado por un `asyncio.Lock` de módulo
+(T-30-23) y expiración perezosa sin tarea de fondo. Es **solo de presentación**
+(D-16/D-17): el módulo no toca `RuleEngine` ni `run_actions`, así que la regla se
+sigue evaluando y sus acciones siguen grabando y avisando; silenciar no hace
+perder pruebas (T-30-22). Cada silenciado/reactivación emite `CONFIG_CHANGED` con
+la regla y la duración (T-30-20). 16 tests nuevos en `tests/test_alerts.py`,
+suite **603/603** (+2 skips). OPS-11 queda cubierto por el lado del servidor; el
+cajón y la campana llegan en 30-07 y 30-09. Ver `30-06-SUMMARY.md`.
+
+30-05 cerró la superficie HTTP de la fase: `GET /api/v2/events` deja de ser un
+endpoint suelto en `main.py` (Fase 19) y pasa a `backend/api/v2/events.py` con
+cuatro rutas. La lista mantiene el envelope `{events, cursor}` que
+`dashboard.js:274` ya consume y solo **añade** dos claves: `total` (solo en la
+primera página y solo con filtros activos — el `COUNT(*)` de 21 ms @100k no se
+paga en cada scroll) y `media`, un mapa hermano `event_id -> {recording_id,
+clip_url, thumbnail_url, snapshot_url}` resuelto con **una** consulta por página
+vía `by_trigger_event_ids()`. `media` va fuera del objeto evento a propósito: el
+DTO es el contrato persistido y también viaja por el WS. Se añaden el tipo
+repetido (`?type=A&type=B`) y el filtro por regla que 30-02 dejó listos en el
+repositorio, más el detalle `GET /{id}`, la previsualización
+`GET /{id}/track-scope` (no escribe nada) y `POST /{id}/assign-person`
+(`person_id >= 1`, el enrolado sigue en `/api/enroll_face`, aquí no se duplica su
+validación). El endpoint viejo se borró en el **mismo** commit que registra el
+router, así que nunca convivieron dos rutas iguales. Los cuatro endpoints llevan
+`@limiter.limit(V2_RATE_LIMIT)` y el de lista `pagination_limit()`. 17 tests
+nuevos en `tests/test_events_api.py`, suite 587/587 (+2 skips). Una desviación
+menor: `pagination_limit` quedó sin uso en `main.py` y se retiró del import.
+OPS-09 queda cubierto por el lado del servidor; OPS-07/08 esperan al frontend
+(30-08 y 30-11). Ver `30-05-SUMMARY.md`.
+
+30-04 puso en marcha el snapshot de evento: `Event.snapshot_path` existía en el
+contrato desde la Fase 19 y **nadie lo escribía**, así que la miniatura de la
+línea temporal habría caído siempre al marcador. Ahora cada evento con `bbox`
+deja un recorte JPEG en `data/snapshots/{YYYYMMDD}/{event_id}.jpg` mediante
+`_capture_event_snapshot()`, enganchada al pipeline de 30-01 como
+`snapshot_hook` **antes** del `INSERT` (la ruta entra en la fila con la primera
+escritura, sin segundo `UPDATE`) y con su propio `try/except` para que un disco
+lleno no impida persistir el evento. `cv2.imwrite` y el `shutil.rmtree` de la
+purga van siempre en `asyncio.to_thread` (T-30-14, verificado por identidad de
+función en test, no por grep). Tres cotas sobre el disco: throttle de 5 s por
+`(camera_id, track_id)` con el diccionario acotado a 256 entradas, reescalado a
+320 px y `_purge_old_snapshots()` por directorio de día dentro del `_purge_loop`
+diario. `validate_snapshot_dir` exige contención en `_PROJECT_ROOT` porque el
+directorio se sirve por `StaticFiles` bajo `/snapshots` con la misma auth global
+que `/gallery` y `/clips` (T-30-12). `snapshot_url()` vive en
+`backend/api/v2/deps.py` para que main.py y el router de 30-05 la compartan sin
+ciclo de imports, y `media.snapshot_url` ya sale resuelta en el mensaje WS.
+15 tests nuevos (11 en `tests/test_snapshots.py`, 4 en `tests/test_config.py`),
+suite 570/570 (+2 skips). Dos desviaciones menores documentadas: los tests usan
+un stub de `Settings` porque el validador nuevo rechaza el `tmp_path` de pytest
+por diseño, y se añadió `data/snapshots/` a `.gitignore`. OPS-07 avanza pero no
+se cierra: la superficie HTTP llega en 30-05 y la marca 30-12.
+Ver `30-04-SUMMARY.md`.
+
+30-03 añadió al repositorio las tres operaciones de "Marcar como persona":
+`EventRepo.track_scope()` (previsualiza el alcance retroactivo sin escribir),
+`EventRepo.assign_person()` (propaga la identidad y baja a `info` la severidad
+de los `UNKNOWN_PERSON`, con `UPDATE ... WHERE id IN (lista explícita)`, nunca
+por `track_id`) y `RecordingRepo.by_trigger_event_ids()` (mapa evento → clip de
+una página en una sola consulta, sobre `recordings.trigger_event_id`, que es el
+vínculo real: `events.recording_id` nunca se escribe). La clave son las dos
+constantes de módulo `TRACK_GAP_SECS=60.0` y `TRACK_WINDOW_HOURS=6`: los
+`tracker_id` de ByteTrack se reinician al recrear el tracker
+(`backend/tracker.py:181`), así que el alcance se acota por `camera_id` +
+ventana de ±6 h + corte en el primer hueco > 60 s. Dos tests de regresión
+(track homónimo separado 48 h) cierran el Pitfall 3 / T-30-08. 12 tests nuevos,
+suite 555/555 (+2 skips). Sin desviaciones de comportamiento. OPS-08 avanza
+pero no se cierra: la superficie HTTP llega en 30-05 y la marca 30-12.
+Ver `30-03-SUMMARY.md`.
+
+30-02 preparó el almacenamiento para la línea temporal: índice compuesto
+`idx_events_ts_id (ts DESC, id DESC)` en `Event.__table_args__` con su
+migración `_migrate_v2_to_v3` (`SCHEMA_VERSION=3`, `CREATE INDEX IF NOT
+EXISTS`, no destructiva, cubierta por el `_backup_db()` que ya existía), y
+`EventRepo` extendido: `_filter_conditions()` compartido, `query()` acepta
+`type` como enum suelto o lista (con el `+` unario del `IN` multi-valor que
+evita el `TEMP B-TREE FOR ORDER BY` — 54 ms → 0,52 ms @100k) y filtra por
+nombre de regla vía `json_each(payload,'$.rules')` con `bindparam`, más un
+`count()` nuevo para el contador "{N} de {total}". Ningún llamador de
+`query()` necesitó tocarse. Dos correcciones sobre el plan: `_record_version()`
+(el paso v1→v2 sellaba `SCHEMA_VERSION`, que al subir a 3 habría marcado v3
+antes de tiempo) y `type_=String` en el bindparam expandido (sin él la
+consulta no compila con `literal_binds` y el test de `EXPLAIN QUERY PLAN` no
+podía inspeccionar el SQL real). 9 tests nuevos, suite 543/543 (+2 skips).
+OPS-09 avanza pero no se cierra: la superficie HTTP llega en 30-05 y la
+marca 30-12. Ver `30-02-SUMMARY.md`.
+
+30-01 cerró la condición de carrera D-14: los cuatro suscriptores
+concurrentes del `EventBus` colapsan en `make_event_pipeline()` (un solo
+`subscribe("event_pipeline", ...)`), que evalúa las reglas con el nuevo
+`RuleEngine.match()` (puro y síncrono), escribe `payload["rules"]` en el
+evento ANTES del `INSERT`, emite `{"type": "event", "event": {...},
+"media": {...}}` por el `/ws` legacy después del `INSERT`, y difiere en
+fire-and-forget tanto `run_actions()` (Telegram/webhook/grabación) como
+`_broadcast_v1_compat`. `evaluate()` queda como wrapper compatible y los
+14 tests de `tests/test_rule_engine.py` pasan sin tocarse. 4 tests nuevos
+en `tests/test_event_bus.py` fijan el orden con un `EventRepo` real.
+Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
+30-12 con evidencia. Ver `30-01-SUMMARY.md`.
   ArcFace) completa encima (326/326). La puerta bloqueante de la Fase 23
   se superó con evidencia real: `insightface`+`onnxruntime` instalan sin
   compilar en Windows, `buffalo_s` descarga y ejecuta una inferencia
@@ -49,7 +300,7 @@ Status: Bloque A cerrado (310/310), Fase 23 (Migración a InsightFace/
   uno a uno con comando `pytest -k` en `24-06-SUMMARY.md` (criterio 6:
   87.5% de reducción de inferencias faciales sobre un track no
   confirmado, umbral exigido ≥70%). FACE-07..FACE-11 cerrados.
-  Quedan **9 checkpoints con cámara real** sin ejecutar, ninguno
+  Quedan **11 checkpoints con cámara real** sin ejecutar, ninguno
   bloqueante para seguir programando: 19-01 Task 5 (migrar BD real),
   19-02 Task 5 (validación de reglas en vivo), 20-02 Task 4 (validación
   visual del pre-buffer), 21-01 Task 5 (coste de instrumentación y
@@ -63,13 +314,22 @@ Status: Bloque A cerrado (310/310), Fase 23 (Migración a InsightFace/
   tests deterministas con trayectorias sintéticas), y 27-11 Task 2
   (calibración de `object_person_radius_px` y tasa de falsos positivos
   de `OBJECT_LEFT` — 150 px ya cubierto por tests deterministas con
-  trayectorias sintéticas, `OBJECT_LEFT` sigue en `Severity.WARNING`).
+  trayectorias sintéticas, `OBJECT_LEFT` sigue en `Severity.WARNING`),
+  29-03 Task 3 (checkpoint visual de la vista de operaciones: criterios
+  de éxito 1, 4, 5 y 6 del ROADMAP), y 30-12 Task 2 (los cuatro puntos
+  del checkpoint visual de la línea temporal que exigen señal de cámara:
+  fluidez percibida del scroll con miles de filas, evento nuevo en <1 s
+  desde una detección real, "Marcar como persona" sobre un
+  `UNKNOWN_PERSON` reciente con recorte y `track_id`, y el ciclo
+  silenciar → atenuar → reactivar sobre un grupo con regla activa — el
+  resto del checkpoint sí se verificó con navegador y servidor reales,
+  ver `30-12-SUMMARY.md`).
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-18
+Last activity: 2026-08-21 -- Fase 30 completa: ejecutado 30-12 (criterio 3 medido @10k, checkpoint visual verificado en lo que no exige cámara, OPS-07..OPS-11 cerrados)
 
-Progress v2.0: [█████░░░░░] ~50% (11/22 fases completas)
+Progress v2.0: [██████░░░░] ~64% (14/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
 
 ## Mediciones acumuladas del bloque A y Fase 23
@@ -87,34 +347,35 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 ## Siguiente paso
 
 ```
-/gsd:execute-phase 28
+/gsd:plan-phase 31
 ```
 
-La Fase 28 (Refactor del frontend a módulos ES) está **planificada**: 9
-planes en 5 waves (`28-01`..`28-09`), plan-checker verde sin bloqueantes.
-`frontend/index.html` (2038 líneas, `<script>` único de ~1240) se extrae
-1:1 a `css/{base,layout,components}.css` + `js/{app,api,websocket}.js` +
-`js/views/dashboard{,-ptz,-events,-observability}.js` +
-`js/components/{videoCanvas,zoneEditor,eventCard,detectionClasses,personGallery}.js`,
-sin construir todavía las vistas de operaciones/timeline/analytics/cámara/
-configuración (Fases 29-32) ni `js/store.js` (diferido a la Fase 29) — así
-lo cerró el usuario en `28-CONTEXT.md`. La investigación (`28-RESEARCH.md`)
-midió con precisión que el `<body>` actual sin `<style>`/`<script>` ya
-ocupa 667 líneas, lo que hacía inalcanzable el criterio original del
-ROADMAP ("`index.html` < 300 líneas") sin fragmentar el marcado con
-`fetch()+innerHTML` — arquitectura nueva no pedida. El usuario optó por
-redefinir el criterio en vez de añadir esa complejidad: `ROADMAP.md`
-Success Criteria #1 de la Fase 28 ahora mide "cero `<script>`/`<style>`
-inline", no un recuento de líneas. `28-PATTERNS.md` verificó contra el
-fichero real 3 correcciones al mapeo inicial de RESEARCH (`bindPtzControls`
-→ `dashboard-ptz.js`, `loadResolutions` → `videoCanvas.js`, `#clip-modal`
-vive fuera del rango de marcado 121-784 y debe preservarse) y un ciclo de
-import real entre `dashboard.js`/`dashboard-events.js` resuelto creando
-ambos en el mismo plan (28-02). `frontend/app.js` (stub v1.2 de 2 líneas)
-se borra en 28-08 al crear el entry point real. Ningún módulo nuevo supera
-300 líneas (el mayor, `dashboard-events.js`, ~204). Wave 5 (28-09) es un
-checkpoint no autónomo: checklist manual de paridad funcional (13 áreas) +
-medición de carga inicial desde un segundo dispositivo de la LAN.
+La **Fase 30 (Event Timeline y centro de alertas) está completa**: 12/12 planes
+(`30-01`..`30-12`), OPS-07..OPS-11 cerrados, suite **607 passed, 2 skipped**. La
+línea temporal accionable sustituye al card plano de eventos, con filtros
+resueltos en servidor por cursor, scroll infinito, centro de alertas agrupado por
+regla con silenciado temporal y "Marcar como persona" con alcance retroactivo. Las
+decisiones no obvias de la fase: un **suscriptor único ordenado** del `EventBus`
+(`make_event_pipeline()`) como solución a la carrera de reglas de D-14 —evaluar,
+escribir `payload.rules`, `INSERT`, emitir por WS, y solo después diferir
+`run_actions()`—; el **silenciado persistido en `app_config`** (clave
+`alerts.muted_rules`, duraciones en lista blanca, sin "para siempre") y **solo de
+presentación**, de modo que la regla silenciada sigue grabando su clip y mandando
+su aviso; el `GET /api/v2/timeline` que planteaba SPEC_v2 se **descartó** en favor
+de extender `/api/v2/events`, que ya tenía consumidor; el **snapshot de evento**
+—`Event.snapshot_path` existía desde la Fase 19 y nadie lo escribía— se implementó
+en 30-04 para que la miniatura no cayera siempre al marcador; y `person_name` se
+**resuelve en el cliente** contra el `Map` de `/persons` en vez de denormalizarlo
+en cada fila de `events`.
+
+La Fase 31 (Vista de analítica, OPS-12..OPS-15: personas por hora, ocupación por
+zona, heatmap, ranking, tendencias y export CSV/JSON, con las agregaciones en base
+de datos y no en el navegador) es la siguiente y **no está planificada todavía**.
+
+Las Fases 28 (Refactor del frontend a módulos ES) y 29 (Vista de operaciones)
+están **completas en código** y aportan cada una un checkpoint manual pendiente
+—paridad funcional y carga en LAN la 28, verificación visual de los criterios
+1/4/5/6 la 29—, ninguno bloqueante.
 
 La Fase 27 (Multi-clase y contexto de escena) está **completa**: 11/11
 planes (`27-01`..`27-11`), BEH-06..BEH-09 cerrados, suite 519/519.
@@ -322,9 +583,9 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 25 — Re-identificación (ReID) | B | ✓ Completa (código) | 2026-08-15 | ⧗ Tasa de falsos positivos con dos personas reales (checkpoint 25-06 Task 2) |
 | 26 — Análisis de comportamiento | B | ✓ Completa (código) | 2026-08-16 | ⧗ Calibración de umbrales con cámara real (checkpoint 26-05 Task 3) |
 | 27 — Multi-clase y contexto de escena | B | ✓ Completa (código) | 2026-08-17 | ⧗ Calibración de `object_person_radius_px` y tasa de falsos positivos (checkpoint 27-11 Task 2) |
-| 28 — Frontend a módulos ES | C | — Sin planificar | — | Depende de 21 (ya completa) — puede solaparse con B |
-| 29 — Vista de operaciones | C | ✓ Completa (código) | — | ⧗ Checkpoint visual Task 3 de 29-03 (criterios éxito 1/4/5/6 del ROADMAP) |
-| 30 — Event Timeline y alertas | C | — Sin planificar | — | Depende de 29 |
+| 28 — Frontend a módulos ES | C | ✓ Completa (código) | 2026-08-20 | ⧗ Checklist de paridad funcional + medición de carga en LAN (28-09) |
+| 29 — Vista de operaciones | C | ✓ Completa (código) | 2026-08-20 | ⧗ Checkpoint visual Task 3 de 29-03 (criterios éxito 1/4/5/6 del ROADMAP) |
+| 30 — Event Timeline y alertas | C | ✓ Completa (código) | 2026-08-21 | ⧗ Cuatro puntos del checkpoint visual 30-12 Task 2 que exigen cámara real (criterios 3, 4 y 5 del ROADMAP y el ciclo completo de silenciado) |
 | 31 — Vista de analítica | C | — Sin planificar | — | Depende de 30 |
 | 32 — Vista de cámara y config visual | C | — Sin planificar | — | Depende de 31 |
 | 33 — Editores visuales | C | — Sin planificar | — | Depende de 32 |
@@ -367,7 +628,31 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **519/519 passing** (última ejecución 2026-08-17, tras `27-09`: +7 tests
+Suite completa: **607 passed, 2 skipped** (última ejecución 2026-08-21 tras `30-12`,
+puerta de la Fase 30: +4 tests de rendimiento en `tests/test_repositories.py` que miden el
+criterio 3 con 10.000 eventos sembrados por `scripts/seed_events.py` — primera página,
+página 100 por cursor, filtro multi-tipo y existencia de `idx_events_ts_id` —, todos por
+debajo del presupuesto de 100 ms; `test_architecture.py`, `test_security_regression.py` y
+`test_rule_engine.py` verdes, este último sin un solo commit en toda la fase. Cifra
+anterior **570/570** (tras `30-04`:
++15 tests — 11 en `tests/test_snapshots.py` (recorte real en disco, `bbox=None`, deshabilitado,
+throttle por track, `to_thread`, clamp de coordenadas desbordadas, purga por directorio de día,
+traducción de URL, hook antes del `INSERT` sobre `EventRepo` real, supervivencia al fallo del
+hook y presencia del mount) y 4 en `tests/test_config.py` (defaults, ruta fuera del proyecto,
+traversal y rangos numéricos) — ver `30-04-SUMMARY.md`. Cifra anterior
+**555/555** (tras `30-03`:
++12 tests en `tests/test_repositories.py` — 5 de `track_scope` (bloque contiguo, corte por
+hueco, track homónimo a 48 h, cota por `camera_id`, `None` sin `track_id`), 4 de
+`assign_person` (solo el bloque contiguo, downgrade de `UNKNOWN_PERSON`, `updated=0` sin
+track, homónimo intacto) y 3 de `by_trigger_event_ids` (mapeo, lista vacía sin consulta,
+gana el clip más reciente) — ver `30-03-SUMMARY.md`. Cifra anterior
+**543/543** (tras `30-02`:
++9 tests — 3 en `tests/test_migrations.py` (índice de la línea temporal creado por la
+migración v2→v3, idempotencia y presencia en una base nueva) y 6 en
+`tests/test_repositories.py` (multi-tipo, enum suelto compatible, filtro por regla,
+no interpolación del filtro con carga `' OR 1=1 --`, `count()` con los mismos filtros y
+plan de consulta sin `TEMP B-TREE FOR ORDER BY`) — ver `30-02-SUMMARY.md`. Cifra anterior
+534/534 tras `30-01`. Histórico previo: **519/519 passing** (última ejecución 2026-08-17, tras `27-09`: +7 tests
 `TEST_*` en `tests/test_scene_context.py` — 5 sobre `_person_counts`/`_classify_activity`
 puras (`TEST_known_requires_confirmed`, `TEST_person_counts_uses_frame_ids_not_active_ids`,
 `TEST_insufficient_history`, `TEST_partial_hour_normalised`, `TEST_activity_ratio_thresholds`)
@@ -488,6 +773,7 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 
 - Descargar `credentials.json` de Google Cloud Console (OAuth 2.0 → Desktop app)
   y colocarlo en la raíz del proyecto para habilitar upload a Google Drive
+
 - Carpeta Drive destino: «Grabaciones Tapo» (ID: `1OJTWvYoHCDU28ZyzwlpOlongxs8lqWir`)
 
 ### Blockers/Concerns
@@ -501,7 +787,74 @@ en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-17
+Last session: 2026-08-21
+Stopped at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10). El modal
+  "Marcar como persona" está completo: `markPerson.js` precarga el recorte del evento,
+  muestra el aviso de alcance retroactivo con el N del servidor antes de confirmar,
+  enrola contra `/api/enroll_face` (sin duplicar sus validaciones), aplica la identidad
+  al bloque del track en una sola llamada y `applyPersonAssignment()` repinta las filas
+  en sitio conservando el `scrollTop`. `components/markPerson.js` añadido a `LOCKED_JS`.
+  Suite completa en verde (603 passed, 2 skipped). Pendiente de comprobación manual,
+  que firma 30-12: recorte real en el modal, N razonable en el aviso y filas del track
+  cambiando en sitio. Siguiente: 30-12 (puerta de fase)
+Resume file: ninguno — continuar con `.planning/phases/30-event-timeline-y-centro-de-alertas/30-12-PLAN.md`
+
+---
+
+Last session: 2026-08-21
+Stopped at: Ejecutado 30-10-PLAN.md (wave 8, depende de 30-08 y 30-09). La línea
+  temporal y el centro de alertas ya arrancan con el dashboard: `case 'event'` en
+  `websocket.js` hacia `onLiveEvent()`, `initTimeline()` antes de `connectWS()`,
+  aviso de "sin tiempo real" colgado del `onopen`/`onclose` existente y `LOCKED_JS`
+  con los cinco módulos de la fase. Cerrado el hueco que dejó 30-09: `timeline.js`
+  escucha `timeline:filter-rule` y aplica el filtro de regla en servidor. Suite
+  completa en verde (603 passed, 2 skipped). Pendiente de comprobación manual, que
+  firma 30-12: evento real en <1 s sin recargar y cruce de línea una sola vez.
+  Siguiente: 30-11 (marcar como persona)
+Resume file: ninguno — continuar con `.planning/phases/30-event-timeline-y-centro-de-alertas/30-11-PLAN.md`
+
+---
+
+Last session: 2026-08-21
+Stopped at: Ejecutado 30-08-PLAN.md (wave 6, depende de 30-05 y 30-07). Cuatro
+  módulos ES nuevos con la línea temporal completa: fila sin XSS con las cuatro
+  acciones y descarte en `localStorage`, filtros en servidor con cursor y páginas
+  de 50, doble centinela de `IntersectionObserver` (abajo pide página, arriba
+  desliza la ventana), DOM acotado a 400 filas con compensación de `scrollTop`, y
+  evento en vivo arriba o en píldora según la posición del scroll. Pendiente de
+  comprobación manual (no hay runner JS): que el recorte a 400 filas no dé un salto
+  perceptible — plan B ya documentado en el módulo (subir a 1000 y no recortar).
+  Nadie llama todavía a `initTimeline()`: eso es 30-10. Siguiente: 30-09
+  (`alertCenter.js`). Ver `30-08-SUMMARY.md`.
+
+Sesión anterior (2026-08-21, misma jornada)
+Stopped at: Ejecutado 30-07-PLAN.md (wave 5, depende de 30-05 y 30-06). Marcado y
+  estilos de la línea temporal, campana con badge, cajón de alertas y modal de
+  marcar como persona, con los 35 ids del contrato que consumen 30-08/30-09/30-11;
+  y retirada en el mismo plan de `addEvent`/`applyFilters`/`bindEventFilters` y del
+  bloque de `#events-list`, que habrían dejado el arranque de `app.js` roto.
+  Pendiente de comprobación manual: abrir `/` y confirmar consola limpia (el card
+  aparecerá vacío hasta 30-08, es lo esperado). Siguiente: 30-08 (`timeline.js`).
+  Ver `30-07-SUMMARY.md`.
+
+Sesión anterior (2026-08-21, misma jornada)
+Stopped at: Ejecutado 30-06-PLAN.md (wave 4, depende de 30-05). Router
+  `backend/api/v2/alerts.py` con `GET /api/v2/alerts` (agrupación por regla o por
+  tipo, contadores del badge, ventana 1..168 h) y `POST /mute` / `/unmute`
+  (persistencia en `app_config`, duración en lista blanca, expiración perezosa,
+  `CONFIG_CHANGED` por cada cambio). Silenciar es solo de presentación: no toca
+  `RuleEngine` ni `run_actions`. 16 tests nuevos, suite 603/603 (+2 skips).
+  Siguiente: 30-07 (marcado y estilos de la línea temporal y el cajón). Ver
+  `30-06-SUMMARY.md`.
+
+Sesión anterior (2026-08-21, misma jornada)
+Stopped at: Ejecutado 30-05-PLAN.md (wave 3, depende de 30-01..30-04).
+  Router `backend/api/v2/events.py` con lista paginada (`total` condicional +
+  mapa `media`), detalle, `track-scope` y `assign-person`; endpoint suelto de
+  `main.py` borrado en el mismo commit. 17 tests nuevos, suite 587/587 (+2
+  skips). Siguiente: 30-06 (centro de alertas backend). Ver `30-05-SUMMARY.md`.
+
+Sesión anterior (2026-08-17)
 Stopped at: Ejecutado 27-11-PLAN.md (puerta de fase, wave 6, depende de
   27-08+27-09+27-10). Suite completa reejecutada verde: `pytest tests/ -q`
   → 519/519, sin cambios de código. Trazabilidad de los 6 criterios de
@@ -610,6 +963,7 @@ Sesión anterior (2026-08-16): Ejecutado 26-05-PLAN.md (criterio 5 `when.event` 
   filtra sobre `zone_id` de primer nivel del `Event`) — sin tocar
   `backend/events/rules.py` ni `config/rules.yaml` (criterio 5 es cero
   código); (2) puerta de fase: suite completa **454/454** (451 previos
+
   + 3), los 5 criterios del ROADMAP trazados a comandos `pytest -k` que
   pasan (ver tabla en `26-05-SUMMARY.md`), con el criterio 2 repartido
   explícitamente entre los 4 tests de trayectoria de `26-01`

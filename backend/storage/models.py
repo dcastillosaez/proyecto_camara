@@ -106,6 +106,9 @@ class Event(Base):
         Index("idx_events_type_ts", "type", ts.desc()),
         Index("idx_events_cam_ts", "camera_id", ts.desc()),
         Index("idx_events_person", "person_id", ts.desc()),
+        # cursor (ts,id) por valor de fila y ORDER BY sin TEMP B-TREE
+        # (Fase 30, medido: severity sola 19,0ms -> 0,60ms @100k)
+        Index("idx_events_ts_id", ts.desc(), id.desc()),
     )
 
 

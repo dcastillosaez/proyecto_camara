@@ -260,6 +260,30 @@ class Settings(BaseSettings):
     gallery_dir: str = "data/gallery"
     gallery_throttle_secs: float = 30.0
 
+    # --- Snapshot de evento (Fase 30, OPS-07/OPS-08) ---
+    # snapshot_path existia en el contrato Event desde la Fase 19 pero NADIE lo escribia:
+    # sin esto la miniatura de la linea temporal cae siempre al marcador y "Marcar como
+    # persona" no puede precargar el recorte del evento (30-RESEARCH.md Hallazgo 4).
+    snapshot_enabled: bool = True
+    snapshot_dir: str = "data/snapshots"
+    snapshot_max_width: int = 320            # px; el recorte se reescala si es mas ancho
+    snapshot_min_interval_secs: float = 5.0  # throttle por (camera_id, track_id)
+    snapshot_retention_days: int = 30
+
+    @field_validator("snapshot_dir")
+    @classmethod
+    def validate_snapshot_dir(cls, v: str) -> str:
+        """El directorio de snapshots debe quedar dentro del proyecto (SEC-16).
+
+        Se sirve por StaticFiles bajo /snapshots: un valor fuera del arbol del
+        proyecto convertiria ese mount en una fuga de ficheros arbitrarios (T-30-12).
+        """
+        p = Path(v)
+        resolved = p.resolve() if p.is_absolute() else (_PROJECT_ROOT / p).resolve()
+        if not resolved.is_relative_to(_PROJECT_ROOT):
+            raise ValueError(f"snapshot_dir must be inside the project directory: {resolved}")
+        return v
+
     # Phase 12 — Alerts
     alert_webhook_url: str = ""
     alert_telegram_token: str = ""
@@ -366,6 +390,20 @@ class Settings(BaseSettings):
             raise ValueError("context_baseline_days debe estar en [1, 90]")
         if self.context_min_sample_days < 1:
             raise ValueError("context_min_sample_days debe ser >= 1")
+        return self
+
+    @model_validator(mode="after")
+    def validate_snapshot_params(self) -> "Settings":
+        """Rangos del snapshot de evento — cota de disco y de CPU (T-30-13)."""
+        if not 64 <= self.snapshot_max_width <= 1920:
+            raise ValueError(
+                "snapshot_max_width debe estar en [64, 1920]: por debajo el recorte "
+                "no se reconoce y por encima deja de ser una miniatura"
+            )
+        if not 0.0 <= self.snapshot_min_interval_secs <= 3600.0:
+            raise ValueError("snapshot_min_interval_secs debe estar en [0, 3600]")
+        if not 0 <= self.snapshot_retention_days <= 3650:
+            raise ValueError("snapshot_retention_days debe estar en [0, 3650] (0 = sin purga)")
         return self
 
 

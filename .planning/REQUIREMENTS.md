@@ -246,11 +246,11 @@
 - [ ] **OPS-04**: La pantalla principal responde sin scroll a: si el sistema está bien, qué ocurre ahora y si ha pasado algo importante
 - [ ] **OPS-05**: El overlay de detecciones se dibuja sobre canvas alimentado por WebSocket, sin re-renderizar el stream MJPEG
 - [ ] **OPS-06**: La reconexión del WebSocket es automática y visible sin recargar la página
-- [ ] **OPS-07**: Los eventos se presentan como línea temporal con hora, severidad, descripción, zona y miniatura
-- [ ] **OPS-08**: Cada evento ofrece acciones directas: ver vídeo, ver captura, marcar como persona y descartar
-- [ ] **OPS-09**: Los filtros de eventos se resuelven en servidor con paginación por cursor
-- [ ] **OPS-10**: Un evento nuevo aparece en la interfaz en menos de un segundo
-- [ ] **OPS-11**: El centro de alertas agrupa alertas activas, muestra qué regla las disparó y permite silenciarlas
+- [x] **OPS-07**: Los eventos se presentan como línea temporal con hora, severidad, descripción, zona y miniatura
+- [x] **OPS-08**: Cada evento ofrece acciones directas: ver vídeo, ver captura, marcar como persona y descartar
+- [x] **OPS-09**: Los filtros de eventos se resuelven en servidor con paginación por cursor
+- [x] **OPS-10**: Un evento nuevo aparece en la interfaz en menos de un segundo
+- [x] **OPS-11**: El centro de alertas agrupa alertas activas, muestra qué regla las disparó y permite silenciarlas
 - [ ] **OPS-12**: Existe una vista de analítica con personas por hora, ocupación por zona y heatmap
 - [ ] **OPS-13**: La analítica muestra ranking de personas por visitas y tendencia frente al periodo anterior
 - [ ] **OPS-14**: Las agregaciones se calculan en base de datos, no en el navegador

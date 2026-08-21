@@ -1,5 +1,5 @@
 // frontend/js/views/dashboard.js
-import { updateChart, addEvent, hourlyToArray } from './dashboard-events.js';
+import { updateChart, hourlyToArray } from './dashboard-events.js';
 
 // ── Clock ─────────────────────────────────────────────
 const clockEl = document.getElementById('clock');
@@ -106,7 +106,6 @@ async function fetchCounts() {
     updateStat('stat-total', d.total ?? 0);
     updateStat('stat-in',    d.in    ?? 0);
     updateStat('stat-out',   d.out   ?? 0);
-    document.getElementById('events-badge').textContent = d.total ?? 0;
   } catch {}
 }
 setInterval(fetchCounts, 2000);
@@ -127,32 +126,13 @@ fetchDetections();
 // ── Initial data load ──────────────────────────────────
 export async function loadInitialData() {
   try {
-    const [statsRes, eventsRes] = await Promise.all([
-      fetch('/api/stats'),
-      fetch('/api/events?limit=50'),
-    ]);
+    // La lista de eventos la carga ahora timeline.js (30-08) contra /api/v2/events;
+    // aqui solo queda la grafica horaria y el contador de la Fase 5.
+    const statsRes = await fetch('/api/stats');
     if (statsRes.ok) {
       const stats = await statsRes.json();
       updateChart(hourlyToArray(stats.hourly));
       updateStat('stat-total', stats.total_today ?? 0);
-    }
-    if (eventsRes.ok) {
-      const data   = await eventsRes.json();
-      const events = (data.events ?? []).reverse();
-      const list  = document.getElementById('events-list');
-      const empty = document.getElementById('events-empty');
-      list.querySelectorAll('.event-item').forEach(el => el.remove());
-      updateStat('events-badge', 0);
-      if (events.length === 0) {
-        empty.style.display = '';
-      } else {
-        empty.style.display = 'none';
-        let badge = 0;
-        events.forEach(ev => {
-          const ts = new Date(ev.timestamp).toLocaleTimeString('es-ES', { hour12: false });
-          addEvent(ts, ev.direction, ++badge, ev.person_name ?? null, ev.is_intrusion ?? false);
-        });
-      }
     }
   } catch {}
 }
@@ -223,7 +203,7 @@ document.getElementById('btn-reboot').addEventListener('click', async () => {
   finally { setTimeout(() => { btn.disabled = false; }, 8000); }
 });
 
-// ── Filas compactas compartidas por Personas ahora / Alertas activas (D-04/D-05) ──
+// ── Fila compacta de "Personas ahora" (D-05) ──────────────────────────
 function _statusRow(dotClass, mainText, sideText, sideClass = 'text-slate-600') {
   const row = document.createElement('div');
   row.className = 'flex items-center gap-2.5 py-1';
@@ -260,31 +240,5 @@ export function renderPersonList(tracks) {
   });
 }
 
-// ── Alertas activas: top-3 por severidad (D-04) ────────────────────────
-const SEVERITY_RANK = { critical: 2, warning: 1, info: 0 };
-export async function loadActiveAlerts() {
-  const panel = document.getElementById('alerts-active-list');
-  const empty = document.getElementById('alerts-active-empty');
-  const checkedAt = document.getElementById('alerts-active-checked-at');
-  if (!panel || !empty) return;
-  try {
-    const res = await fetch('/api/v2/events?limit=10');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const alerts = (data.events || [])
-      .filter(e => e.severity && e.severity !== 'info')
-      .sort((a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0))
-      .slice(0, 3);
-    panel.innerHTML = '';
-    empty.style.display = alerts.length ? 'none' : '';
-    alerts.forEach(ev => {
-      const sevClass = ev.severity === 'critical' ? 'bg-red-400' : 'bg-amber-400';
-      const ts = new Date(ev.ts).toLocaleTimeString('es-ES', { hour12: false });
-      panel.appendChild(_statusRow(sevClass, ev.type.replace(/_/g, ' '), ts, 'text-slate-600 mono'));
-    });
-  } catch {
-    empty.style.display = '';
-  }
-  if (checkedAt) checkedAt.textContent = new Date().toLocaleTimeString('es-ES', { hour12: false });
-}
-setInterval(loadActiveAlerts, 5000);
+// El top-3 de "Alertas activas" (D-04) lo pinta ahora components/alertCenter.js
+// desde la agrupacion por regla de GET /api/v2/alerts (30-09, OPS-11).

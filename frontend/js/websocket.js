@@ -1,8 +1,9 @@
 // frontend/js/websocket.js
 import { updateStat, setWsConnected, renderPersonList, showToast } from './views/dashboard.js';
-import { updateChart, addEvent, hourlyToArray, bumpHourBar } from './views/dashboard-events.js';
+import { updateChart, hourlyToArray, bumpHourBar } from './views/dashboard-events.js';
 import { addRecording, updateRecordingStatus } from './components/eventCard.js';
 import { setRecBadge, drawTracks } from './components/videoCanvas.js';
+import { onLiveEvent, setTimelineOffline } from './views/timeline.js';
 
 let _ws = null;
 let _wsRetry = 1000;
@@ -42,6 +43,7 @@ export async function connectWS() {
     setWsStatus(true);
     _wsCloseCount = 0;
     setWsConnected(true, 0);
+    setTimelineOffline(false);
   };
 
   _ws.onmessage = (e) => {
@@ -50,8 +52,8 @@ export async function connectWS() {
       updateChart(hourlyToArray(msg.hourly));
       updateStat('stat-total', msg.total_today ?? 0);
     } else if (msg.type === 'detection') {
-      const ts = new Date(msg.timestamp).toLocaleTimeString('es-ES', { hour12: false });
-      addEvent(ts, msg.direction, msg.total_today, msg.person_name ?? null, msg.is_intrusion ?? false);
+      // La fila de la linea temporal la inserta timeline.js (30-08) desde /api/v2/events;
+      // aqui se conservan contador, grafica horaria y toast de la Fase 5.
       updateStat('stat-total', msg.total_today);
       bumpHourBar(new Date(msg.timestamp).getHours());
       const who = msg.person_name ? ` — ${msg.person_name}` : '';
@@ -70,6 +72,12 @@ export async function connectWS() {
     } else if (msg.type === 'tracks') {
       drawTracks(msg.tracks);
       renderPersonList(msg.tracks);
+    } else if (msg.type === 'event') {
+      // Evento tipado completo (Fase 30, OPS-10). El case 'detection' de arriba sigue
+      // alimentando la grafica horaria y los contadores de la Fase 5, pero ya NO pinta
+      // filas: un LINE_CROSSED llega por los dos mensajes y se pintaria dos veces
+      // (30-RESEARCH.md Pitfall 6).
+      onLiveEvent(msg.event, msg.media);
     }
   };
 
@@ -77,6 +85,7 @@ export async function connectWS() {
     _wsCloseCount += 1;
     setWsConnected(false, _wsCloseCount);
     setWsStatus(false);
+    setTimelineOffline(true);
     setTimeout(connectWS, _wsRetry);
     _wsRetry = Math.min(_wsRetry * 2, 30000);
   };

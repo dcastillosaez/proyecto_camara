@@ -388,3 +388,46 @@ def TEST_object_params_reject_impossible_values():
         Settings(context_low_ratio=2.0)
     with pytest.raises((ValidationError, ValueError)):
         Settings(object_max_tracks=0)
+
+
+# ─── Snapshot de evento (Fase 30 — OPS-07/OPS-08) ────────────────────────────
+# snapshot_dir se sirve por StaticFiles bajo /snapshots, asi que su validador
+# es de seguridad, no de comodidad: un valor fuera del arbol del proyecto
+# convertiria ese mount en una fuga de ficheros arbitrarios (T-30-12).
+# ─────────────────────────────────────────────────────────────────────────────
+def TEST_snapshot_defaults():
+    """Los cinco ajustes del snapshot traen los defaults del contrato de fase."""
+    s = Settings()
+    assert s.snapshot_enabled is True
+    assert s.snapshot_dir == "data/snapshots"
+    assert s.snapshot_max_width == 320
+    assert s.snapshot_min_interval_secs == 5.0
+    assert s.snapshot_retention_days == 30
+
+
+def TEST_snapshot_dir_outside_project_is_rejected():
+    """Una ruta absoluta fuera del proyecto lanza (el mount la serviria por HTTP)."""
+    import os
+
+    outside = "C:/Windows/Temp" if os.name == "nt" else "/etc"
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(snapshot_dir=outside)
+
+
+def TEST_snapshot_dir_traversal_is_rejected():
+    """Un `..` que escapa de la raiz del proyecto lanza."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(snapshot_dir="data/../../secretos")
+
+
+def TEST_snapshot_max_width_range():
+    """snapshot_max_width fuera de [64, 1920] lanza; 320 es valido."""
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(snapshot_max_width=0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(snapshot_max_width=5000)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(snapshot_min_interval_secs=-1.0)
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(snapshot_retention_days=-1)
+    assert Settings(snapshot_max_width=320).snapshot_max_width == 320

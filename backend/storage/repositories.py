@@ -12,7 +12,7 @@ import json
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import and_, func, select, text, tuple_
+from sqlalchemy import String, and_, bindparam, case, func, select, text, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.events.types import Event as EventDTO
@@ -37,6 +37,15 @@ def _decode_cursor(cursor: str) -> tuple[datetime.datetime, str]:
     raw = base64.urlsafe_b64decode(cursor.encode()).decode()
     ts_str, id_ = raw.split("|", 1)
     return datetime.datetime.fromisoformat(ts_str), id_
+
+
+# Ventana y contiguidad para la asignacion retroactiva por track (Fase 30, OPS-08).
+# Los tracker_id de ByteTrack se reinician al recrear el tracker (backend/tracker.py:181)
+# y la tabla `tracks` nunca se escribe: sin estas dos cotas, un UPDATE por track_id
+# asignaria la identidad a otra persona de otro dia (30-RESEARCH.md Pitfall 3).
+# 60s es holgado: ByteTrack pierde el track a los 60 frames (~4s @15fps).
+TRACK_GAP_SECS = 60.0
+TRACK_WINDOW_HOURS = 6
 
 
 class EventRepo:
@@ -89,23 +98,35 @@ class EventRepo:
             row = await session.get(models.Event, event_id)
             return self._to_dto(row) if row is not None else None
 
-    async def query(
-        self,
+    @staticmethod
+    def _filter_conditions(
         *,
-        type: EventType | None = None,
+        type: EventType | list[EventType] | None = None,
         severity: Severity | None = None,
         person_id: int | None = None,
         zone_id: str | None = None,
         camera_id: str | None = None,
+        rule: str | None = None,
         ts_from: datetime.datetime | None = None,
         ts_to: datetime.datetime | None = None,
-        cursor: str | None = None,
-        limit: int = 50,
-    ) -> tuple[list[EventDTO], str | None]:
-        """Filter + cursor-paginate, newest first. Cursor is (ts, id) base64-encoded."""
-        conditions = []
-        if type is not None:
-            conditions.append(models.Event.type == type.value)
+    ) -> tuple[list, dict]:
+        """Condiciones WHERE compartidas por query() y count(). Devuelve (conditions, params).
+
+        El prefijo '+' unario del IN multi-valor desactiva idx_events_type_ts SOLO en ese
+        termino: sin el, SQLite elige ese indice y ordena con TEMP B-TREE (medido: 54ms
+        vs 0,52ms @100k, 30-RESEARCH.md Hallazgo 7).
+        """
+        conditions: list = []
+        params: dict = {}
+        types = [type] if isinstance(type, EventType) else (list(type) if type else [])
+        if len(types) == 1:
+            conditions.append(models.Event.type == types[0].value)
+        elif len(types) > 1:
+            conditions.append(
+                text("+events.type IN :types").bindparams(
+                    bindparam("types", expanding=True, type_=String))
+            )
+            params["types"] = [t.value for t in types]
         if severity is not None:
             conditions.append(models.Event.severity == severity.value)
         if person_id is not None:
@@ -114,10 +135,37 @@ class EventRepo:
             conditions.append(models.Event.zone_id == zone_id)
         if camera_id is not None:
             conditions.append(models.Event.camera_id == camera_id)
+        if rule is not None:
+            # T-30-05: el nombre de regla llega del navegador -> bindparam, nunca f-string.
+            conditions.append(text(
+                "EXISTS (SELECT 1 FROM json_each(events.payload, '$.rules') je "
+                "WHERE je.value = :rule)"
+            ))
+            params["rule"] = rule
         if ts_from is not None:
             conditions.append(models.Event.ts >= ts_from)
         if ts_to is not None:
             conditions.append(models.Event.ts <= ts_to)
+        return conditions, params
+
+    async def query(
+        self,
+        *,
+        type: EventType | list[EventType] | None = None,
+        severity: Severity | None = None,
+        person_id: int | None = None,
+        zone_id: str | None = None,
+        camera_id: str | None = None,
+        rule: str | None = None,
+        ts_from: datetime.datetime | None = None,
+        ts_to: datetime.datetime | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> tuple[list[EventDTO], str | None]:
+        """Filter + cursor-paginate, newest first. Cursor is (ts, id) base64-encoded."""
+        conditions, params = self._filter_conditions(
+            type=type, severity=severity, person_id=person_id, zone_id=zone_id,
+            camera_id=camera_id, rule=rule, ts_from=ts_from, ts_to=ts_to)
         if cursor is not None:
             cursor_ts, cursor_id = _decode_cursor(cursor)
             conditions.append(
@@ -131,6 +179,8 @@ class EventRepo:
         )
         if conditions:
             q = q.where(and_(*conditions))
+        if params:
+            q = q.params(**params)
 
         async with self._sf() as session:
             result = await session.execute(q)
@@ -139,6 +189,104 @@ class EventRepo:
         items = [self._to_dto(r) for r in rows]
         next_cursor = _encode_cursor(rows[-1].ts, rows[-1].id) if len(rows) == limit else None
         return items, next_cursor
+
+    async def count(
+        self,
+        *,
+        type: EventType | list[EventType] | None = None,
+        severity: Severity | None = None,
+        person_id: int | None = None,
+        zone_id: str | None = None,
+        camera_id: str | None = None,
+        rule: str | None = None,
+        ts_from: datetime.datetime | None = None,
+        ts_to: datetime.datetime | None = None,
+    ) -> int:
+        """COUNT(*) con los mismos filtros que query(), sin cursor ni limit.
+
+        Se llama SOLO en la primera pagina y solo si hay filtros activos: medido
+        21ms @100k / 0,9ms @10k, pedirlo en cada scroll seria malgastarlo (T-30-06).
+        """
+        conditions, params = self._filter_conditions(
+            type=type, severity=severity, person_id=person_id, zone_id=zone_id,
+            camera_id=camera_id, rule=rule, ts_from=ts_from, ts_to=ts_to)
+        q = select(func.count()).select_from(models.Event)
+        if conditions:
+            q = q.where(and_(*conditions))
+        if params:
+            q = q.params(**params)
+        async with self._sf() as session:
+            result = await session.execute(q)
+            return int(result.scalar_one())
+
+    async def track_scope(self, event_id: str) -> dict | None:
+        """Bloque CONTIGUO de eventos del mismo track alrededor de *event_id*.
+
+        Nunca 'WHERE track_id = ?' a secas: se acota por camera_id + ventana de
+        +-TRACK_WINDOW_HOURS y se corta en el primer hueco > TRACK_GAP_SECS.
+        """
+        anchor = await self.get(event_id)
+        if anchor is None or anchor.track_id is None:
+            return None
+        window = datetime.timedelta(hours=TRACK_WINDOW_HOURS)
+        q = (
+            select(models.Event.id, models.Event.ts)
+            .where(and_(
+                models.Event.camera_id == anchor.camera_id,
+                models.Event.track_id == anchor.track_id,
+                models.Event.ts >= anchor.ts - window,
+                models.Event.ts <= anchor.ts + window,
+            ))
+            .order_by(models.Event.ts.asc(), models.Event.id.asc())
+        )
+        async with self._sf() as session:
+            rows = list((await session.execute(q)).all())
+        if not rows:
+            return None
+        idx = next((i for i, r in enumerate(rows) if r.id == anchor.id), None)
+        if idx is None:
+            return None
+        start = idx
+        while start > 0 and (rows[start].ts - rows[start - 1].ts).total_seconds() <= TRACK_GAP_SECS:
+            start -= 1
+        end = idx
+        while end + 1 < len(rows) and (rows[end + 1].ts - rows[end].ts).total_seconds() <= TRACK_GAP_SECS:
+            end += 1
+        block = rows[start:end + 1]
+        return {
+            "event_ids": [r.id for r in block],
+            "count": len(block),
+            "from": block[0].ts,
+            "to": block[-1].ts,
+        }
+
+    async def assign_person(self, event_id: str, person_id: int) -> dict:
+        """Propaga una identidad al bloque contiguo del track (Fase 30, OPS-08, criterio 5).
+
+        El UPDATE va por lista EXPLICITA de ids calculada por track_scope(), nunca
+        'WHERE track_id = ?': eso alcanzaria tracks homonimos de otros dias (Pitfall 3).
+        Un UNKNOWN_PERSON deja de ser advertencia al ganar identidad; el resto de
+        tipos conserva su severidad.
+        """
+        scope = await self.track_scope(event_id)
+        if scope is None or not scope["event_ids"]:
+            return {"person_id": person_id, "updated": 0, "event_ids": []}
+        ids = scope["event_ids"]
+        async with self._sf() as session:
+            async with session.begin():
+                await session.execute(
+                    update(models.Event)
+                    .where(models.Event.id.in_(ids))
+                    .values(
+                        person_id=person_id,
+                        severity=case(
+                            (models.Event.type == EventType.UNKNOWN_PERSON.value,
+                             Severity.INFO.value),
+                            else_=models.Event.severity,
+                        ),
+                    )
+                )
+        return {"person_id": person_id, "updated": len(ids), "event_ids": ids}
 
     async def count_since(self, ts_from: datetime.datetime, type: EventType | None = None) -> int:
         conditions = [models.Event.ts >= ts_from]
@@ -463,6 +611,32 @@ class RecordingRepo:
                 row = await session.get(models.Recording, rec_id)
                 if row is not None:
                     row.local_path = None
+
+    async def by_trigger_event_ids(self, ids: list[str]) -> dict[str, dict]:
+        """Mapa event_id -> datos de su grabacion, para una pagina completa (<=200 ids).
+
+        events.recording_id NUNCA se escribe: el vinculo real lo pone _on_clip_ready
+        en recordings.trigger_event_id (backend/main.py:353-357). La tabla recordings
+        es pequena y no tiene indice por esa columna; el escaneo es despreciable
+        frente a anadir un quinto indice (30-RESEARCH.md Hallazgo 4).
+        """
+        if not ids:
+            return {}
+        q = (
+            select(models.Recording)
+            .where(models.Recording.trigger_event_id.in_(ids))
+            .order_by(models.Recording.id.asc())
+        )
+        async with self._sf() as session:
+            rows = list((await session.execute(q)).scalars().all())
+        out: dict[str, dict] = {}
+        for row in rows:            # orden ascendente: la ultima gana
+            out[row.trigger_event_id] = {
+                "recording_id": row.id,
+                "local_path": row.local_path,
+                "thumbnail_path": row.thumbnail_path,
+            }
+        return out
 
     async def get(self, recording_id: int) -> dict[str, Any] | None:
         async with self._sf() as session:
