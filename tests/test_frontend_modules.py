@@ -42,6 +42,7 @@ LOCKED_JS = [
     "views/timeline-virtualize.js",
     "views/timeline-filters.js",
     "components/alertCenter.js",
+    "components/markPerson.js",
 ]
 
 

@@ -10,6 +10,7 @@ import { loadRecordings, bindEventCardControls } from './components/eventCard.js
 import { loadDetectionClasses } from './components/detectionClasses.js';
 import { loadPersons, bindPersonGallery } from './components/personGallery.js';
 import { loadAlerts, bindAlertCenter } from './components/alertCenter.js';
+import { bindMarkPerson } from './components/markPerson.js';
 import { initTimeline, refreshPersonNames } from './views/timeline.js';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -22,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindPersonGallery();
   bindEventExport();
   bindAlertCenter();
+  bindMarkPerson();
 
   // Carga inicial — mismo orden que index.html:1362-2023 en el script original, para
   // minimizar diferencias de comportamiento observable (28-PATTERNS.md).

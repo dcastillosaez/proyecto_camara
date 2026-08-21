@@ -176,6 +176,22 @@ export function refreshPersonNames() {
   return _loadPersons();
 }
 
+// Repintado en sitio tras "Marcar como persona" (30-11): el backend ya aplico la identidad
+// al bloque del track y aqui solo se sincroniza el modelo. Recargar costaria el scroll.
+export function applyPersonAssignment(eventIds, personId, name) {
+  if (name) _persons.set(personId, name);
+  const ids = new Set(eventIds ?? []);
+  for (const ev of _all) {
+    if (!ids.has(ev.id)) continue;
+    ev.person_id = personId;
+    if (ev.type === 'UNKNOWN_PERSON') ev.severity = 'info';   // mismo criterio que el UPDATE
+  }
+  const list = $('timeline-list');
+  const keep = list ? list.scrollTop : 0;
+  render();
+  if (list) list.scrollTop = keep;
+}
+
 // ── Arranque ──────────────────────────────────────────────────────
 function _onSentinel(entries) {
   for (const entry of entries) {

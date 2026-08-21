@@ -6,6 +6,10 @@
 // content_type, tamano <=10MB y max_length=100 del nombre, con tests de regresion de
 // seguridad asociados (30-RESEARCH.md Hallazgo 6). Duplicar eso seria una regresion.
 import { apiFetch } from '../api.js';
+import { showToast } from '../views/dashboard.js';
+import { applyPersonAssignment } from '../views/timeline.js';
+
+const ALLOWED_TYPES = /^image\/(jpeg|png|webp)$/;   // mismo juego que _ALLOWED_IMAGE_TYPES
 
 let _ctx = null;   // { eventId, trackId, snapshotUrl, scopeCount }
 
@@ -102,11 +106,62 @@ async function onRequest(e) {
   }
 }
 
+// ── Confirmacion: enrolar + asignar al bloque del track ───────────
+function setBusy(on) {
+  const btn = $('btn-mark-person-confirm');
+  if (!btn) return;
+  btn.disabled = on;                   // sin esto, un doble clic enrola dos personas
+  btn.textContent = on ? 'Guardando…' : 'Marcar como persona';
+}
+
+async function _snapshotField(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('No se pudo leer el recorte del evento.');
+  const blob = await res.blob();
+  const type = ALLOWED_TYPES.test(blob.type) ? blob.type : 'image/jpeg';
+  return new Blob([blob], { type });
+}
+
+async function onConfirm() {
+  if (!_ctx) return;
+  const name = $('mark-person-name')?.value.trim() ?? '';
+  if (!name) { _showError('Escribe un nombre.'); return; }
+  _showError('');
+  setBusy(true);
+  const { eventId, snapshotUrl } = _ctx;
+  try {
+    const fd = new FormData();
+    fd.append('name', name);
+    if (snapshotUrl) {
+      fd.append('image', await _snapshotField(snapshotUrl), 'snapshot.jpg');
+    } else {
+      fd.append('use_current_frame', 'true');
+    }
+    const enrolled = await apiFetch('/api/enroll_face', { method: 'POST', body: fd });
+    const applied = await apiFetch(`/api/v2/events/${encodeURIComponent(eventId)}/assign-person`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ person_id: enrolled.person_id }),
+    });
+    applyPersonAssignment(applied.event_ids ?? [], enrolled.person_id, enrolled.name);
+    showToast(`Identidad aplicada a ${applied.updated} eventos de este track.`, 'success');
+    close();
+  } catch (err) {
+    // apiFetch ya trae el detail del backend (415/413/422 de enroll_face): se muestra ese
+    // motivo concreto y solo se cae al literal generico del UI-SPEC si no hay ninguno.
+    _showError(err.message || 'No se pudo guardar la identidad. Inténtalo de nuevo.');
+    showToast('No se pudo guardar la identidad. Inténtalo de nuevo.', 'error');
+  } finally {
+    setBusy(false);
+  }
+}
+
 export function bindMarkPerson() {
   const modal = $('mark-person-modal');
   if (!modal) return;
   document.addEventListener('timeline:mark-person', onRequest);
   $('btn-mark-person-cancel')?.addEventListener('click', close);
+  $('btn-mark-person-confirm')?.addEventListener('click', onConfirm);
   modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && _isOpen()) close();
