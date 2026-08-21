@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10)
-last_updated: "2026-08-21T00:00:00.000Z"
-last_activity: 2026-08-21 -- 30-11 completado (modal "Marcar como persona": recorte precargado, aviso de alcance retroactivo y repintado en sitio de las filas del track)
+stopped_at: 30-12-PLAN.md en curso — Task 1 completada (criterio 3 medido @10k, suite 607/607); PARADO en el checkpoint visual bloqueante de Task 2, Task 3 (cierre de fase) sin ejecutar
+last_updated: "2026-08-21T12:00:00.000Z"
+last_activity: 2026-08-21 -- 30-12 Task 1 completada (4 tests de rendimiento con 10.000 eventos sembrados, suite completa en verde); esperando el checkpoint visual con cámara real
 progress:
   total_phases: 32
   completed_phases: 14
@@ -27,8 +27,28 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 12 of 12 (30-01 a 30-11 completos)
-Status: Executing Phase 30
+Plan: 12 of 12 (30-01 a 30-11 completos; 30-12 a medias)
+Status: Executing Phase 30 — parado en el checkpoint visual de 30-12
+
+**30-12 (puerta de fase) está a medias.** La Task 1 ya está: cuatro tests nuevos en
+`tests/test_repositories.py` miden el criterio 3 con 10.000 eventos sembrados por
+`scripts/seed_events.py` (nunca un generador ad hoc) contra un presupuesto de 100 ms
+por consulta. Medido en esta máquina: primera página 12,9 ms (incluye abrir la
+conexión), página 100 —unos 5.000 eventos dentro— 2,0 ms, y filtro de tres tipos más
+severidad 4,2 ms. Que la página profunda cueste menos que la primera es justo lo que
+tenía que salir: con el cursor `(ts, id)` la profundidad no se paga, con `OFFSET` se
+habrían descartado 5.000 filas antes de devolver 50. La suite completa quedó en
+**607 passed, 2 skipped** (603 previos + 4), con `test_architecture.py`,
+`test_security_regression.py` y `test_rule_engine.py` verdes — este último sin un solo
+commit de la Fase 30, como exigía el plan.
+
+Lo que falta es el **checkpoint visual bloqueante de la Task 2**: ocho puntos con
+navegador y cámara real (contenido de la fila, fluidez del scroll con miles de
+eventos, evento nuevo en <1 s, marcar como persona, centro de alertas, reconexión,
+zero-scroll y consola limpia). Tres de los seis criterios del ROADMAP no se pueden
+automatizar sin runner JS y se firman ahí. Hasta que ese checkpoint se resuelva, la
+**Task 3 no se ejecuta**: OPS-07..OPS-11 siguen en `[ ]`, la Fase 30 sigue sin marcar
+en `ROADMAP.md` y esta sección no refleja todavía el cierre de la fase.
 
 30-11 cerró la acción estrella de la fase. `markPerson.js` (169 líneas) escucha el
 `CustomEvent('timeline:mark-person')` que la fila ya despachaba desde 30-08 —misma
