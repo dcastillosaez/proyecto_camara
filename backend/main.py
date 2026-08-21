@@ -589,6 +589,9 @@ async def lifespan(app: FastAPI):
     from backend.api.v2 import detection as detection_v2_module
     detection_v2_module.configure(camera_manager, event_engine)
 
+    from backend.api.v2 import alerts as alerts_v2_module
+    alerts_v2_module.configure(event_engine)
+
     pipeline = camera_manager.add(
         "cam1",
         build_rtsp_url(settings),
@@ -764,6 +767,9 @@ app.include_router(context_v2_router)
 
 from backend.api.v2.events import router as events_v2_router
 app.include_router(events_v2_router)
+
+from backend.api.v2.alerts import router as alerts_v2_router
+app.include_router(alerts_v2_router)
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
