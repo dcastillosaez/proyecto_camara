@@ -27,8 +27,29 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 5 of 12 (30-01, 30-02, 30-03 y 30-04 completos)
+Plan: 6 of 12 (30-01, 30-02, 30-03, 30-04 y 30-05 completos)
 Status: Executing Phase 30
+
+30-05 cerró la superficie HTTP de la fase: `GET /api/v2/events` deja de ser un
+endpoint suelto en `main.py` (Fase 19) y pasa a `backend/api/v2/events.py` con
+cuatro rutas. La lista mantiene el envelope `{events, cursor}` que
+`dashboard.js:274` ya consume y solo **añade** dos claves: `total` (solo en la
+primera página y solo con filtros activos — el `COUNT(*)` de 21 ms @100k no se
+paga en cada scroll) y `media`, un mapa hermano `event_id -> {recording_id,
+clip_url, thumbnail_url, snapshot_url}` resuelto con **una** consulta por página
+vía `by_trigger_event_ids()`. `media` va fuera del objeto evento a propósito: el
+DTO es el contrato persistido y también viaja por el WS. Se añaden el tipo
+repetido (`?type=A&type=B`) y el filtro por regla que 30-02 dejó listos en el
+repositorio, más el detalle `GET /{id}`, la previsualización
+`GET /{id}/track-scope` (no escribe nada) y `POST /{id}/assign-person`
+(`person_id >= 1`, el enrolado sigue en `/api/enroll_face`, aquí no se duplica su
+validación). El endpoint viejo se borró en el **mismo** commit que registra el
+router, así que nunca convivieron dos rutas iguales. Los cuatro endpoints llevan
+`@limiter.limit(V2_RATE_LIMIT)` y el de lista `pagination_limit()`. 17 tests
+nuevos en `tests/test_events_api.py`, suite 587/587 (+2 skips). Una desviación
+menor: `pagination_limit` quedó sin uso en `main.py` y se retiró del import.
+OPS-09 queda cubierto por el lado del servidor; OPS-07/08 esperan al frontend
+(30-08 y 30-11). Ver `30-05-SUMMARY.md`.
 
 30-04 puso en marcha el snapshot de evento: `Event.snapshot_path` existía en el
 contrato desde la Fase 19 y **nadie lo escribía**, así que la miniatura de la
@@ -133,7 +154,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-20 -- Phase 30 execution started
+Last activity: 2026-08-21 -- Ejecutado 30-05 (router /api/v2/events)
 
 Progress v2.0: [█████░░░░░] ~50% (11/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
@@ -586,7 +607,14 @@ en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-17
+Last session: 2026-08-21
+Stopped at: Ejecutado 30-05-PLAN.md (wave 3, depende de 30-01..30-04).
+  Router `backend/api/v2/events.py` con lista paginada (`total` condicional +
+  mapa `media`), detalle, `track-scope` y `assign-person`; endpoint suelto de
+  `main.py` borrado en el mismo commit. 17 tests nuevos, suite 587/587 (+2
+  skips). Siguiente: 30-06 (centro de alertas backend). Ver `30-05-SUMMARY.md`.
+
+Sesión anterior (2026-08-17)
 Stopped at: Ejecutado 27-11-PLAN.md (puerta de fase, wave 6, depende de
   27-08+27-09+27-10). Suite completa reejecutada verde: `pytest tests/ -q`
   → 519/519, sin cambios de código. Trazabilidad de los 6 criterios de
