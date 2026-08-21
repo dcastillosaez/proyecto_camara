@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-07-PLAN.md (wave 5, depende de 30-05 y 30-06)
+stopped_at: Ejecutado 30-08-PLAN.md (wave 6, depende de 30-05 y 30-07)
 last_updated: "2026-08-21T00:00:00.000Z"
-last_activity: 2026-08-21 -- 30-07 completado (andamiaje UI: marcado y estilos de la linea temporal, campana, cajon de alertas y modal de persona)
+last_activity: 2026-08-21 -- 30-08 completado (linea temporal viva: fila sin XSS, filtros en servidor, cursor, ventana de 400 filas y evento en vivo)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 62
-  percent: 91
+  completed_plans: 63
+  percent: 93
 ---
 
 # Project State
@@ -27,8 +27,26 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 8 of 12 (30-01 a 30-07 completos)
+Plan: 9 of 12 (30-01 a 30-08 completos)
 Status: Executing Phase 30
+
+30-08 dio comportamiento a ese andamiaje: la línea temporal ya pide páginas de 50
+a `/api/v2/events` con cursor, filtra **en servidor** (tipo multi-valor, severidad
+excluyente, zona, persona resuelta contra el `Map` de `/persons`, y rango de
+fechas), pagina con `IntersectionObserver` (`rootMargin: 200px`, sin un solo
+listener de `scroll`) y mantiene el DOM en 400 filas compensando `scrollTop` al
+recortar. El array completo vive en memoria y el DOM es solo una ventana sobre él,
+así que volver a subir se repinta desde memoria y **no hace falta el cursor
+inverso** que planteaba el UI-SPEC. Un evento en vivo entra arriba con `slide-in`
+si la lista está al principio, y si el operador ha bajado se acumula en la píldora
+"{N} eventos nuevos" sin tocarle el scroll. La fila monta los siete elementos del
+UI-SPEC con el patrón anti-XSS del repo (plantilla vacía + `textContent`), el
+descarte vive en `localStorage` y "Marcar como persona" solo despacha
+`timeline:mark-person` — 30-11 es quien escucha. Cuatro módulos en vez de los dos
+previstos (`timeline.js` 273, `timeline-row.js` 204, `timeline-filters.js` 107,
+`timeline-virtualize.js` 67) porque el tope de 300 líneas no daba para menos. Aún
+no se cargan: `initTimeline()` y el `case 'event'` del WebSocket llegan en 30-10.
+Ver `30-08-SUMMARY.md`.
 
 30-07 puso el andamiaje del frontend de la fase. El card "Eventos recientes" de la
 columna derecha es ahora "Línea temporal" en el mismo sitio (sin vista nueva ni
@@ -649,6 +667,18 @@ en producción.
 ## Session Continuity
 
 Last session: 2026-08-21
+Stopped at: Ejecutado 30-08-PLAN.md (wave 6, depende de 30-05 y 30-07). Cuatro
+  módulos ES nuevos con la línea temporal completa: fila sin XSS con las cuatro
+  acciones y descarte en `localStorage`, filtros en servidor con cursor y páginas
+  de 50, doble centinela de `IntersectionObserver` (abajo pide página, arriba
+  desliza la ventana), DOM acotado a 400 filas con compensación de `scrollTop`, y
+  evento en vivo arriba o en píldora según la posición del scroll. Pendiente de
+  comprobación manual (no hay runner JS): que el recorte a 400 filas no dé un salto
+  perceptible — plan B ya documentado en el módulo (subir a 1000 y no recortar).
+  Nadie llama todavía a `initTimeline()`: eso es 30-10. Siguiente: 30-09
+  (`alertCenter.js`). Ver `30-08-SUMMARY.md`.
+
+Sesión anterior (2026-08-21, misma jornada)
 Stopped at: Ejecutado 30-07-PLAN.md (wave 5, depende de 30-05 y 30-06). Marcado y
   estilos de la línea temporal, campana con badge, cajón de alertas y modal de
   marcar como persona, con los 35 ids del contrato que consumen 30-08/30-09/30-11;

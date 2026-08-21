@@ -577,7 +577,7 @@ Plans:
 - [x] 30-05-PLAN.md — Router `/api/v2/events`: lista paginada con `media`/`total`, detalle, track-scope y assign-person (OPS-07..09)
 - [x] 30-06-PLAN.md — Centro de alertas backend: agrupación por regla y silenciado en `app_config` (OPS-11)
 - [x] 30-07-PLAN.md — Marcado y estilos: card de línea temporal, campana, cajón, modal; retirada del card de eventos (OPS-07, OPS-08, OPS-11)
-- [ ] 30-08-PLAN.md — `timeline-row.js` + `timeline.js`: fila, filtros en servidor, cursor, virtualización y evento en vivo (OPS-07..10)
+- [x] 30-08-PLAN.md — `timeline-row.js` + `timeline.js`: fila, filtros en servidor, cursor, virtualización y evento en vivo (OPS-07..10)
 - [ ] 30-09-PLAN.md — `alertCenter.js`: badge, cajón, silenciado y top-3 de la Fase 29 (OPS-11)
 - [ ] 30-10-PLAN.md — Cableado: `case 'event'` en el WebSocket, arranque en `app.js` y `LOCKED_JS` (OPS-07, OPS-10, OPS-11)
 - [ ] 30-11-PLAN.md — "Marcar como persona": recorte precargado, aviso de alcance y repintado en sitio (OPS-08)
