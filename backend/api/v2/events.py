@@ -17,7 +17,7 @@ import json
 import os
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from backend.api.v2.deps import V2_RATE_LIMIT, limiter, pagination_limit, snapshot_url
 from backend.database import get_session_factory
@@ -122,3 +122,44 @@ async def get_event(request: Request, event_id: str) -> dict[str, Any]:
         "event": json.loads(event.model_dump_json()),
         "media": media.get(event.id, dict(_EMPTY_MEDIA)),
     }
+
+
+@router.get("/{event_id}/track-scope")
+@limiter.limit(V2_RATE_LIMIT)
+async def get_track_scope(request: Request, event_id: str) -> dict[str, Any]:
+    """Cuantos eventos anteriores/posteriores del mismo track recibirian la identidad.
+
+    Es la previsualizacion que exige D-06/UI-SPEC ("Se aplicara tambien a los eventos
+    anteriores de este track (N)"): mismo calculo que assign-person, sin escribir nada.
+    """
+    repo = _event_repo()
+    if await repo.get(event_id) is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    scope = await repo.track_scope(event_id)
+    if scope is None:
+        return {"count": 0, "from": None, "to": None, "event_ids": []}
+    return {
+        "count": scope["count"],
+        "from": scope["from"].isoformat(),
+        "to": scope["to"].isoformat(),
+        "event_ids": scope["event_ids"],
+    }
+
+
+@router.post("/{event_id}/assign-person")
+@limiter.limit(V2_RATE_LIMIT)
+async def assign_person(
+    request: Request,
+    event_id: str,
+    person_id: int = Body(..., embed=True, ge=1),
+) -> dict[str, Any]:
+    """Aplica una identidad ya enrolada al bloque contiguo del track (OPS-08, criterio 5).
+
+    El enrolado en si NO se hace aqui: el cliente llama antes a POST /api/enroll_face,
+    que ya valida content_type, tamano y longitud del nombre con tests de regresion de
+    seguridad asociados. Duplicar esa validacion aqui seria una regresion.
+    """
+    repo = _event_repo()
+    if await repo.get(event_id) is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return await repo.assign_person(event_id, person_id)
