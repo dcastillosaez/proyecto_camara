@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-06-PLAN.md (wave 4, depende de 30-05)
+stopped_at: Ejecutado 30-07-PLAN.md (wave 5, depende de 30-05 y 30-06)
 last_updated: "2026-08-21T00:00:00.000Z"
-last_activity: 2026-08-21 -- 30-06 completado (centro de alertas backend: agrupacion por regla y silenciado en app_config)
+last_activity: 2026-08-21 -- 30-07 completado (andamiaje UI: marcado y estilos de la linea temporal, campana, cajon de alertas y modal de persona)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 61
-  percent: 90
+  completed_plans: 62
+  percent: 91
 ---
 
 # Project State
@@ -27,8 +27,28 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 7 of 12 (30-01 a 30-06 completos)
+Plan: 8 of 12 (30-01 a 30-07 completos)
 Status: Executing Phase 30
+
+30-07 puso el andamiaje del frontend de la fase. El card "Eventos recientes" de la
+columna derecha es ahora "Línea temporal" en el mismo sitio (sin vista nueva ni
+router) con los ids que 30-08, 30-09 y 30-11 consumen como contrato:
+`#timeline-list` y sus cuatro estados (vacío, vacío por filtros, error, cargando),
+centinela de 1px para el `IntersectionObserver`, pill de eventos nuevos y barra de
+"sin tiempo real"; barra de filtros `tl-*` (tipo, severidad, zona, persona con
+`datalist`, dos fechas) y `#tl-active-filters`. En la cabecera, campana de 44×44
+con `#alert-badge`, y "Ver todas" en el panel "Alertas activas" de la Fase 29;
+ambos abrirán `#alert-drawer` (cajón de 380px con contador héroe, grupos, pie y
+popover de silenciado con las tres duraciones). Modal propio `#mark-person-modal`
+en vez de reutilizar `#enroll-modal` — su `submit` ya está enlazado por
+`personGallery.js` con otra semántica. `components.css` pasa de 81 a 158 líneas con
+las medidas exactas del UI-SPEC (fila de 52px, acciones 32×32, miniatura 64×36,
+chips de 20px, 4 tamaños de fuente). En el mismo plan se retiró el JS que apuntaba
+al marcado borrado —`addEvent`, `applyFilters`, `bindEventFilters`, el bloque de
+`#events-list` de `loadInitialData()` y la escritura en `#events-badge`—, que era
+justo lo que habría reventado el arranque de `app.js`; el export CSV sobrevive en
+`bindEventExport()` y el borrado por rango no se tocó. Sin comportamiento todavía:
+la lista se llena en 30-08. Ver `30-07-SUMMARY.md`.
 
 30-06 cerró el backend del centro de alertas. `GET /api/v2/alerts` devuelve las
 alertas de la ventana **ya agrupadas por la regla que las disparó**
@@ -175,7 +195,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-21 -- Ejecutado 30-06 (centro de alertas backend: agrupacion por regla y silenciado)
+Last activity: 2026-08-21 -- Ejecutado 30-07 (andamiaje UI: marcado y estilos de la linea temporal, campana, cajon de alertas y modal de persona)
 
 Progress v2.0: [█████░░░░░] ~50% (11/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
@@ -629,6 +649,16 @@ en producción.
 ## Session Continuity
 
 Last session: 2026-08-21
+Stopped at: Ejecutado 30-07-PLAN.md (wave 5, depende de 30-05 y 30-06). Marcado y
+  estilos de la línea temporal, campana con badge, cajón de alertas y modal de
+  marcar como persona, con los 35 ids del contrato que consumen 30-08/30-09/30-11;
+  y retirada en el mismo plan de `addEvent`/`applyFilters`/`bindEventFilters` y del
+  bloque de `#events-list`, que habrían dejado el arranque de `app.js` roto.
+  Pendiente de comprobación manual: abrir `/` y confirmar consola limpia (el card
+  aparecerá vacío hasta 30-08, es lo esperado). Siguiente: 30-08 (`timeline.js`).
+  Ver `30-07-SUMMARY.md`.
+
+Sesión anterior (2026-08-21, misma jornada)
 Stopped at: Ejecutado 30-06-PLAN.md (wave 4, depende de 30-05). Router
   `backend/api/v2/alerts.py` con `GET /api/v2/alerts` (agrupación por regla o por
   tipo, contadores del badge, ventana 1..168 h) y `POST /mute` / `/unmute`
