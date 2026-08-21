@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-08-PLAN.md (wave 6, depende de 30-05 y 30-07)
+stopped_at: Ejecutado 30-09-PLAN.md (wave 7, depende de 30-06 y 30-07)
 last_updated: "2026-08-21T00:00:00.000Z"
-last_activity: 2026-08-21 -- 30-08 completado (linea temporal viva: fila sin XSS, filtros en servidor, cursor, ventana de 400 filas y evento en vivo)
+last_activity: 2026-08-21 -- 30-09 completado (centro de alertas: badge, cajon con foco atrapado, silenciado por regla y top-3 de la Fase 29 servido desde la misma agrupacion)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 63
+  completed_plans: 64
   percent: 93
 ---
 
@@ -27,8 +27,30 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 9 of 12 (30-01 a 30-08 completos)
+Plan: 10 of 12 (30-01 a 30-09 completos)
 Status: Executing Phase 30
+
+30-09 cerró el centro de alertas del navegador. `alertCenter.js` (272 líneas) pide
+`GET /api/v2/alerts?hours=24` y con esa única respuesta repinta tres sitios: el badge
+de la campana (oculto con 0, "9+" desde 10, rojo si hay crítica y ámbar si solo hay
+avisos), el cajón lateral con un grupo por regla, y el top-3 "Alertas activas" de la
+Fase 29. No hay ni un `.filter()` ni un `.sort()` sobre los datos — el orden por
+severidad, la agrupación y el silenciado los decide el servidor (30-06), que era el
+motivo de construir ese endpoint. Silenciar usa un popover cuya duración **es** la
+confirmación (15 min / 1 h / 8 h desde `dataset.duration`, cero `confirm()` nuevos,
+D-07), y tras silenciar o reactivar —con éxito o con error— siempre se relee el estado
+del servidor. Los grupos silenciados siguen visibles, atenuados y con "Reactivar regla".
+El cajón es `role="dialog"` con foco atrapado y `Escape` que cierra primero el popover.
+`loadActiveAlerts()`/`SEVERITY_RANK` salieron de `dashboard.js` (290 → 244 líneas,
+recuperando margen sobre `TEST_line_limit`). Dos desviaciones: el cableado de `app.js`
+que el plan dejaba para 30-10 hubo que adelantarlo (retirar el símbolo de `dashboard.js`
+dejaba un import roto que habría dejado el dashboard en blanco), y una regla CSS para
+que `.hidden` de Tailwind gane al selector de id del badge.
+
+**Hueco abierto para 30-10:** `gotoTimeline()` despacha `timeline:filter-rule` pero
+**nadie lo escucha** — "Ver en la línea temporal" cierra el cajón y hace scroll sin
+aplicar el filtro de la regla. El criterio de éxito 6 del ROADMAP lo exige, así que
+30-10 debe añadir el oyente en `timeline.js`. Ver `30-09-SUMMARY.md`.
 
 30-08 dio comportamiento a ese andamiaje: la línea temporal ya pide páginas de 50
 a `/api/v2/events` con cursor, filtra **en servidor** (tipo multi-valor, severidad
