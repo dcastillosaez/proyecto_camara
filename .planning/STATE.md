@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-09-PLAN.md (wave 7, depende de 30-06 y 30-07)
+stopped_at: Ejecutado 30-10-PLAN.md (wave 8, depende de 30-08 y 30-09)
 last_updated: "2026-08-21T00:00:00.000Z"
-last_activity: 2026-08-21 -- 30-09 completado (centro de alertas: badge, cajon con foco atrapado, silenciado por regla y top-3 de la Fase 29 servido desde la misma agrupacion)
+last_activity: 2026-08-21 -- 30-10 completado (linea temporal cableada al arranque y al WebSocket, sin doble pintado del cruce de linea, y el filtro por regla del centro de alertas ya aplicado)
 progress:
   total_phases: 32
   completed_phases: 14
   total_plans: 68
-  completed_plans: 64
-  percent: 93
+  completed_plans: 65
+  percent: 94
 ---
 
 # Project State
@@ -27,8 +27,30 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — EXECUTING
-Plan: 10 of 12 (30-01 a 30-09 completos)
+Plan: 11 of 12 (30-01 a 30-10 completos)
 Status: Executing Phase 30
+
+30-10 encendió la fase: hasta este plan, la línea temporal y el centro de alertas eran
+código que nadie llamaba. `websocket.js` despacha ahora `type:"event"` a `onLiveEvent()`
+con un `else if` más en el `onmessage` —mismo molde que el `'tracks'` de la Fase 29, ni una
+segunda conexión— y `app.js` llama a `initTimeline()` **antes** de `connectWS()`, para que
+el `IntersectionObserver` y los controles existan cuando llegue el primer mensaje. El
+riesgo real era el doble pintado del `LINE_CROSSED`, que el backend emite por
+`type:"detection"` y por `type:"event"`: queda cortado por dos sitios independientes —el
+`case 'detection'` ya no pinta filas desde 30-07 y `onLiveEvent()` descarta ids repetidos—
+y solo conserva contador, gráfica horaria y toast. El aviso de "sin tiempo real" se cuelga
+del `onopen`/`onclose` que ya existían, sin tocar el backoff de 1 s→30 s. `LOCKED_JS` pasa
+a vigilar los cinco módulos de la fase.
+
+**El hueco de 30-09 queda cerrado**: `timeline.js` escucha `timeline:filter-rule` y
+`setFocusFilter()` (en `timeline-filters.js`, con el resto del estado de filtros) traduce
+el nombre de regla al parámetro `rule` del servidor —que lo resuelve con
+`json_each(payload,'$.rules')`— o enciende el chip del tipo cuando el grupo no tiene regla.
+De paso salió un bug: `_matchesActiveFilters()` no comprobaba `rule`, así que con el filtro
+puesto un evento en vivo de otra regla se colaba en la lista. Suite completa en verde
+(603 passed, 2 skipped). Pendiente de comprobación manual, que firma 30-12: evento real en
+<1 s sin recargar, cruce de línea una sola vez, barra ámbar al caer el socket y filtro
+aplicado al pulsar "Ver en la línea temporal". Ver `30-10-SUMMARY.md`.
 
 30-09 cerró el centro de alertas del navegador. `alertCenter.js` (272 líneas) pide
 `GET /api/v2/alerts?hours=24` y con esa única respuesta repinta tres sitios: el badge
@@ -47,10 +69,9 @@ que el plan dejaba para 30-10 hubo que adelantarlo (retirar el símbolo de `dash
 dejaba un import roto que habría dejado el dashboard en blanco), y una regla CSS para
 que `.hidden` de Tailwind gane al selector de id del badge.
 
-**Hueco abierto para 30-10:** `gotoTimeline()` despacha `timeline:filter-rule` pero
-**nadie lo escucha** — "Ver en la línea temporal" cierra el cajón y hace scroll sin
-aplicar el filtro de la regla. El criterio de éxito 6 del ROADMAP lo exige, así que
-30-10 debe añadir el oyente en `timeline.js`. Ver `30-09-SUMMARY.md`.
+~~Hueco abierto para 30-10~~ **cerrado en 30-10**: `gotoTimeline()` despachaba
+`timeline:filter-rule` sin que nadie lo escuchara; el oyente ya está en `timeline.js`.
+Ver `30-09-SUMMARY.md`.
 
 30-08 dio comportamiento a ese andamiaje: la línea temporal ya pide páginas de 50
 a `/api/v2/events` con cursor, filtra **en servidor** (tipo multi-valor, severidad
@@ -65,10 +86,9 @@ si la lista está al principio, y si el operador ha bajado se acumula en la píl
 UI-SPEC con el patrón anti-XSS del repo (plantilla vacía + `textContent`), el
 descarte vive en `localStorage` y "Marcar como persona" solo despacha
 `timeline:mark-person` — 30-11 es quien escucha. Cuatro módulos en vez de los dos
-previstos (`timeline.js` 273, `timeline-row.js` 204, `timeline-filters.js` 107,
-`timeline-virtualize.js` 67) porque el tope de 300 líneas no daba para menos. Aún
-no se cargan: `initTimeline()` y el `case 'event'` del WebSocket llegan en 30-10.
-Ver `30-08-SUMMARY.md`.
+previstos (`timeline.js` 283, `timeline-row.js` 204, `timeline-filters.js` 133,
+`timeline-virtualize.js` 67) porque el tope de 300 líneas no daba para menos.
+Se cargan desde 30-10. Ver `30-08-SUMMARY.md`.
 
 30-07 puso el andamiaje del frontend de la fase. El card "Eventos recientes" de la
 columna derecha es ahora "Línea temporal" en el mismo sitio (sin vista nueva ni
@@ -235,7 +255,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-21 -- Ejecutado 30-07 (andamiaje UI: marcado y estilos de la linea temporal, campana, cajon de alertas y modal de persona)
+Last activity: 2026-08-21 -- Ejecutado 30-10 (linea temporal cableada al arranque y al WebSocket; filtro por regla desde el centro de alertas)
 
 Progress v2.0: [█████░░░░░] ~50% (11/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
@@ -687,6 +707,20 @@ Fase 23, la Fase 25, la Fase 26 y la Fase 27 por completamente validados
 en producción.
 
 ## Session Continuity
+
+Last session: 2026-08-21
+Stopped at: Ejecutado 30-10-PLAN.md (wave 8, depende de 30-08 y 30-09). La línea
+  temporal y el centro de alertas ya arrancan con el dashboard: `case 'event'` en
+  `websocket.js` hacia `onLiveEvent()`, `initTimeline()` antes de `connectWS()`,
+  aviso de "sin tiempo real" colgado del `onopen`/`onclose` existente y `LOCKED_JS`
+  con los cinco módulos de la fase. Cerrado el hueco que dejó 30-09: `timeline.js`
+  escucha `timeline:filter-rule` y aplica el filtro de regla en servidor. Suite
+  completa en verde (603 passed, 2 skipped). Pendiente de comprobación manual, que
+  firma 30-12: evento real en <1 s sin recargar y cruce de línea una sola vez.
+  Siguiente: 30-11 (marcar como persona)
+Resume file: ninguno — continuar con `.planning/phases/30-event-timeline-y-centro-de-alertas/30-11-PLAN.md`
+
+---
 
 Last session: 2026-08-21
 Stopped at: Ejecutado 30-08-PLAN.md (wave 6, depende de 30-05 y 30-07). Cuatro
