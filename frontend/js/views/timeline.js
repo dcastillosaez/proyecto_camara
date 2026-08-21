@@ -196,6 +196,12 @@ export function initTimeline() {
   $('btn-tl-clear')?.addEventListener('click', () => { clearAllFilters(); applyTimelineFilters(); });
   $('btn-tl-clear-empty')?.addEventListener('click', () => { clearAllFilters(); applyTimelineFilters(); });
   $('btn-tl-retry')?.addEventListener('click', () => loadPage({ reset: true }));
+  $('timeline-newpill')?.addEventListener('click', (e) => {
+    list.scrollTo({ top: 0, behavior: 'smooth' });
+    _pending = [];
+    e.currentTarget.classList.add('hidden');
+    render({ start: 0 });
+  });
   list.addEventListener('click', _onListClick);
   list.addEventListener('keydown', (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('tl-thumb')) {
@@ -212,6 +218,56 @@ export function initTimeline() {
   loadPage({ reset: true });
 }
 
-export function onLiveEvent(_event, _media) { /* 30-08 Task 3 */ }
+// ── Evento en vivo (OPS-10, criterio 4) ───────────────────────────
+// Unica comprobacion de filtros que vive en el navegador, y solo para lo que llega por
+// WebSocket: la lista descargada JAMAS se filtra aqui, eso es cosa del servidor (OPS-09).
+function _matchesActiveFilters(ev) {
+  const { params } = filterParams(_persons, PAGE_SIZE);
+  const types = params.getAll('type');
+  if (types.length && !types.includes(ev.type)) return false;
+  const sev = params.get('severity');
+  if (sev && ev.severity !== sev) return false;
+  const zone = params.get('zone_id');
+  if (zone && ev.zone_id !== zone) return false;
+  const person = params.get('person_id');
+  if (person && String(ev.person_id ?? '') !== person) return false;
+  const from = params.get('from');
+  const to = params.get('to');
+  if (from && new Date(ev.ts) < new Date(from)) return false;
+  if (to && new Date(ev.ts) > new Date(to)) return false;
+  return true;
+}
 
-export function setTimelineOffline(_offline) { /* 30-08 Task 3 */ }
+export function onLiveEvent(event, media) {
+  if (!event || !_matchesActiveFilters(event)) return;
+  if (_all.some((e) => e.id === event.id)) return;      // idempotente ante reconexiones
+  _all.unshift(event);
+  if (media) _media[event.id] = media;
+  const list = $('timeline-list');
+  if (!list) return;
+  if (list.scrollTop < 8) {
+    render({ start: 0 });                               // inserta arriba, nada mas se mueve
+    const first = list.querySelector('.timeline-row');
+    if (first) {
+      first.classList.add('slide-in');
+      const bar = first.querySelector('.sev-bar');
+      if (bar) { bar.style.filter = 'brightness(1.8)'; setTimeout(() => { bar.style.filter = ''; }, 2000); }
+    }
+  } else {
+    _pending.push(event.id);                            // no se toca el scroll del operador
+    const pill = $('timeline-newpill');
+    if (!pill) return;
+    const n = _pending.length;
+    pill.textContent = `${n} evento${n === 1 ? '' : 's'} nuevo${n === 1 ? '' : 's'}`;
+    pill.classList.remove('hidden');
+  }
+}
+
+export function setTimelineOffline(offline) {
+  const bar = $('timeline-offline');
+  if (!bar) return;
+  const wasOffline = !bar.classList.contains('hidden');
+  bar.classList.toggle('hidden', !offline);
+  // Al reconectar, la lista se sincroniza sola: sin recargar la pagina (OPS-06, criterio 4).
+  if (wasOffline && !offline) loadPage({ reset: true });
+}

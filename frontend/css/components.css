@@ -126,6 +126,8 @@
 }
 .filter-chip.active { background: #2563eb; border-color: #3b82f6; color: #fff; }
 .filter-chip:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+/* Reutiliza el keyframe slide-in de .event-item: la fila nueva entra igual que antes. */
+.slide-in { animation: slide-in 200ms ease; }
 .new-pill {
   position: absolute; left: 50%; transform: translateX(-50%); top: 4px; z-index: 2;
   background: #2563eb; color: #fff; font-size: 12px; font-weight: 600;
