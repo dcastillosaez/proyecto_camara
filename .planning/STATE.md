@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10). El modal
-last_updated: "2026-08-22T11:01:34.478Z"
+stopped_at: Fase 32 contexto capturado (UI-SPEC verificado + 32-CONTEXT.md)
+last_updated: "2026-08-22T16:39:47.957Z"
 last_activity: 2026-08-22 -- Phase 31 planning complete
 progress:
   total_phases: 32
@@ -787,8 +787,8 @@ en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-21
-Stopped at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10). El modal
+Last session: 2026-08-22T16:39:47.948Z
+Stopped at: Fase 32 contexto capturado (UI-SPEC verificado + 32-CONTEXT.md)
   "Marcar como persona" está completo: `markPerson.js` precarga el recorte del evento,
   muestra el aviso de alcance retroactivo con el N del servidor antes de confirmar,
   enrola contra `/api/enroll_face` (sin duplicar sus validaciones), aplica la identidad
@@ -797,7 +797,7 @@ Stopped at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10). El moda
   Suite completa en verde (603 passed, 2 skipped). Pendiente de comprobación manual,
   que firma 30-12: recorte real en el modal, N razonable en el aviso y filas del track
   cambiando en sitio. Siguiente: 30-12 (puerta de fase)
-Resume file: ninguno — continuar con `.planning/phases/30-event-timeline-y-centro-de-alertas/30-12-PLAN.md`
+Resume file: .planning/phases/32-vista-de-c-mara-y-configuraci-n-visual/32-CONTEXT.md
 
 ---
 
