@@ -1,10 +1,11 @@
 ---
 phase: 32
 slug: vista-de-c-mara-y-configuraci-n-visual
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-08-22
+reviewed_at: 2026-08-22
 ---
 
 # Phase 32 — UI Design Contract
