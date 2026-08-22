@@ -840,20 +840,20 @@ Las mediciones de rendimiento y de payload, el split de bases de datos, el forma
 
 ## Open Questions
 
-1. **¿"Conocidas / desconocidas" cuenta eventos o personas distintas?** (A6)
+1. **(RESOLVED — 31-04-PLAN.md) ¿"Conocidas / desconocidas" cuenta eventos o personas distintas?** (A6)
    - Lo que se sabe: la tarjeta muestra `{N} conocidas` con apoyo `{M} desconocidas`. Contar eventos cuesta 13,6 ms; contar personas distintas cuesta ~78 ms. Ambas caben.
    - Lo que no está claro: cuál espera leer el operador. "342 conocidas" leído como eventos es una cifra enorme y poco intuitiva; leído como personas es 12.
    - Recomendación: **personas distintas** (`COUNT(DISTINCT person_id)` frente a `COUNT(DISTINCT track_id) WHERE person_id IS NULL`), que es lo que la etiqueta sugiere en castellano. Confirmarlo en la planificación; el coste no decide.
 
-2. **Ocupación por zona: ¿`ZONE_ENTERED` a secas o `ZONE_ENTERED` + `INTRUSION`?**
+2. **(RESOLVED — 31-04-PLAN.md) Ocupación por zona: ¿`ZONE_ENTERED` a secas o `ZONE_ENTERED` + `INTRUSION`?**
    - Lo que se sabe: `ZONE_ENTERED` es el evento que lleva `zone_id` de forma sistemática (`engine.py:150-160`), pero `INTRUSION` también lo lleva (`engine.py:271,310`). Filtrar por tipo baja la consulta a 24 ms; no filtrar la deja en 28 ms con el índice nuevo.
    - Recomendación: **filtrar a `ZONE_ENTERED`**. "Ocupación" es cuánta gente entró en la zona; una intrusión ya está contada como entrada.
 
-3. **La unidad del pico del heatmap.**
+3. **(RESOLVED — 31-02-PLAN.md) La unidad del pico del heatmap.**
    - Lo que se sabe: la máscara acumula frames-con-presencia en un disco de 40 px, y `compose_heatmap` normaliza dividiendo por el máximo, así que la escala **siempre es relativa**.
    - Recomendación: leyenda relativa (`0` / `50 %` / `pico`) con el valor absoluto en el `title`. Etiquetar el extremo con un número de personas sería inventar una unidad, contra el espíritu de D-12.
 
-4. **`COUNT(*)` filtrado de la Fase 30 a escala de 100k** — *fuera de alcance, para el registro.*
+4. **(RESOLVED — no se toca en esta fase, registrado para una futura) `COUNT(*)` filtrado de la Fase 30 a escala de 100k** — *fuera de alcance, para el registro.*
    - Medido en esta sesión: `COUNT(*) WHERE severity=? AND ts BETWEEN ?` cuesta **563 ms @100k** usando `idx_events_ts` sin covering. La línea temporal solo lo pide en la primera página y con filtros activos, y el criterio de la Fase 30 se midió a 10.000 eventos, así que no es una regresión ni un incumplimiento. Pero a 100.000 eventos ese contador es lento.
    - Recomendación: **no tocarlo en esta fase**. Anotarlo para cuando alguien revise el rendimiento de la línea temporal a escala real. `idx_events_analytics` no lo arregla (no contiene `severity`).
 

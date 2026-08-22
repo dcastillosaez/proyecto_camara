@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 30 completa (12/12 planes) — línea temporal accionable, centro de alertas y "Marcar como persona" en producción; criterio 3 medido @10k, suite 607 passed/2 skipped, OPS-07..OPS-11 cerrados. El checkpoint visual de 30-12 Task 2 se verificó con navegador real contra el servidor en marcha en todo lo que no exige cámara; lo que sí la exige queda diferido como 11º checkpoint manual
-last_updated: "2026-08-21T15:30:00.000Z"
-last_activity: 2026-08-21 -- Fase 30 cerrada: 30-12 Task 2 verificada con navegador real (criterios 1, 2, 6 parcial, 7 y 8) y Task 3 ejecutada (OPS-07..OPS-11 marcados, ROADMAP y STATE actualizados)
+stopped_at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10). El modal
+last_updated: "2026-08-22T11:01:34.478Z"
+last_activity: 2026-08-22 -- Phase 31 planning complete
 progress:
   total_phases: 32
   completed_phases: 15
-  total_plans: 68
+  total_plans: 79
   completed_plans: 67
-  percent: 96
+  percent: 85
 ---
 
 # Project State
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 30 (Event Timeline y centro de alertas) — COMPLETA (12/12 planes)
 Plan: 12 of 12 — 30-12 cerrada
-Status: Fase 30 cerrada; siguiente paso `/gsd:plan-phase 31`
+Status: Ready to execute
 
 **La Fase 30 está completa.** El card plano de "Eventos recientes" ya no existe:
 en su sitio hay una línea temporal accionable de filas de 52 px con barra de
@@ -327,7 +327,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-21 -- Fase 30 completa: ejecutado 30-12 (criterio 3 medido @10k, checkpoint visual verificado en lo que no exige cámara, OPS-07..OPS-11 cerrados)
+Last activity: 2026-08-22 -- Phase 31 planning complete
 
 Progress v2.0: [██████░░░░] ~64% (14/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
