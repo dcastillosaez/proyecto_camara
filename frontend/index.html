@@ -688,7 +688,159 @@
 
   <section id="view-analitica" role="tabpanel" aria-labelledby="tab-analitica" hidden
            class="p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 max-w-[1600px] mx-auto w-full">
-    <!-- Task 2 lo rellena -->
+
+    <!-- ─── Fila 0: título + barra de rango (12 col) ─── -->
+    <div class="lg:col-span-12 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-base font-semibold text-slate-100">Analítica</h1>
+        <p id="an-subtitle" class="mono text-xs text-slate-500">—</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-3">
+        <div id="an-range" class="range-seg">
+          <button id="an-range-today" class="filter-chip active" data-range="today" aria-pressed="true">Hoy</button>
+          <button id="an-range-7d" class="filter-chip" data-range="7d" aria-pressed="false">7 días</button>
+          <button id="an-range-30d" class="filter-chip" data-range="30d" aria-pressed="false">30 días</button>
+          <button id="an-range-custom" class="filter-chip" data-range="custom" aria-pressed="false">Personalizado</button>
+        </div>
+        <div id="an-custom" class="hidden items-center gap-2">
+          <input id="an-from" type="date" class="filter-input" aria-label="Desde fecha">
+          <input id="an-to" type="date" class="filter-input" aria-label="Hasta fecha">
+          <button id="an-apply" class="text-xs font-semibold px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg cursor-pointer transition-colors">Aplicar rango</button>
+        </div>
+        <button id="an-export-json" class="filter-chip">Exportar JSON</button>
+      </div>
+    </div>
+    <p id="an-range-error" class="hidden lg:col-span-12 text-xs text-red-400 -mt-2"></p>
+
+    <!-- ─── Fila 1: tarjetas de tendencia (3+3+3+3) ─── -->
+    <div id="an-cards" aria-live="polite" class="lg:col-span-12 grid grid-cols-2 lg:grid-cols-12 gap-4">
+      <div class="lg:col-span-3 analytics-panel flex flex-col justify-center" style="height:96px">
+        <p id="an-total-value" class="mono text-3xl font-bold text-slate-200 leading-none tabular-nums">—</p>
+        <p id="an-total-label" class="text-xs text-slate-500 mt-1">Personas en el rango</p>
+      </div>
+      <div class="lg:col-span-3 analytics-panel flex flex-col justify-center" style="height:96px">
+        <p id="an-delta-value" class="mono text-3xl font-bold text-slate-200 leading-none tabular-nums">—</p>
+        <p id="an-delta-range" class="text-xs text-slate-500 mt-1">Frente al periodo anterior</p>
+      </div>
+      <div class="lg:col-span-3 analytics-panel flex flex-col justify-center" style="height:96px">
+        <p id="an-peak-value" class="mono text-3xl font-bold text-slate-200 leading-none tabular-nums">—</p>
+        <p id="an-peak-support" class="text-xs text-slate-500 mt-1">Hora punta</p>
+      </div>
+      <div class="lg:col-span-3 analytics-panel flex flex-col justify-center" style="height:96px">
+        <p id="an-known-value" class="mono text-3xl font-bold text-slate-200 leading-none tabular-nums">—</p>
+        <p id="an-unknown-support" class="text-xs text-slate-500 mt-1">Conocidas / desconocidas</p>
+      </div>
+    </div>
+
+    <!-- ─── Fila 2: Personas por hora (8) / Ocupación por zona (4) ─── -->
+    <div id="an-panel-hourly" class="analytics-panel lg:col-span-8 flex flex-col gap-3">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center gap-3">
+          <h2 id="an-hourly-title" class="text-sm font-semibold text-slate-200">Personas por hora</h2>
+          <span id="an-hourly-peak" class="mono text-xs text-slate-500">—</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-1.5 text-xs text-slate-500">
+            <span style="display:inline-block;width:12px;height:2px;background:#60a5fa" aria-hidden="true"></span>
+            <span>Actual</span>
+            <span style="display:inline-block;width:12px;height:0;border-top:2px dashed #475569" aria-hidden="true"></span>
+            <span>Periodo anterior</span>
+          </div>
+          <button id="an-compare" class="filter-chip active" aria-pressed="true">Comparar</button>
+          <button id="an-export-hourly" class="row-action" aria-label="Exportar personas por hora a CSV">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="relative" style="height:240px">
+        <canvas id="an-chart-hourly" role="img"></canvas>
+        <div id="an-hourly-loading" class="chart-skeleton hidden absolute inset-0"></div>
+        <div id="an-hourly-empty" class="hidden absolute inset-0 flex-col items-center justify-center text-center px-4">
+          <p class="text-sm font-semibold text-slate-400">Sin actividad en este rango</p>
+          <p class="text-xs text-slate-600 mt-1">Prueba con un rango más amplio o comprueba que la cámara estuvo grabando esos días.</p>
+        </div>
+        <div id="an-hourly-error" class="hidden absolute inset-0 flex-col items-center justify-center text-center px-4">
+          <p class="text-sm font-semibold text-slate-400">No se pudieron cargar los datos.</p>
+          <button id="an-hourly-retry" class="filter-chip mt-2">Reintentar carga</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="an-panel-occupancy" class="analytics-panel lg:col-span-4 flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-slate-200">Ocupación por zona</h2>
+        <button id="an-export-occupancy" class="row-action" aria-label="Exportar ocupación por zona a CSV">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+      </div>
+      <div class="relative" style="height:240px">
+        <canvas id="an-chart-occupancy" role="img"></canvas>
+        <div id="an-occupancy-loading" class="chart-skeleton hidden absolute inset-0"></div>
+        <div id="an-occupancy-empty" class="hidden absolute inset-0 flex-col items-center justify-center text-center px-4">
+          <p class="text-sm font-semibold text-slate-400">Sin zonas definidas</p>
+          <p class="text-xs text-slate-600 mt-1">Dibuja una zona sobre el vídeo para medir su ocupación.</p>
+        </div>
+        <div id="an-occupancy-error" class="hidden absolute inset-0 flex-col items-center justify-center text-center px-4">
+          <p class="text-sm font-semibold text-slate-400">No se pudieron cargar los datos.</p>
+          <button id="an-occupancy-retry" class="filter-chip mt-2">Reintentar carga</button>
+        </div>
+      </div>
+      <p id="an-occupancy-foot" class="hidden mono text-xs text-slate-600">Mostrando las 10 zonas con más ocupación.</p>
+    </div>
+
+    <!-- ─── Fila 3: Mapa de calor (7) / Personas más vistas (5) ─── -->
+    <div id="an-panel-heatmap" class="analytics-panel lg:col-span-7 flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-slate-200">Mapa de calor</h2>
+        <span id="an-heatmap-scope" class="chip mono" title="El mapa de calor acumula actividad desde que arrancó la cámara y no sigue el rango seleccionado.">acumulado desde el arranque</span>
+      </div>
+      <div class="relative" style="aspect-ratio:16/9; max-height:360px; overflow:hidden; border-radius:8px">
+        <img id="an-heatmap-img" loading="lazy" alt="Mapa de calor de actividad acumulada sobre el encuadre de la cámara" style="width:100%; height:100%; object-fit:cover; display:block; background:#020617">
+        <div id="an-heatmap-loading" class="chart-skeleton hidden absolute inset-0"></div>
+        <div id="an-heatmap-empty" class="hidden absolute inset-0 flex-col items-center justify-center text-center px-4">
+          <p class="text-sm font-semibold text-slate-400">Sin actividad acumulada</p>
+          <p class="text-xs text-slate-600 mt-1">El mapa aparecerá en cuanto la cámara registre movimiento.</p>
+        </div>
+        <div id="an-heatmap-offline" class="hidden absolute inset-0 flex-col items-center justify-center text-center px-4">
+          <p class="text-sm font-semibold text-slate-400">Cámara sin señal</p>
+          <p class="text-xs text-slate-600 mt-1">El mapa de calor necesita el vídeo en directo para dibujarse sobre el encuadre.</p>
+        </div>
+      </div>
+      <div id="an-heatmap-legend" class="flex flex-col gap-1">
+        <div style="height:8px;border-radius:4px;background:linear-gradient(to right,#000004,#57106e,#bc3754,#f98c0a,#fcffa4)"></div>
+        <div class="flex items-center justify-between mono text-xs text-slate-500">
+          <span id="an-heatmap-mark-0">0</span>
+          <span id="an-heatmap-mark-mid">½</span>
+          <span id="an-heatmap-mark-peak">pico</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="an-panel-persons" class="analytics-panel lg:col-span-5 flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-slate-200">Personas más vistas</h2>
+        <button id="an-export-persons" class="row-action" aria-label="Exportar personas más vistas a CSV">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+      </div>
+      <div id="an-rank-list" class="overflow-y-auto flex flex-col gap-2" style="max-height:440px"></div>
+      <div id="an-persons-loading" class="hidden flex-col gap-2">
+        <div class="chart-skeleton" style="height:40px"></div>
+        <div class="chart-skeleton" style="height:40px"></div>
+        <div class="chart-skeleton" style="height:40px"></div>
+      </div>
+      <div id="an-persons-empty" class="hidden flex-col items-center justify-center text-center py-6">
+        <p class="text-sm font-semibold text-slate-400">Sin personas identificadas</p>
+        <p class="text-xs text-slate-600 mt-1">Marca a alguien como persona en la línea temporal y aparecerá aquí.</p>
+      </div>
+      <div id="an-persons-error" class="hidden flex-col items-center justify-center text-center py-6">
+        <p class="text-sm font-semibold text-slate-400">No se pudieron cargar los datos.</p>
+        <button id="an-persons-retry" class="filter-chip mt-2">Reintentar carga</button>
+      </div>
+    </div>
+
+    <!-- ─── Pie ─── -->
+    <p id="an-updated" class="lg:col-span-12 mono text-xs text-slate-600">Actualizado a las --:--:--</p>
   </section>
   </main>
 

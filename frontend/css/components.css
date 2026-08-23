@@ -161,3 +161,12 @@
 #alert-badge.hidden { display: none; }
 #alert-mute-popover { display: none; position: absolute; z-index: 55; }
 #alert-mute-popover.open { display: block; }
+
+/* ── Fase 31 — vista de analitica ────────────────────────────────── */
+.nav-tab { height: 32px; padding: 8px 16px; border-bottom: 2px solid transparent; color: #94a3b8; cursor: pointer; background: transparent; border-left: none; border-right: none; border-top: none; font-family: inherit; }
+.nav-tab.active { color: #3b82f6; border-bottom-color: #3b82f6; }
+.nav-tab:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+.analytics-panel { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; }
+.range-seg { display: flex; align-items: center; gap: 4px; }
+.rank-row { height: 40px; display: flex; align-items: center; gap: 8px; background: #1e293b; border-radius: 6px; padding: 4px 8px; }
+.chart-skeleton { background: #1e293b; border-radius: 6px; animation: none; }
