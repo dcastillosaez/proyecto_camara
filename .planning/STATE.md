@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 31 completa (11/11 planes) — vista de analítica en producción; checkpoint visual de 31-11 Task 3 aprobado tras corregir una regresión real de Chart.js en carga directa de #analitica; OPS-12..OPS-15 cerrados. Siguiente paso: /gsd:plan-phase 32
-last_updated: "2026-08-23T19:15:00.000Z"
-last_activity: 2026-08-23 -- Fase 31 cerrada: fix de la regresión de nav.js encontrada por el checkpoint, OPS-12..OPS-15 marcados, ROADMAP y STATE actualizados
+stopped_at: Fase 32 en marcha (1/8 planes) — 32-01 cerrado (config_schema.py con los 112 campos de Settings + ConfigRepo.delete()); SET-01..SET-03 avanzan. Siguiente paso: 32-02 (router GET/PUT/restore /api/v2/config)
+last_updated: "2026-08-23T18:02:04.000Z"
+last_activity: 2026-08-23 -- 32-01 cerrado: esquema declarativo de configuracion + ConfigRepo.delete(), suite completa verde
 progress:
   total_phases: 32
   completed_phases: 16
-  total_plans: 87
-  completed_plans: 78
-  percent: 90
+  total_plans: 90
+  completed_plans: 79
+  percent: 88
 ---
 
 # Project State
@@ -21,14 +21,43 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (sin planificar)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (1/8 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 31 (Vista de analítica) — COMPLETA (11/11 planes)
-Plan: 11 of 11 — 31-11 cerrada
-Status: Fase 31 cerrada; siguiente paso `/gsd:plan-phase 32`
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (1/8 planes)
+Plan: 1 of 8 — 32-01 cerrado
+Status: 32-01 cerrado; siguiente paso `/gsd:execute-phase 32` (32-02, router GET/PUT/restore)
+
+**32-01 cierra la base declarativa de toda la Fase 32.** `backend/api/v2/config_schema.py`
+(1008 líneas) describe los 112 parámetros reales de `Settings` — label en español llano,
+hint, tipo, rango, sección, aplicación en caliente y si es secreto — en las 8 secciones
+fijas del `32-UI-SPEC.md` (Cámara, Detección, Tracking, Reconocimiento, Zonas, Reglas,
+Alertas, Almacenamiento), con una subsección "Servidor" nueva dentro de Cámara para
+`host`/`port`/`cors_origins`/`ssl_*`/`dashboard_*` — discreción explícita del CONTEXT, ya
+que el UI-SPEC fija los 8 nombres de sección pero no las subsecciones. Verificado por test,
+no por inspección manual: `set(Settings.model_fields) == {f.key for f in all_fields()}` sin
+huecos ni duplicados. `resolve_origin()` resuelve la precedencia de tres vías
+(runtime/env/default, D-06) para escalares y para listas (`yolo_classes`, `schedule_days` —
+Pitfall 4 de 32-RESEARCH.md, cerrado con test parametrizado) y enmascara `camera_url` de
+forma obligatoria vía `mask_rtsp_url()` antes de que el valor salga de la función.
+`build_candidate_settings()` usa el constructor completo de `Settings` (no `model_copy`,
+que en pydantic 2.13.1 no revalida — Assumption A1 de 32-RESEARCH.md, confirmada) para
+re-ejecutar los `model_validator` cruzados (`identity_vote_window >= identity_min_votes`,
+`run_window_secs <= 12.0`, etc.) sin reimplementarlos en el futuro router de 32-02.
+`ConfigRepo.delete(key)` se añadió copiando el molde exacto de `RuleRepo.delete()`/
+`ZoneRepo.delete()`, desbloqueando OPS-20 ("Restaurar valores por defecto"). Doce campos
+quedan marcados `secret=True` (no nueve, como sugería el resumen del threat model de la
+propia PLAN.md): el detalle campo a campo de Task 2 marca también `rtsp_user`/`tapo_user`/
+`dashboard_user` como secretos, no solo sus contraseñas — documentado como decisión en el
+SUMMARY, sin desviación de comportamiento. Task 0 (verificación temprana de la Fase 31)
+encontró que `nav.js` ya existe con tres funciones exportadas
+(`registerAnalyticsBoot`/`activeView`/`initNav`) y que `frontend/index.html` ya tiene
+`role="tablist"` con las pestañas Operaciones/Analítica — el hallazgo de 32-RESEARCH.md
+("Fase 31 sin ejecutar") quedó obsoleto entre la investigación y la ejecución de este plan,
+sin impacto porque 32-01..32-06 no dependen de ese armazón. Suite completa: **689 passed, 2
+skipped** (+14 sobre el cierre de la Fase 31). Ver `32-01-SUMMARY.md`.
 
 **La Fase 31 está completa.** La vista de analítica añade un segundo tab junto a
 Operaciones: personas por hora/día con superposición del periodo anterior, ocupación
