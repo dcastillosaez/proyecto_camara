@@ -16,11 +16,13 @@ from sqlalchemy.orm import sessionmaker
 from backend.events.types import Event, EventType, Severity
 from backend.storage import models
 from backend.storage.repositories import (
+    AnalyticsRepo,
     ConfigRepo,
     DetectionStatRepo,
     EventRepo,
     RecordingRepo,
     UploadState,
+    bucket_for,
 )
 from scripts.seed_events import seed_events
 
@@ -798,3 +800,123 @@ async def TEST_datetime_storage_format_is_fixed_width_iso(db):
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}", raw_ts), raw_ts
         assert substr13 == "2026-08-22 09"
         assert substr10 == "2026-08-22"
+
+
+# --- Fase 31-04 (OPS-12/OPS-13/OPS-14): AnalyticsRepo -------------------------------
+
+
+def TEST_analytics_bucket_for_switches_at_seven_days():
+    base = datetime.datetime(2026, 1, 1)
+    assert bucket_for(base, base + datetime.timedelta(days=1)) == "hour"
+    assert bucket_for(base, base + datetime.timedelta(days=7)) == "hour"
+    assert bucket_for(base, base + datetime.timedelta(days=8)) == "day"
+    assert bucket_for(base, base + datetime.timedelta(days=30)) == "day"
+
+
+async def TEST_analytics_hourly_splits_current_and_previous(db):
+    """Dos ventanas contiguas sembradas a mano: una sola consulta cubre las dos y
+    cada fila devuelve (actual, anterior) en su bucket, nunca ambos a la vez —
+    los dos periodos caen en horas distintas por construccion."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    for _ in range(2):
+        await events.insert(make_event(
+            type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 15)))
+    for _ in range(3):
+        await events.insert(make_event(
+            type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 1, 10, 15)))
+
+    rows = await repo.hourly("cam1", cur_from, cur_to, "hour")
+    by_bucket = {b: (cur, prev) for b, cur, prev in rows}
+
+    assert by_bucket["2026-01-02 10"] == (2, 0)
+    assert by_bucket["2026-01-01 10"] == (0, 3)
+
+
+async def TEST_analytics_hourly_ignores_other_event_types(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    await events.insert(make_event(
+        type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 15)))
+    await events.insert(make_event(
+        type=EventType.INTRUSION, ts=datetime.datetime(2026, 1, 2, 10, 20)))
+
+    rows = await repo.hourly("cam1", cur_from, cur_to, "hour")
+    by_bucket = {b: (cur, prev) for b, cur, prev in rows}
+
+    assert by_bucket["2026-01-02 10"] == (1, 0)
+
+
+async def TEST_analytics_summary_returns_peak_and_min(db):
+    """GROUP BY solo devuelve cubos con >=1 evento: un cubo con 0 eventos no puede
+    aparecer en 'WITH b AS (SELECT ... GROUP BY bucket)'. El relleno a cero de
+    cubos vacios para el eje completo es responsabilidad del router (31-05), no de
+    summary() — por eso este test usa dos cubos reales, 5 y 34, que ya suman el
+    total esperado."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    for _ in range(5):
+        await events.insert(make_event(
+            type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 4, 0)))
+    for _ in range(34):
+        await events.insert(make_event(
+            type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 18, 0)))
+
+    result = await repo.summary("cam1", cur_from, cur_to, "hour")
+
+    assert result["total"] == 39
+    assert result["peak_bucket"] == "2026-01-02 18"
+    assert result["peak_value"] == 34
+    assert result["min_bucket"] == "2026-01-02 04"
+    assert result["min_value"] == 5
+
+
+async def TEST_analytics_summary_known_unknown_counts_distinct_people(db):
+    """known/unknown cuentan personas DISTINTAS, no eventos: 3 eventos de
+    person_id=1 y 2 de person_id=2 -> known==2 (dos personas), no 5 (cinco
+    eventos); 4 eventos sin identidad con dos track_id distintos -> unknown==2."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    for _ in range(3):
+        await events.insert(make_event(type=EventType.PERSON_RECOGNIZED, ts=ts, person_id=1))
+    for _ in range(2):
+        await events.insert(make_event(type=EventType.PERSON_RECOGNIZED, ts=ts, person_id=2))
+    for _ in range(2):
+        await events.insert(make_event(type=EventType.UNKNOWN_PERSON, ts=ts, track_id=101))
+    for _ in range(2):
+        await events.insert(make_event(type=EventType.UNKNOWN_PERSON, ts=ts, track_id=102))
+
+    result = await repo.summary("cam1", cur_from, cur_to, "hour")
+
+    assert result["known"] == 2
+    assert result["unknown"] == 2
+
+
+async def TEST_analytics_summary_previous_total_zero_is_not_an_error(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    await events.insert(make_event(
+        type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 0)))
+
+    result = await repo.summary("cam1", cur_from, cur_to, "hour")
+
+    assert result["total"] == 1
+    assert result["previous_total"] == 0
+    assert "percent" not in result
+    assert "change_pct" not in result

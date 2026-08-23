@@ -792,6 +792,149 @@ class RuleRepo:
         }
 
 
+BUCKET_HOUR_MAX_DAYS = 7
+
+
+def bucket_for(cur_from: datetime.datetime, cur_to: datetime.datetime) -> str:
+    """Cubo horario hasta 7 dias, diario por encima.
+
+    ES UNA DECISION DE LEGIBILIDAD, NO DE TAMANO. Medido (31-RESEARCH.md,
+    criterio 3): 30 dias en cubo horario pesan 11,3 KB con arrays paralelos y
+    hasta el rango maximo de 90 dias horarios cabe en 57,0 KB — el limite del
+    criterio son 100 KB, o sea 8,8x de margen. El umbral existe porque 720
+    barras no se leen, y porque la regla de tipo de grafica del UI-SPEC cambia
+    a linea por encima de 48 cubos. Que nadie lo "optimice" creyendo que esta
+    aqui por peso.
+    """
+    return "hour" if (cur_to - cur_from) <= datetime.timedelta(days=BUCKET_HOUR_MAX_DAYS) else "day"
+
+
+def _bucket_expr(bucket: str) -> str:
+    """substr sobre el TEXT ISO de ancho fijo — 2,3x mas rapido que strftime
+    (51,8 ms frente a 120,8 ms @100k). El formato de almacenamiento esta
+    protegido por TEST_datetime_storage_format_is_fixed_width_iso (31-01):
+    si ese test cae, hay que volver a strftime de forma explicita."""
+    return "substr(ts,1,13)" if bucket == "hour" else "substr(ts,1,10)"
+
+
+class AnalyticsRepo:
+    """Las cuatro agregaciones de la Vista de analitica (OPS-12..OPS-14), todas
+    resueltas en SQL sobre `events` — nunca `detection_stats` (ver docstring del
+    plan 31-04 para las tres razones) y nunca Python (`sorted()`/`sum()` sobre
+    filas ya traidas), que es justo lo que OPS-14 exige.
+    """
+
+    def __init__(self, session_factory) -> None:
+        self._sf = session_factory
+
+    async def hourly(
+        self,
+        camera_id: str,
+        cur_from: datetime.datetime,
+        cur_to: datetime.datetime,
+        bucket: str,
+    ) -> list[tuple[str, int, int]]:
+        """[(bucket, actual, anterior), ...] ordenado por bucket. Cubos VACIOS NO
+        aparecen: el relleno a cero lo hace el router, que es quien conoce el eje
+        completo.
+
+        Serie actual + periodo anterior en UNA consulta (50,6 ms medidos @100k
+        sobre 60 dias de rango). Nota de correccion: en cubo diario, los `b` del
+        periodo anterior y del actual son fechas DISTINTAS, asi que ninguna fila
+        lleva `cur` y `prev` a la vez — es correcto y esperado, el router empareja
+        por POSICION en el eje (cubo i del actual con cubo i del anterior), no
+        por etiqueta.
+        """
+        prev_from = cur_from - (cur_to - cur_from)
+        sql = text(f"""
+            SELECT {_bucket_expr(bucket)} AS b,
+                   SUM(CASE WHEN ts >= :cur_from THEN 1 ELSE 0 END) AS cur,
+                   SUM(CASE WHEN ts <  :cur_from THEN 1 ELSE 0 END) AS prev
+              FROM events
+             WHERE camera_id = :cam AND ts >= :prev_from AND ts < :cur_to
+               AND type = :etype
+             GROUP BY b ORDER BY b
+        """)
+        params = {
+            "cam": camera_id, "cur_from": cur_from, "cur_to": cur_to,
+            "prev_from": prev_from, "etype": EventType.LINE_CROSSED.value,
+        }
+        async with self._sf() as session:
+            rows = (await session.execute(sql, params)).all()
+        return [(row.b, int(row.cur or 0), int(row.prev or 0)) for row in rows]
+
+    async def summary(
+        self,
+        camera_id: str,
+        cur_from: datetime.datetime,
+        cur_to: datetime.datetime,
+        bucket: str,
+    ) -> dict:
+        """{'total', 'previous_total', 'peak_bucket', 'peak_value', 'min_bucket',
+        'min_value', 'known', 'unknown'}.
+
+        `known`/`unknown` cuentan PERSONAS DISTINTAS del periodo actual, no
+        eventos (decision cerrada del research, pregunta A6 de 31-RESEARCH.md):
+        "342 conocidas" leido como eventos es una cifra enorme y poco intuitiva;
+        leido como personas es 12, que es lo que la etiqueta sugiere en
+        castellano. Y SIN filtro de tipo: `person_id` se escribe en eventos de
+        identidad, no en los `LINE_CROSSED`, asi que filtrar por tipo devolveria
+        siempre cero.
+
+        Si `total` sale `None` (rango sin eventos) se devuelve `0`; si no hay
+        cubos, `peak_bucket`/`min_bucket` van a `None` y sus valores a `0`.
+        """
+        prev_from = cur_from - (cur_to - cur_from)
+        etype = EventType.LINE_CROSSED.value
+        bucket_expr = _bucket_expr(bucket)
+
+        totals_sql = text(f"""
+            WITH b AS (
+              SELECT {bucket_expr} AS bucket, COUNT(*) AS n
+                FROM events
+               WHERE camera_id = :cam AND ts >= :cur_from AND ts < :cur_to AND type = :etype
+               GROUP BY bucket
+            )
+            SELECT (SELECT SUM(n) FROM b) AS total,
+                   (SELECT bucket FROM b ORDER BY n DESC, bucket ASC LIMIT 1) AS peak_bucket,
+                   (SELECT MAX(n)  FROM b) AS peak_value,
+                   (SELECT bucket FROM b ORDER BY n ASC,  bucket ASC LIMIT 1) AS min_bucket,
+                   (SELECT MIN(n)  FROM b) AS min_value
+        """)
+        window_sql = text("""
+            SELECT SUM(CASE WHEN ts >= :cur_from THEN 1 ELSE 0 END) AS cur,
+                   SUM(CASE WHEN ts <  :cur_from THEN 1 ELSE 0 END) AS prev
+              FROM events
+             WHERE camera_id = :cam AND ts >= :prev_from AND ts < :cur_to AND type = :etype
+        """)
+        identity_sql = text("""
+            SELECT COUNT(DISTINCT person_id) AS known,
+                   COUNT(DISTINCT CASE WHEN person_id IS NULL THEN track_id END) AS unknown
+              FROM events
+             WHERE camera_id = :cam AND ts >= :cur_from AND ts < :cur_to
+        """)
+        params = {
+            "cam": camera_id, "cur_from": cur_from, "cur_to": cur_to,
+            "prev_from": prev_from, "etype": etype,
+        }
+
+        async with self._sf() as session:
+            totals = (await session.execute(totals_sql, params)).one()
+            window = (await session.execute(window_sql, params)).one()
+            identity = (await session.execute(identity_sql, params)).one()
+
+        return {
+            "total": int(totals.total or 0),
+            "previous_total": int(window.prev or 0),
+            "peak_bucket": totals.peak_bucket,
+            "peak_value": int(totals.peak_value or 0),
+            "min_bucket": totals.min_bucket,
+            "min_value": int(totals.min_value or 0),
+            "known": int(identity.known or 0),
+            "unknown": int(identity.unknown or 0),
+        }
+
+
 class ConfigRepo:
     def __init__(self, session_factory) -> None:
         self._sf = session_factory
