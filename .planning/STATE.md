@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Completada 31-06-PLAN.md
-last_updated: "2026-08-23T14:44:53.257Z"
+stopped_at: Completada 31-07-PLAN.md
+last_updated: "2026-08-23T15:20:00.000Z"
 last_activity: 2026-08-23
 progress:
   total_phases: 32
   completed_phases: 15
   total_plans: 87
-  completed_plans: 73
-  percent: 84
+  completed_plans: 74
+  percent: 85
 ---
 
 # Project State
@@ -27,8 +27,20 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 31 (Vista de analitica) — EXECUTING
-Plan: 7 of 11
+Plan: 8 of 11
 Status: Ready to execute
+
+**31-07 escribio las dos graficas de Chart.js de la vista.**
+`frontend/js/views/analytics-charts.js` (168 lineas, nuevo) expone
+`createCharts`/`renderHourly`/`renderOccupancy`/`setCompare`/`resizeCharts`:
+instancias creadas bajo demanda en la primera activacion de la pestana
+(D-03, aun sin cablear — eso es 31-10), tipo de grafica/pico/comparacion
+resueltos enteramente por el servidor de 31-05 (cero `.reduce()`/`.sort()`/
+`.filter()`/`Math.max()`/`Math.min()`, verificado por lectura literal
+incluidos los comentarios) y resumen accesible regenerado en cada carga
+sobre el `aria-label` de cada `<canvas>`. Suite dirigida verde
+(`tests/test_frontend_modules.py` 8 passed); no toca pipeline/API/config,
+asi que no se relanzo la suite completa. Siguiente: 31-08 (rango y ranking).
 
 **31-05 expone esas agregaciones por HTTP.** Nuevo router
 `backend/api/v2/analytics.py` con `GET /hourly`, `/summary`, `/occupancy` y
