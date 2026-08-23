@@ -96,6 +96,158 @@ def _section_fields_payload(section, overrides: dict[str, Any], settings: Any) -
     ]
 
 
+class ConfigPutIn(BaseModel):
+    section: str
+    changes: dict[str, Any]
+
+
+def _validate_range(field: FieldDef, value: Any) -> str | None:
+    """Comprueba tipo/rango/enum de un valor contra su FieldDef, sin reinventar rangos:
+    usa exactamente field.min/field.max/field.enum_values/field.max_length del esquema."""
+    if field.type == "bool":
+        if not isinstance(value, bool):
+            return "Debe ser verdadero o falso."
+        return None
+
+    if field.type == "int":
+        if not isinstance(value, int) or isinstance(value, bool):
+            return "Debe ser un número entero."
+    elif field.type == "float":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return "Debe ser un número."
+    elif field.type == "enum":
+        if field.enum_values is not None and value not in field.enum_values:
+            return f"Debe ser uno de: {', '.join(field.enum_values)}."
+        return None
+    elif field.type in ("list_int", "list_str"):
+        if not isinstance(value, list):
+            return "Debe ser una lista."
+        item_type = int if field.type == "list_int" else str
+        if not all(isinstance(v, item_type) and not isinstance(v, bool) for v in value):
+            return "Todos los elementos de la lista deben tener el tipo correcto."
+        return None
+    elif field.type == "time":
+        import re
+        if not isinstance(value, str) or not re.fullmatch(r"\d{2}:\d{2}", value):
+            return "Debe tener formato HH:MM."
+        return None
+    else:  # "str"
+        if not isinstance(value, str):
+            return "Debe ser una cadena de texto."
+        if field.max_length is not None and len(value) > field.max_length:
+            return f"No puede superar los {field.max_length} caracteres."
+        return None
+
+    if field.min is not None and field.max is not None:
+        if not field.min <= value <= field.max:
+            return f"Debe estar entre {field.min} y {field.max}."
+    elif field.min is not None and value < field.min:
+        return f"Debe ser mayor o igual que {field.min}."
+    elif field.max is not None and value > field.max:
+        return f"Debe ser menor o igual que {field.max}."
+    return None
+
+
+def _validate_yolo_classes(ids: Any) -> str | None:
+    """Reutiliza LITERALMENTE las 4 comprobaciones de detection.py:88-105 — no una
+    redaccion paralela que pudiera divergir (T-32-10)."""
+    if not isinstance(ids, list):
+        return "Debe ser una lista de números enteros."
+    if not ids:
+        return (
+            "La lista de clases no puede estar vacia: con classes=[] el detector "
+            "devuelve 0 detecciones y el sistema se queda ciego en silencio, sin "
+            "errores ni logs."
+        )
+    if any(not isinstance(c, int) or isinstance(c, bool) or not 0 <= c <= 79 for c in ids):
+        return "Cada clase debe ser un id COCO entre 0 y 79."
+    if len(set(ids)) != len(ids):
+        return "La lista de clases no puede tener duplicados."
+    if 0 not in ids:
+        return (
+            "La clase 'person' (0) no se puede desactivar: sin ella dejarian de "
+            "funcionar el conteo de linea, el reconocimiento facial, la "
+            "re-identificacion y los eventos de comportamiento."
+        )
+    return None
+
+
+@router.put("")
+@limiter.limit(V2_RATE_LIMIT)
+async def put_config(request: Request, body: ConfigPutIn) -> dict[str, Any]:
+    section = next((s for s in ALL_SECTIONS if s.key == body.section), None)
+    if section is None:
+        raise HTTPException(404, detail=f"Sección desconocida: {body.section}")
+
+    errors: list[dict[str, str]] = []
+    valid_changes: dict[str, Any] = {}
+    for key, value in body.changes.items():
+        f = field_by_key(key)
+        if f is None:
+            errors.append({"field": key, "message": "Campo desconocido."})
+            continue
+        if f.secret or f.readonly:
+            errors.append({
+                "field": key,
+                "message": "Este campo no es editable desde la interfaz.",
+            })
+            continue
+        per_field_error = (
+            _validate_yolo_classes(value) if key == "yolo_classes"
+            else _validate_range(f, value)
+        )
+        if per_field_error:
+            errors.append({"field": key, "message": per_field_error})
+            continue
+        valid_changes[key] = value
+
+    settings = get_settings()
+    overrides = await _config_repo().get_all()
+    if valid_changes:
+        try:
+            build_candidate_settings(settings, overrides, valid_changes)
+        except ValidationError as e:
+            for err in e.errors():
+                fkey = str(err["loc"][0]) if err["loc"] else body.section
+                msg = err["msg"]
+                if not any(x["field"] == fkey for x in errors):
+                    errors.append({"field": fkey, "message": msg})
+                # Si el campo cruzado no estaba en valid_changes, sacarlo igualmente
+                # para no dejar una mitad invalida a medio persistir.
+                valid_changes.pop(fkey, None)
+
+    if errors:
+        raise HTTPException(422, detail={"errors": errors})
+
+    diff: dict[str, dict[str, Any]] = {}
+    requires_restart: list[str] = []
+    for key, value in valid_changes.items():
+        f = field_by_key(key)
+        before = overrides[key] if key in overrides else getattr(settings, key)
+        await _config_repo().set(key, value)     # PERSISTIR ANTES DE PROPAGAR
+        diff[key] = {"before": before, "after": value}
+        if f.applies != "hot":
+            requires_restart.append(key)
+
+    if _camera_manager is not None:
+        for pipeline in _camera_manager.all():
+            if "yolo_classes" in valid_changes:
+                pipeline.set_detection_classes(list(valid_changes["yolo_classes"]))
+            if "process_width" in valid_changes or "process_height" in valid_changes:
+                w = valid_changes.get(
+                    "process_width", overrides.get("process_width", settings.process_width))
+                h = valid_changes.get(
+                    "process_height", overrides.get("process_height", settings.process_height))
+                pipeline.set_process_size(int(w), int(h))
+
+    if _event_engine is not None and diff:
+        _event_engine.config_changed(datetime.datetime.now(), section=body.section, diff=diff)
+
+    fresh_overrides = await _config_repo().get_all()
+    fields = _section_fields_payload(section, fresh_overrides, get_settings())
+    return {"section": body.section, "fields": fields, "requires_restart": requires_restart}
+
+
 @router.get("")
 @limiter.limit(V2_RATE_LIMIT)
 async def get_config(request: Request) -> dict[str, Any]:
