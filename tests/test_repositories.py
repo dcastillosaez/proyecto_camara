@@ -530,6 +530,26 @@ async def TEST_config_repo_roundtrip_list(db):
     assert await repo.get("does_not_exist", default=[0]) == [0]
 
 
+async def TEST_config_repo_delete_removes_existing_key(db):
+    _, sf = db
+    repo = ConfigRepo(sf)
+    await repo.set("yolo_confidence", 0.9)
+
+    removed = await repo.delete("yolo_confidence")
+
+    assert removed is True
+    assert await repo.get("yolo_confidence", default=0.45) == 0.45
+
+
+async def TEST_config_repo_delete_missing_key_returns_false(db):
+    _, sf = db
+    repo = ConfigRepo(sf)
+
+    removed = await repo.delete("never_written_key")
+
+    assert removed is False
+
+
 async def TEST_count_since_and_hourly_counts(db):
     _, sf = db
     repo = EventRepo(sf)
