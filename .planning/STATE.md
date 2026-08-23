@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Completada 31-10-PLAN.md
-last_updated: "2026-08-23T16:20:00.000Z"
+stopped_at: 31-11-PLAN.md Tasks 1-2 completadas, Task 3 (checkpoint visual bloqueante) pendiente
+last_updated: "2026-08-23T18:00:00.000Z"
 last_activity: 2026-08-23
 progress:
   total_phases: 32
@@ -28,7 +28,26 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 31 (Vista de analitica) — EXECUTING
 Plan: 11 of 11
-Status: Ready to execute
+Status: Tasks 1-2 completadas, checkpoint visual (Task 3, bloqueante) pendiente de verificacion humana
+
+**31-11 (puerta de fase, parcial) ampliо el contrato mecanico y midio los criterios 3 y 4
+con numeros reales.** `LOCKED_JS` incorpora los seis modulos de la vista (`nav.js` +
+cinco `views/analytics*.js`) y `TEST_analytics_no_client_aggregation` barre esos mismos
+ficheros buscando `.reduce(`/`.sort(`/`.filter(`/`Math.max(`/`Math.min(` — encontro y
+forzo la correccion de un incumplimiento real: el propio comentario de cabecera de
+`analytics-ranking.js` citaba esas expresiones al explicar que no las usaba. Criterio 4
+(presupuesto 500 ms @100k): `hourly` ~228-241 ms, `summary` ~346 ms, `occupancy` ~13-15
+ms, `persons_ranking` ~13-14 ms — los cuatro por debajo del presupuesto, con menos margen
+que lo estimado en 31-RESEARCH.md porque la medicion compartio maquina con el servidor de
+desarrollo ya en marcha para el checkpoint. Criterio 3 (presupuesto 100 KB): 565 bytes
+(`/hourly` 30 dias), 3210 bytes (`/hourly` 7 dias), 1147 bytes (`/export json`). Migracion
+v3→v4 verificada sobre el backup automatico real que `run_migrations()` genero hoy mismo
+antes de migrar `data/events.db` (1037 filas antes y despues, `idx_events_analytics`
+aparece, `schema_version` pasa a 4) — no una base sintetica de test. Suite completa:
+**675 passed, 2 skipped** (+68 sobre la Fase 30). Queda pendiente la Task 3: checkpoint
+visual bloqueante con el servidor real (ya en marcha en este entorno) contra
+`http://localhost:8000/#analitica`. OPS-12..OPS-15 y el cierre formal de la fase esperan
+a esa aprobacion. Ver `31-11-SUMMARY.md` (parcial).
 
 **31-10 cerro el orquestador: `analytics.js` y `analytics-export.js` cablean por
 primera vez el andamiaje de 31-03, las graficas de 31-07, el rango/ranking de 31-08
