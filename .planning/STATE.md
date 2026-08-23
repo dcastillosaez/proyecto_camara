@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Completada 31-04-PLAN.md
-last_updated: "2026-08-23T11:25:00.000Z"
+stopped_at: Completada 31-05-PLAN.md
+last_updated: "2026-08-23T11:36:57.770Z"
 last_activity: 2026-08-23
 progress:
   total_phases: 32
   completed_phases: 15
   total_plans: 87
-  completed_plans: 71
-  percent: 82
+  completed_plans: 72
+  percent: 83
 ---
 
 # Project State
@@ -27,8 +27,18 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 31 (Vista de analitica) — EXECUTING
-Plan: 5 of 11
+Plan: 6 of 11
 Status: Ready to execute
+
+**31-05 expone esas agregaciones por HTTP.** Nuevo router
+`backend/api/v2/analytics.py` con `GET /hourly`, `/summary`, `/occupancy` y
+`/persons`, montado desde el lifespan igual que el resto de routers v2. Los
+nombres de persona en `/persons` se resuelven con
+`asyncio.to_thread(recognizer.list_persons)` — nunca `ATTACH DATABASE` contra
+`persons.db` desde el event loop. Peso real medido para el criterio 3: 565
+bytes (`/hourly` 30 días, cubo diario) y 3210 bytes (`/hourly` 7 días, cubo
+horario) — muy por debajo del límite de 100 KB. Suite completa: 658 passed, 2
+skipped. Siguiente: 31-06 (heatmap v2, `/heatmap` y `/heatmap/scale`).
 
 **31-04 puso las cuatro agregaciones de la fase en SQL.** `AnalyticsRepo`
 (`backend/storage/repositories.py`) expone `hourly()`, `summary()`,

@@ -601,7 +601,7 @@ Plans:
 - [x] 31-02-PLAN.md — Heatmap a INFERNO y `DetectionWorker.heatmap_scale()` (OPS-12)
 - [x] 31-03-PLAN.md — Andamiaje de la segunda vista: tablist, retícula, marcado de analítica y `nav.js` (OPS-12, OPS-13, OPS-15)
 - [x] 31-04-PLAN.md — `AnalyticsRepo`: serie, resumen, ocupación y ranking resueltos en SQL y medidos @100k (OPS-12..14)
-- [ ] 31-05-PLAN.md — Router `/api/v2/analytics`: summary, hourly, occupancy, persons y criterio 3 (OPS-12..14)
+- [x] 31-05-PLAN.md — Router `/api/v2/analytics`: summary, hourly, occupancy, persons y criterio 3 (OPS-12..14)
 - [ ] 31-06-PLAN.md — Heatmap v2: `/heatmap` y `/heatmap/scale`, con 404 y 503 distintos (OPS-12)
 - [ ] 31-07-PLAN.md — `analytics-charts.js`: las dos gráficas, activación diferida y resumen accesible (OPS-12, OPS-14)
 - [ ] 31-08-PLAN.md — `analytics-range.js` y `analytics-ranking.js`: rango, tarjetas de tendencia y ranking (OPS-13, OPS-14)
