@@ -1058,3 +1058,147 @@ async def TEST_analytics_person_avatars_returns_latest_capture(db):
     avatars = await repo.person_avatars([1])
 
     assert avatars == {1: "/gallery/1/new.jpg"}
+
+
+# --- Criterio 4 de la Fase 31: las cuatro agregaciones @100k con identidad/zona ----
+#
+# 0,5s es el presupuesto literal del ROADMAP. Medido en 31-RESEARCH.md: 14-78 ms con
+# idx_events_analytics presente (6x-35x de margen), 535-618 ms si el indice desaparece
+# -- suficiente margen para no ser flaky y suficiente sensibilidad para detectar la
+# regresion real.
+_ANALYTICS_BUDGET_SECS = 0.5
+
+
+def _analytics_repo(db_file) -> tuple:
+    """Motor propio sobre la base ya sembrada, para no medir el fixture (mismo
+    patron que _perf_repo)."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+    sf = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, AnalyticsRepo(sf)
+
+
+async def TEST_analytics_budget_hourly_100k(db):
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        start = time.perf_counter()
+        await repo.hourly("cam1", cur_from, cur_to, "hour")
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert elapsed < _ANALYTICS_BUDGET_SECS, (
+        f"hourly tardo {elapsed:.3f}s, presupuesto {_ANALYTICS_BUDGET_SECS}s")
+
+
+async def TEST_analytics_budget_summary_100k(db):
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        start = time.perf_counter()
+        await repo.summary("cam1", cur_from, cur_to, "hour")
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert elapsed < _ANALYTICS_BUDGET_SECS, (
+        f"summary tardo {elapsed:.3f}s, presupuesto {_ANALYTICS_BUDGET_SECS}s")
+
+
+async def TEST_analytics_budget_occupancy_100k(db):
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        start = time.perf_counter()
+        await repo.occupancy("cam1", cur_from, cur_to)
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert elapsed < _ANALYTICS_BUDGET_SECS, (
+        f"occupancy tardo {elapsed:.3f}s, presupuesto {_ANALYTICS_BUDGET_SECS}s")
+
+
+async def TEST_analytics_budget_persons_ranking_100k(db):
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        start = time.perf_counter()
+        await repo.persons_ranking("cam1", cur_from, cur_to)
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert elapsed < _ANALYTICS_BUDGET_SECS, (
+        f"persons_ranking tardo {elapsed:.3f}s, presupuesto {_ANALYTICS_BUDGET_SECS}s")
+
+
+async def TEST_analytics_budget_ranking_sees_seeded_persons(db):
+    """Sin esto, si seed_events volviera a dejar person_id a NULL, el test de
+    presupuesto mediria sobre datos vacios y pasaria por accidente."""
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        ranking = await repo.persons_ranking("cam1", cur_from, cur_to)
+    finally:
+        await engine.dispose()
+
+    assert len(ranking) == 10
+    assert sum(cur for _, cur, _ in ranking) > 0
+
+
+async def TEST_analytics_budget_occupancy_sees_seeded_zones(db):
+    """Misma guarda que la anterior, para ocupacion: sin zone_id sembrado, el
+    presupuesto mediria sobre una lista vacia y pasaria por accidente."""
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        zones, total_zones = await repo.occupancy("cam1", cur_from, cur_to)
+    finally:
+        await engine.dispose()
+
+    assert len(zones) == 10
+    assert total_zones == 14
+
+
+async def TEST_analytics_budget_ranking_uses_analytics_index(db):
+    """Guarda temprana del hint: si SQLite deja de usar idx_events_analytics en el
+    ranking, este test lo detecta antes que un presupuesto @100k que se
+    degradaria de forma silenciosa (26,7 ms -> 212,6 ms, sigue bajo los 500 ms
+    del criterio 4 -- no habria fallado el test de presupuesto)."""
+    db_file, _ = db
+    sql = (
+        "EXPLAIN QUERY PLAN "
+        "SELECT person_id, "
+        "SUM(CASE WHEN ts >= '2026-01-08 00:00:00' THEN 1 ELSE 0 END) AS cur, "
+        "SUM(CASE WHEN ts <  '2026-01-08 00:00:00' THEN 1 ELSE 0 END) AS prev "
+        "FROM events INDEXED BY idx_events_analytics "
+        "WHERE camera_id = 'cam1' AND ts >= '2026-01-01 00:00:00' AND ts < '2026-01-15 00:00:00' "
+        "AND person_id IS NOT NULL "
+        "GROUP BY person_id HAVING cur > 0 ORDER BY cur DESC LIMIT 10"
+    )
+    conn = sqlite3.connect(db_file)
+    try:
+        plan = " ".join(str(row) for row in conn.execute(sql))
+    finally:
+        conn.close()
+
+    assert "idx_events_analytics" in plan, plan
