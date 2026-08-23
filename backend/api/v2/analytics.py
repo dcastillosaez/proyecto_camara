@@ -1,0 +1,181 @@
+"""API v2 — agregaciones de la Vista de analitica: /summary, /hourly, /occupancy
+y /persons (Fase 31, OPS-12..OPS-14).
+
+Auth y rate limiting: la app aplica auth globalmente
+(FastAPI(dependencies=[Depends(verify)])), asi que los routers incluidos con
+app.include_router() la heredan automaticamente. El rate limit (SEC-16) usa el
+limiter/valor compartidos de backend/api/v2/deps.py.
+
+Este router SI devuelve `person_id` y nombre en /persons, a diferencia de
+/context (Fase 27), que es de solo recuentos. Es una diferencia deliberada:
+OPS-13 pide explicitamente un ranking de personas con nombre, y se deja
+escrita aqui para que nadie la lea como una fuga de identidad (T-31-18).
+
+Todas las agregaciones vienen resueltas de SQL (AnalyticsRepo, 31-04): este
+router SOLO formatea, rellena el eje a cero y calcula porcentajes de
+variacion sobre totales que ya trajo la base — nunca vuelve a agregar sobre
+filas ya traidas (OPS-14).
+
+El heatmap (/heatmap, /heatmap/scale) NO vive aqui: lo anade 31-06 sobre este
+mismo fichero. El export (/export) tampoco: lo anade 31-09.
+"""
+
+from __future__ import annotations
+
+import datetime
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query, Request
+
+from backend.api.v2.deps import V2_RATE_LIMIT, limiter
+from backend.database import get_session_factory
+from backend.storage.repositories import AnalyticsRepo, bucket_for
+
+router = APIRouter(prefix="/api/v2/analytics", tags=["analytics"])
+
+_camera_manager: Any = None
+
+MAX_RANGE_DAYS = 90
+_MESES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def configure(camera_manager: Any) -> None:
+    """Wire the live CameraManager instance. Called once from main.py's lifespan."""
+    global _camera_manager
+    _camera_manager = camera_manager
+
+
+def _repo() -> AnalyticsRepo:
+    return AnalyticsRepo(get_session_factory())
+
+
+def _resolve_range(
+    from_: datetime.date, to_: datetime.date
+) -> tuple[datetime.datetime, datetime.datetime, int]:
+    """Rango inclusivo del cliente -> ventana semiabierta [cur_from, cur_to).
+
+    Las dos cadenas de error son literales de la tabla de copy del UI-SPEC: el
+    cliente valida lo mismo antes de pedir nada, pero la autoridad es esta.
+    """
+    if to_ < from_:
+        raise HTTPException(status_code=422, detail="La fecha «Hasta» debe ser posterior a «Desde».")
+    span_days = (to_ - from_).days + 1
+    if span_days > MAX_RANGE_DAYS:
+        raise HTTPException(status_code=422, detail="El rango máximo es de 90 días.")
+    cur_from = datetime.datetime.combine(from_, datetime.time.min)
+    cur_to = datetime.datetime.combine(to_ + datetime.timedelta(days=1), datetime.time.min)
+    return cur_from, cur_to, span_days
+
+
+def _label(dt: datetime.datetime, bucket: str, span_days: int) -> str:
+    if bucket == "day":
+        return f"{dt.day} {_MESES[dt.month - 1]}"
+    if span_days <= 1:
+        return f"{dt.hour:02d}:00"
+    return f"{dt.day} {_MESES[dt.month - 1]} {dt.hour:02d}:00"
+
+
+def _axis(start: datetime.datetime, end: datetime.datetime, bucket: str) -> list[datetime.datetime]:
+    """Eje completo de cubos [start, end), paso de 1 hora o de 1 dia."""
+    step = datetime.timedelta(hours=1) if bucket == "hour" else datetime.timedelta(days=1)
+    out, cur = [], start
+    while cur < end:
+        out.append(cur)
+        cur += step
+    return out
+
+
+def _key(dt: datetime.datetime, bucket: str) -> str:
+    """Misma forma que devuelve substr(ts,1,13|10) en AnalyticsRepo."""
+    return dt.strftime("%Y-%m-%d %H") if bucket == "hour" else dt.strftime("%Y-%m-%d")
+
+
+def _parse_bucket_key(key: str, bucket: str) -> datetime.datetime:
+    """Inverso de _key(): reconstruye el datetime desde la clave de cubo del repo."""
+    fmt = "%Y-%m-%d %H" if bucket == "hour" else "%Y-%m-%d"
+    return datetime.datetime.strptime(key, fmt)
+
+
+@router.get("/hourly")
+@limiter.limit(V2_RATE_LIMIT)
+async def get_hourly(
+    request: Request,
+    camera_id: str = Query(default="cam1"),
+    from_: datetime.date = Query(alias="from"),
+    to_: datetime.date = Query(alias="to"),
+) -> dict[str, Any]:
+    cur_from, cur_to, span_days = _resolve_range(from_, to_)
+    bucket = bucket_for(cur_from, cur_to)
+
+    rows = await _repo().hourly(camera_id, cur_from, cur_to, bucket)
+    by_key = {b: (cur, prev) for b, cur, prev in rows}
+
+    cur_axis = _axis(cur_from, cur_to, bucket)
+    # mismo span, mismo paso -> misma longitud que cur_axis por construccion
+    prev_axis = _axis(cur_from - (cur_to - cur_from), cur_from, bucket)
+
+    values = [by_key.get(_key(d, bucket), (0, 0))[0] for d in cur_axis]
+    previous = [by_key.get(_key(d, bucket), (0, 0))[1] for d in prev_axis]
+    labels = [_label(d, bucket, span_days) for d in cur_axis]
+
+    total = sum(values)
+    # en empate gana el indice mas bajo: coincide con ORDER BY n DESC, bucket ASC del repo
+    peak_index = max(range(len(values)), key=values.__getitem__) if total else None
+    min_index = min(range(len(values)), key=values.__getitem__) if total else None
+    has_previous = any(previous)
+    chart = "bar" if len(labels) <= 48 else "line"
+
+    return {
+        "range": {"from": from_.isoformat(), "to": to_.isoformat(), "bucket": bucket, "days": span_days},
+        "labels": labels,
+        "values": values,
+        "previous": previous,
+        "total": total,
+        "peak_index": peak_index,
+        "min_index": min_index,
+        "has_previous": has_previous,
+        "chart": chart,
+    }
+
+
+@router.get("/summary")
+@limiter.limit(V2_RATE_LIMIT)
+async def get_summary(
+    request: Request,
+    camera_id: str = Query(default="cam1"),
+    from_: datetime.date = Query(alias="from"),
+    to_: datetime.date = Query(alias="to"),
+) -> dict[str, Any]:
+    cur_from, cur_to, span_days = _resolve_range(from_, to_)
+    bucket = bucket_for(cur_from, cur_to)
+
+    data = await _repo().summary(camera_id, cur_from, cur_to, bucket)
+
+    total = data["total"]
+    previous_total = data["previous_total"]
+    delta_pct = None if not previous_total else round((total - previous_total) * 100 / previous_total)
+
+    peak = None
+    if data["peak_bucket"] is not None:
+        peak_dt = _parse_bucket_key(data["peak_bucket"], bucket)
+        peak = {"label": _label(peak_dt, bucket, span_days), "value": data["peak_value"]}
+
+    min_ = None
+    if data["min_bucket"] is not None:
+        min_dt = _parse_bucket_key(data["min_bucket"], bucket)
+        min_ = {"label": _label(min_dt, bucket, span_days), "value": data["min_value"]}
+
+    previous_from = from_ - datetime.timedelta(days=span_days)
+    previous_to = from_ - datetime.timedelta(days=1)
+
+    return {
+        "range": {"from": from_.isoformat(), "to": to_.isoformat(), "bucket": bucket, "days": span_days},
+        "previous_range": {"from": previous_from.isoformat(), "to": previous_to.isoformat()},
+        "total": total,
+        "previous_total": previous_total,
+        "delta_pct": delta_pct,
+        "peak": peak,
+        "min": min_,
+        "known": data["known"],
+        "unknown": data["unknown"],
+    }
