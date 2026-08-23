@@ -320,6 +320,41 @@ def test_heatmap_accumulates_and_renders():
     assert heat[380:420, 620:660].any()   # hay calor alrededor de los pies
 
 
+# ─── D-13: heatmap_scale() expone pico/media sin sacar la mascara del proceso ─
+def TEST_heatmap_scale_returns_none_without_mask():
+    worker = _worker_for_zones()
+    assert worker._heat_mask is None
+    assert worker.heatmap_scale() is None
+
+
+def TEST_heatmap_scale_returns_none_when_peak_is_zero():
+    worker = _worker_for_zones()
+    worker._heat_mask = np.zeros((10, 10), dtype=np.float32)
+    assert worker.heatmap_scale() is None
+
+
+def TEST_heatmap_scale_returns_peak_and_mean():
+    worker = _worker_for_zones()
+    worker._heat_mask = np.full((2, 2), 8.0, dtype=np.float32)
+    assert worker.heatmap_scale() == pytest.approx({"peak": 8.0, "mean": 8.0})
+
+
+def TEST_compose_heatmap_uses_inferno_colormap():
+    """Guarda del cambio de rampa D-13: parcheamos cv2.applyColorMap porque el
+    montaje de worker de este fichero ya permite llamar a compose_heatmap con
+    un frame sintetico (ver test_heatmap_accumulates_and_renders)."""
+    from unittest.mock import patch
+    import cv2
+
+    worker = _worker_for_zones()
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    worker._update_zones_and_heat(_tracked_at([[600, 100, 680, 400]], [1]), frame.shape)
+
+    with patch("cv2.applyColorMap", wraps=cv2.applyColorMap) as mock_apply:
+        worker.compose_heatmap(frame)
+        assert mock_apply.call_args[0][1] == cv2.COLORMAP_INFERNO
+
+
 # ─── D-05: frame_ids() se publica exista o no event_engine ──────────────────
 # Sin esto, la construccion por defecto de DetectionWorker (event_engine=None,
 # la que usa la mayoria de tests de este fichero y CameraPipeline si no se
