@@ -5,8 +5,8 @@
 // nodos VACIOS, todo dato del servidor entra despues por textContent. El nombre de una
 // persona lo escribe el operador — interpolarlo en la plantilla seria XSS almacenado
 // (D-15, contraejemplo real en personGallery.js:28 que este modulo no puede copiar).
-// Todo lo pintado aqui ya viene resuelto por el servidor (31-05): cero .reduce()/.sort()/
-// .filter()/Math.max() (OPS-14).
+// Todo lo pintado aqui ya viene resuelto por el servidor (31-05): sin agregacion ni
+// reordenacion en el navegador (OPS-14).
 
 import { isSafeMediaUrl } from './timeline-row.js';
 

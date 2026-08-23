@@ -10,6 +10,14 @@ La Fase 30 anade al contrato los modulos de la linea temporal (views/timeline*.j
 centro de alertas (components/alertCenter.js): mismo limite de 300 lineas, misma exigencia
 de existir en disco.
 
+La Fase 31 anade el conmutador de vistas (nav.js) y los cinco modulos de la vista de
+analitica (views/analytics*.js) al mismo contrato mecanico. Ademas incorpora una comprobacion
+que no es mecanica sino de politica: la prohibicion de agregar en el navegador (OPS-14/D-07).
+No hay framework de test JS que ejecute esos modulos, asi que se verifica por `grep` sobre el
+codigo fuente — igual de auditable, sin depender de instalar nada nuevo — buscando las llamadas
+que resolverian en cliente un dato que el servidor de 31-04/31-05 ya entrega calculado
+(porcentaje de variacion, hora pico, orden del ranking, orden de zonas).
+
 La mayoria de estos tests estan en rojo hasta que 28-08-PLAN.md termina la fase: es el estado
 esperado mientras 28-02..28-07 van creando los modulos uno a uno.
 """
@@ -43,6 +51,13 @@ LOCKED_JS = [
     "views/timeline-filters.js",
     "components/alertCenter.js",
     "components/markPerson.js",
+    # Fase 31: conmutador de vistas y modulos de la vista de analitica.
+    "nav.js",
+    "views/analytics.js",
+    "views/analytics-charts.js",
+    "views/analytics-range.js",
+    "views/analytics-ranking.js",
+    "views/analytics-export.js",
 ]
 
 
@@ -104,3 +119,31 @@ def TEST_root_serves_index_html():
     res = client.get("/")
     assert res.status_code == 200
     assert "text/html" in res.headers["content-type"]
+
+
+ANALYTICS_JS = [
+    "nav.js",
+    "views/analytics.js",
+    "views/analytics-charts.js",
+    "views/analytics-range.js",
+    "views/analytics-ranking.js",
+    "views/analytics-export.js",
+]
+
+# OPS-14 / D-07: las agregaciones se calculan en la base de datos, no en el navegador.
+# El porcentaje de variacion, la hora pico, el orden del ranking y el orden de las zonas
+# llegan ya resueltos del servidor; en el cliente solo se permite aritmetica de FORMATO
+# (separador de millares, simbolo de porcentaje, padStart de horas).
+_FORBIDDEN = re.compile(r"\.reduce\(|\.sort\(|\.filter\(|Math\.max\(|Math\.min\(")
+
+
+def TEST_analytics_no_client_aggregation():
+    offenders = []
+    for rel in ANALYTICS_JS:
+        path = FRONTEND / "js" / rel
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if _FORBIDDEN.search(line):
+                offenders.append(f"{rel}:{i}: {line.strip()}")
+    assert not offenders, (
+        "OPS-14: agregacion en el navegador. Estos datos los resuelve el servidor "
+        f"(ver 31-05: peak_index, chart, has_previous, truncated):\n" + "\n".join(offenders))
