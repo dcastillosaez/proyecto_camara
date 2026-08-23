@@ -76,6 +76,20 @@ export function createCharts() {
       },
     },
   });
+
+  occupancyChart = new Chart($('an-chart-occupancy').getContext('2d'), {
+    type: 'bar',
+    indexAxis: 'y',
+    data: { labels: [], datasets: [{ label: 'Ocupacion', data: [], borderWidth: 0 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 300 },
+      plugins: { legend: { display: false }, tooltip: { ..._TOOLTIP_BASE } },
+      scales: {
+        x: { ..._AXIS_BASE, min: 0, ticks: { color: TICK, font: { size: TICK_SIZE }, precision: 0, maxTicksLimit: 4 } },
+        y: { ..._AXIS_BASE, ticks: { color: TICK, font: { size: TICK_SIZE } } },
+      },
+    },
+  });
 }
 
 export function renderHourly(data) {
@@ -113,9 +127,42 @@ export function renderHourly(data) {
   hourlyChart.update();
 }
 
+export function renderOccupancy(data) {
+  if (!occupancyChart) return;
+  const ds = occupancyChart.data.datasets[0];
+  const n = data.labels.length;
+
+  // Opacidad decreciente por posicion (1.00 la mas ocupada -> 0.45 la ultima).
+  // El orden lo decidio SQL; aqui solo se pinta. Guarda de division por cero
+  // sobre una longitud (no una agregacion de datos), pero la funcion de maximo
+  // esta prohibida en el fichero por lectura literal: se escribe sin ella a proposito.
+  ds.backgroundColor = data.labels.map((_, i) => {
+    const paso = n > 1 ? (i / (n - 1)) : 0;
+    return `rgba(96,165,250,${(1 - paso * 0.55).toFixed(2)})`;
+  });
+
+  // Valor siempre visible sin raton: se anade al final de la etiqueta de
+  // categoria (texto de dato, nunca HTML — convencion anti-XSS de D-15).
+  occupancyChart.data.labels = data.labels.map((l, i) => `${l} — ${data.values[i]}`);
+  ds.data = data.values;
+
+  const cnv = $('an-chart-occupancy');
+  cnv.setAttribute('aria-label', n === 0
+    ? 'Ocupación por zona: sin zonas definidas.'
+    : `Ocupación por zona, del ${data.range.from} al ${data.range.to}: ${data.total_zones} zonas; ` +
+      `la más ocupada, ${data.labels[0]}, con ${data.values[0]} entradas.`);
+
+  occupancyChart.update();
+}
+
 export function setCompare(enabled) {
   compareOn = enabled;
   if (!hourlyChart) return;
   hourlyChart.data.datasets[1].data = compareOn ? _lastPrevious : [];
   hourlyChart.update();
+}
+
+export function resizeCharts() {
+  if (hourlyChart) hourlyChart.resize();
+  if (occupancyChart) occupancyChart.resize();
 }
