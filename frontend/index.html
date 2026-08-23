@@ -34,6 +34,13 @@
         YOLOv8n
       </div>
 
+      <nav role="tablist" aria-label="Vistas" class="flex items-center gap-1">
+        <button id="tab-operaciones" role="tab" aria-selected="true" aria-controls="view-operaciones"
+                class="nav-tab active text-sm font-semibold">Operaciones</button>
+        <button id="tab-analitica" role="tab" aria-selected="false" aria-controls="view-analitica"
+                tabindex="-1" class="nav-tab text-sm font-semibold">Analítica</button>
+      </nav>
+
       <div id="cam-status" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-medium" role="status" aria-live="polite">
         <span class="w-1.5 h-1.5 rounded-full bg-green-400 pulse" id="status-dot" aria-hidden="true"></span>
         <span id="status-text">EN VIVO</span>
@@ -53,7 +60,9 @@
   </header>
 
   <!-- ══════════════════════ MAIN ══════════════════════ -->
-  <main class="flex-1 p-4 grid grid-cols-1 lg:grid-cols-5 gap-4 max-w-[1600px] mx-auto w-full" role="main">
+  <main class="flex-1 w-full" role="main">
+  <section id="view-operaciones" role="tabpanel" aria-labelledby="tab-operaciones"
+           class="p-4 grid grid-cols-1 lg:grid-cols-5 gap-4 max-w-[1600px] mx-auto w-full">
 
     <!-- ─── LEFT: Video + PTZ (3 columnas) ─── -->
     <section class="lg:col-span-3 flex flex-col gap-4" aria-label="Feed de vídeo y control de cámara">
@@ -675,6 +684,12 @@
       </div>
 
     </section>
+  </section>
+
+  <section id="view-analitica" role="tabpanel" aria-labelledby="tab-analitica" hidden
+           class="p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 max-w-[1600px] mx-auto w-full">
+    <!-- Task 2 lo rellena -->
+  </section>
   </main>
 
   <!-- Enroll modal -->
