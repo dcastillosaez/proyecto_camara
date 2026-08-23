@@ -594,7 +594,7 @@ Plans:
   4. Las consultas sobre 100.000 eventos responden en menos de 500 ms
   5. Exportación CSV/JSON del rango visible
 **Spec**: SPEC_v2.md Phase 31
-**Plans:** 7/11 plans executed
+**Plans:** 8/11 plans executed
 
 Plans:
 - [x] 31-01-PLAN.md — Índice `idx_events_analytics`, migración v3→v4 y siembra con identidad/zona (OPS-12, OPS-14)
@@ -604,7 +604,7 @@ Plans:
 - [x] 31-05-PLAN.md — Router `/api/v2/analytics`: summary, hourly, occupancy, persons y criterio 3 (OPS-12..14)
 - [x] 31-06-PLAN.md — Heatmap v2: `/heatmap` y `/heatmap/scale`, con 404 y 503 distintos (OPS-12)
 - [x] 31-07-PLAN.md — `analytics-charts.js`: las dos gráficas, activación diferida y resumen accesible (OPS-12, OPS-14)
-- [ ] 31-08-PLAN.md — `analytics-range.js` y `analytics-ranking.js`: rango, tarjetas de tendencia y ranking (OPS-13, OPS-14)
+- [x] 31-08-PLAN.md — `analytics-range.js` y `analytics-ranking.js`: rango, tarjetas de tendencia y ranking (OPS-13, OPS-14)
 - [ ] 31-09-PLAN.md — `/api/v2/analytics/export`: CSV por panel y JSON del rango visible (OPS-15)
 - [ ] 31-10-PLAN.md — Orquestador `analytics.js`, panel del heatmap, `analytics-export.js` y arranque (OPS-12..15)
 - [ ] 31-11-PLAN.md — Puerta de fase: `LOCKED_JS`, test anti-agregación, criterios 3 y 4 medidos y checkpoint visual (OPS-12..15)

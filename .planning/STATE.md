@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Completada 31-07-PLAN.md
-last_updated: "2026-08-23T15:20:00.000Z"
+stopped_at: Completada 31-08-PLAN.md
+last_updated: "2026-08-23T16:10:00.000Z"
 last_activity: 2026-08-23
 progress:
   total_phases: 32
   completed_phases: 15
   total_plans: 87
-  completed_plans: 74
-  percent: 85
+  completed_plans: 75
+  percent: 86
 ---
 
 # Project State
@@ -27,8 +27,41 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 31 (Vista de analitica) — EXECUTING
-Plan: 8 of 11
+Plan: 9 of 11
 Status: Ready to execute
+
+**31-08 escribio los dos modulos de los extremos de la vista: rango y ranking.**
+`frontend/js/views/analytics-range.js` (139 lineas, nuevo) expone
+`initRange`/`currentRange` con los cuatro presets (`today`/`7d`/`30d`/`custom`)
+resueltos con fechas locales inclusivas (nunca `toISOString()`, que da el dia
+equivocado por la noche al este de Greenwich), persistencia en `localStorage`
+con lista blanca de presets conocidos (T-31-28) y validacion del rango
+personalizado **solo** al pulsar "Aplicar rango" con las dos cadenas de error
+literales del 422 de `_resolve_range()` en 31-05 — la validacion de cliente es
+cortesia, la autoridad es el servidor (T-31-29). `initRange()` no dispara
+ninguna carga al arrancar: solo restaura el estado visual, para que 31-10 sea
+el unico que decide cuando pedir datos.
+`frontend/js/views/analytics-ranking.js` (123 lineas, nuevo) expone
+`renderCards`/`renderRanking`: las cuatro tarjetas de tendencia sin color de
+direccion (`#94a3b8` siempre, la flecha lo dice) y las filas del ranking con
+la plantilla de nodos vacios + `textContent` que ya usa `timeline-row.js`
+(D-15) — el nombre de una persona nunca se interpola en el marcado, a
+diferencia del agujero real de `personGallery.js:28` que este modulo no
+copia — y `isSafeMediaUrl()` (importada, no reimplementada) antes de asignar
+cualquier avatar a `img.src` (T-31-27). Sin periodo anterior comparable, la
+fila y la tarjeta dicen "sin comparación" en vez de inventar un porcentaje.
+Un bug de indexado propio se detecto y corrigio antes de comitear: el
+`querySelectorAll('span')` de la fila incluye el `.rank-initial` anidado
+dentro de `.rank-avatar`, lo que desplazaba los indices numericos previstos
+en el plan; se sustituyeron por selectores de clase (`.w-5`, `.truncate`,
+`.text-base`, `.text-slate-500`, `.text-slate-400`), mas robustos que contar
+posiciones en una plantilla con anidamiento. Suite dirigida verde
+(`tests/test_frontend_modules.py` 8 passed); no toca pipeline/API/config, asi
+que no se relanzo la suite completa. OPS-14 ya estaba cerrado por 31-04/31-05;
+OPS-13 avanza pero no se cierra todavia (los modulos existen y pasan sus
+criterios de aceptacion, pero nada los cablea al DOM hasta 31-10 y la puerta
+de fase 31-11 es quien lo marca, mismo patron que las Fases 27/30). Siguiente:
+31-09 (export CSV/JSON).
 
 **31-07 escribio las dos graficas de Chart.js de la vista.**
 `frontend/js/views/analytics-charts.js` (168 lineas, nuevo) expone
