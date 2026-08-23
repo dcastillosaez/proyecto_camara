@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Completada 31-05-PLAN.md
-last_updated: "2026-08-23T11:36:57.770Z"
+stopped_at: Completada 31-06-PLAN.md
+last_updated: "2026-08-23T14:44:53.257Z"
 last_activity: 2026-08-23
 progress:
   total_phases: 32
   completed_phases: 15
   total_plans: 87
-  completed_plans: 72
-  percent: 83
+  completed_plans: 73
+  percent: 84
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 31 (Vista de analitica) — EXECUTING
-Plan: 6 of 11
+Plan: 7 of 11
 Status: Ready to execute
 
 **31-05 expone esas agregaciones por HTTP.** Nuevo router
@@ -812,6 +812,8 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - Puerta de fase (Fase 26, 26-05): no hizo falta ningún fix de código — `tests/test_rule_engine.py` ganó 3 tests que recorren el camino real (YAML en `tmp_path` + `load_rules` + `evaluate`) para demostrar el criterio 5 sin tocar `backend/events/rules.py` ni `config/rules.yaml`, y BEH-01..BEH-05 ya estaban `[x]` desde planes anteriores. Las seis decisiones clave de la fase quedan resumidas aquí: (1) el historial de 120 s se disuelve con agregados incrementales O(1) en vez de ampliar `history_len` (584 B/track medidos frente a 141,8 KB si se hubiera ampliado a 1000, `tracking.py` intacto); (2) los CUATRO comportamientos llevan latch por episodio, no solo CROWD — sin él, una persona parada 10 min generaría miles de eventos IMMOBILE, y `debounce_secs` de `rules.yaml` no sustituye al latch porque actúa después de persistir y difundir; (3) `analyze()` devuelve `list[BehaviorFinding]`, no `list[Event]` (D-3, corrige SPEC §5.7) — `perception/` no conoce `camera_id` ni el reloj de pared; (4) semántica de zonas: LOITERING cae a escena implícita (`zone_id=None`) sin zonas configuradas salvo `loiter_require_zone=True` (D-02), LOITERING e IMMOBILE coexisten (D-03), y con zonas solapadas se emite un finding por zona (D-04); (5) la clave del payload es `duration_s` literal porque `rules.py:88-91` la lee así para `duration_gte` — cualquier otro nombre rompe el criterio 5 en silencio; (6) los 4 comportamientos se quedan en `Severity.INFO` por defecto (D-01, cambio cero) — subirlos a WARNING habría activado la subida automática de clips a Google Drive. El checkpoint de calibración de umbrales con cámara real (Task 3) se difiere explícitamente — 8º checkpoint manual pendiente, no bloquea avanzar a la Fase 27
 - [Phase 31]: seed_events(): orden de rng preservado byte a byte (type/severity antes que track_id/confidence) al anadir persons/zones — el borrador del plan invertia el orden y habria roto el determinismo de los tests de la Fase 30
 - [Phase 31]: Regla global [hidden] { display: none !important; } en base.css para restaurar la precedencia de hidden frente a las utilidades de display de Tailwind CDN — El checkpoint de 31-03 detecto con navegador real que Tailwind (cargado via CDN, origen autor) vence siempre al [hidden] del User-Agent; !important en base.css es el fix estandar y queda como base para cualquier futuro uso de hidden en el proyecto
+- [Phase 31]: El endpoint v1 /api/heatmap y backend/main.py no se tocan en 31-06: sigue sin cambios y hereda INFERNO por compartir compose_heatmap con el v2
+- [Phase 31]: unit va en el JSON de /heatmap/scale, no como constante fija del cliente: quien lea la respuesta cruda ve la unidad (frames de deteccion con presencia) junto al numero
 
 ### Pendiente manual (no es código)
 
@@ -831,8 +833,8 @@ en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-23T11:04:30.374Z
-Stopped at: Completada 31-03-PLAN.md (checkpoint aprobado tras fix)
+Last session: 2026-08-23T14:44:53.246Z
+Stopped at: Completada 31-06-PLAN.md
   "Marcar como persona" está completo: `markPerson.js` precarga el recorte del evento,
   muestra el aviso de alcance retroactivo con el N del servidor antes de confirmar,
   enrola contra `/api/enroll_face` (sin duplicar sus validaciones), aplica la identidad
