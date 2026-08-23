@@ -113,9 +113,51 @@ async function loadPanel(name, range, signal) {
   settle();
 }
 
-function loadHeatmap() {
-  // Implementacion completa (404 vs 503, cache-busting, recarga diferida) en la Task 2.
+// Pinta la URL del heatmap si la pestana esta activa; si no, la guarda para cuando
+// vuelva (resizeAnalytics). Un <img loading="lazy"> dentro de un contenedor oculto no
+// dispara la peticion por si solo, asi que aplicar la URL con la vista oculta la
+// perderia sin este paso intermedio.
+function paintHeatmap(url) {
+  const img = $('an-heatmap-img');
+  if (img && isSafeMediaUrl(url)) img.src = url;
+  setPanelState('heatmap', 'ok');
+}
+
+function applyHeatmap(scale) {
+  // Tres constantes: la rampa se normaliza por el maximo, la escala siempre es
+  // relativa. El valor absoluto (con su unidad, que manda el servidor) va en el
+  // title de la leyenda — nunca inventar una cifra de personas aqui (D-12).
+  const mark0 = $('an-heatmap-mark-0');
+  if (mark0) mark0.textContent = '0';
+  const markMid = $('an-heatmap-mark-mid');
+  if (markMid) markMid.textContent = '50 %';
+  const markPeak = $('an-heatmap-mark-peak');
+  if (markPeak) markPeak.textContent = 'pico';
+  const legend = $('an-heatmap-legend');
+  if (legend) legend.title = `Escala relativa. Pico ${scale.peak} y media ${scale.mean} ${scale.unit}.`;
+
+  // Sin el ?t= el navegador serviria de cache y el mapa parece congelado; el servidor
+  // ignora el parametro. Sigue empezando por '/', asi que isSafeMediaUrl la acepta.
+  const url = `/api/v2/analytics/heatmap?camera_id=cam1&t=${Date.now()}`;
+  if (nav.activeView() !== 'analitica') { heatmapPending = url; return; }
+  paintHeatmap(url);
+}
+
+async function loadHeatmap() {
   setPanelState('heatmap', 'loading');
+  let res;
+  // fetch crudo y no apiFetch A PROPOSITO: apiFetch lanza y pierde el codigo, y aqui
+  // el codigo ES el dato (404 = sin actividad, 503 = sin senal). No "unificar" esto.
+  try {
+    res = await fetch('/api/v2/analytics/heatmap/scale?camera_id=cam1');
+  } catch (e) {
+    setPanelState('heatmap', 'offline');
+    settle();
+    return;
+  }
+  if (res.status === 404) { setPanelState('heatmap', 'empty'); settle(); return; }
+  if (!res.ok) { setPanelState('heatmap', 'offline'); settle(); return; }
+  applyHeatmap(await res.json());
   settle();
 }
 
@@ -158,9 +200,7 @@ function bootAnalytics() {
 function resizeAnalytics() {
   resizeCharts();
   if (heatmapPending) {
-    const img = $('an-heatmap-img');
-    if (img && isSafeMediaUrl(heatmapPending)) img.src = heatmapPending;
-    setPanelState('heatmap', 'ok');
+    paintHeatmap(heatmapPending);
     heatmapPending = null;
   }
 }
