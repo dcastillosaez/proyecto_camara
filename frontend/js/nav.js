@@ -44,7 +44,15 @@ function activate(view) {
   if (view !== 'analitica') return;
   if (!_booted && _boot) {
     _booted = true;
-    _boot();
+    // D-03, caso limite: si esta activacion viene de initNav() resolviendo un hash
+    // #analitica ya presente al cargar (bookmark, recarga, URL pegada), _boot() se
+    // ejecutaria en el mismo tick sincrono que retirar `hidden`, y Chart.js mediria
+    // el contenedor antes de que el navegador confirme el layout -- se queda en el
+    // tamano de reserva 300x150 para siempre. requestAnimationFrame garantiza que
+    // el recalculo de estilo y layout ya se aplico antes de que el callback se
+    // ejecute. Se aplica sin condicion (tambien cuando ya funciona, p.ej. click):
+    // es idempotente e inofensivo, un frame de mas no se nota.
+    requestAnimationFrame(() => _boot());
   } else if (_resize) {
     _resize();
   }
