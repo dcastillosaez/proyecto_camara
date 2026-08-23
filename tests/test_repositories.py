@@ -754,3 +754,47 @@ def TEST_seed_events_defaults_leave_person_and_zone_null(tmp_path):
 
     assert with_person == 0
     assert with_zone == 0
+
+
+# --- Fase 31 (OPS-12/OPS-14): guarda del formato de almacenamiento de DateTime ----
+
+
+async def TEST_datetime_storage_format_is_fixed_width_iso(db):
+    """Precondicion de AnalyticsRepo._bucket_expr() (31-04): las agregaciones usan
+    substr(ts,1,13)/substr(ts,1,10) en vez de strftime(...) porque es 2,3x mas
+    rapido (51,8 ms vs 120,8 ms @100k, 31-RESEARCH.md). Eso convierte una funcion
+    semantica en una sintactica: si SQLAlchemy dejara de serializar Event.ts como
+    TEXT ISO de ancho fijo, el GROUP BY agruparia mal SIN lanzar ningun error y las
+    graficas saldrian con cubos raros sin que nadie supiera por que. Si este test
+    cae, hay que volver a strftime (120 ms, sigue dentro de los 500 ms del criterio
+    4 del ROADMAP) de forma explicita, no por descuido.
+    """
+    db_file, sf = db
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Event(
+                id="evt-with-micros", camera_id="cam1", type="LINE_CROSSED",
+                ts=datetime.datetime(2026, 8, 22, 9, 5, 3, 123456), severity="info",
+                payload={},
+            ))
+            session.add(models.Event(
+                id="evt-zero-micros", camera_id="cam1", type="LINE_CROSSED",
+                ts=datetime.datetime(2026, 8, 22, 9, 5, 3, 0), severity="info",
+                payload={},
+            ))
+
+    conn = sqlite3.connect(db_file)
+    try:
+        rows = conn.execute(
+            "SELECT typeof(ts), ts, substr(ts,1,13), substr(ts,1,10) "
+            "FROM events ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(rows) == 2
+    for typeof_ts, raw_ts, substr13, substr10 in rows:
+        assert typeof_ts == "text"
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}", raw_ts), raw_ts
+        assert substr13 == "2026-08-22 09"
+        assert substr10 == "2026-08-22"
