@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: "Fase 32 planificada: 8 planes en 7 waves, VALIDATION.md aprobado, plan-checker verde tras 3 iteraciones"
-last_updated: "2026-08-23T10:27:16.173Z"
-last_activity: 2026-08-22 -- Phase 31 planning complete
+stopped_at: Completada 31-01-PLAN.md
+last_updated: "2026-08-23T10:47:27.387Z"
+last_activity: 2026-08-23
 progress:
   total_phases: 32
   completed_phases: 15
   total_plans: 87
-  completed_plans: 67
-  percent: 77
+  completed_plans: 68
+  percent: 78
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 31 — Vista de analítica (sin planificar)
+**Current focus:** Phase 31 — Vista de analitica
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 30 (Event Timeline y centro de alertas) — COMPLETA (12/12 planes)
-Plan: 12 of 12 — 30-12 cerrada
+Phase: 31 (Vista de analitica) — EXECUTING
+Plan: 2 of 11
 Status: Ready to execute
 
 **La Fase 30 está completa.** El card plano de "Eventos recientes" ya no existe:
@@ -327,7 +327,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-22 -- Phase 31 planning complete
+Last activity: 2026-08-23
 
 Progress v2.0: [██████░░░░] ~64% (14/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
@@ -768,6 +768,7 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - StreamingWorker/manager.py (Fase 27, 27-08): `object_boxes` es un `Callable[[], list[dict]] | None` inyectado en el constructor (via pull), nunca un setter tipo `set_zone_overlay` (patron muerto, sin llamadores, 27-PATTERNS.md § No Analog Found); `manager.py` pasa `self.get_object_boxes` (metodo bound de `CameraPipeline`) directamente, sin envolverlo en una lambda — un metodo bound resuelve `self.detection` en cada llamada, asi que sobrevive a un reinicio del `DetectionWorker` sin volver a pasar la referencia. Color magenta `(255, 0, 255)` BGR, deliberadamente distinto del naranja de zonas `(0, 200, 255)` — decision cerrada con el usuario en 27-RESEARCH.md Open Question #1
 - Puerta de fase (Fase 27, 27-11): no hizo falta ningún fix de código — la suite ya estaba verde (519/519) y BEH-07 ya estaba `[x]` desde `27-01`; `27-11` marca BEH-06/BEH-08/BEH-09 y traza los 6 criterios del ROADMAP a comandos `pytest -k`. Las decisiones clave de la fase quedan resumidas aquí: (1) `sv.ByteTrack` es class-agnostic (reproducido en `27-RESEARCH.md` Q4 y en `TEST_bytetrack_ids_do_not_migrate_between_classes`) — la partición por clase ANTES del tracker y un `ObjectTracker` dedicado son obligatorios, no una optimización, o un track de objeto puede transferir su id a una persona solapada y contaminar el `LineZone` de la Fase 4; (2) los objetos nunca entran en `TrackRegistry` — su estado vive en `self._object_boxes` bajo `self._lock`, mismo patrón que `_zone_states`; (3) `self.objects`/`self.object_tracker` (y el resto de estado de la fase) se construyen en `CameraPipeline.__init__` ANTES de `_make_detection`/`_make_recognition`, fuera de la factoría del `WorkerSupervisor` — cuarto precedente tras FSM (Fase 24), galería ReID (Fase 25) y `BehaviorAnalyzer` (Fase 26); (4) la BD (`app_config`) gana sobre `YOLO_CLASSES` al arrancar, y una fila `[]` persistida se trata como ausente para no dejar el sistema ciego en silencio; (5) `person` (clase 0) siempre viaja forzada/activa y bloqueada en el catálogo — ningún PUT puede desactivarla; (6) `OBJECT_LEFT` se mantiene en `Severity.WARNING` (decisión del usuario) y por tanto cruza `upload_min_severity="warning"` y sube clips a Drive desde el primer evento — exige calibrar `object_person_radius_px` con cámara real antes de operar desatendido (checkpoint diferido de este plan); (7) el nivel de actividad de BEH-09 se normaliza a tasa por minuto en baseline y "ahora" para no sesgar `"low"` al principio de cada hora, y cae a `"unknown"` con menos de `context_min_sample_days` de historial; (8) `yolo_model_path` por defecto corregido a `yolo26n.pt` (D-03), alineado con CLAUDE.md. El checkpoint de calibración de `object_person_radius_px` (150 px, 1,9× `loiter_radius_px`) y de la tasa de falsos positivos de `OBJECT_LEFT` se difiere explícitamente — 9º checkpoint manual pendiente, no bloquea avanzar a la Fase 28
 - Puerta de fase (Fase 26, 26-05): no hizo falta ningún fix de código — `tests/test_rule_engine.py` ganó 3 tests que recorren el camino real (YAML en `tmp_path` + `load_rules` + `evaluate`) para demostrar el criterio 5 sin tocar `backend/events/rules.py` ni `config/rules.yaml`, y BEH-01..BEH-05 ya estaban `[x]` desde planes anteriores. Las seis decisiones clave de la fase quedan resumidas aquí: (1) el historial de 120 s se disuelve con agregados incrementales O(1) en vez de ampliar `history_len` (584 B/track medidos frente a 141,8 KB si se hubiera ampliado a 1000, `tracking.py` intacto); (2) los CUATRO comportamientos llevan latch por episodio, no solo CROWD — sin él, una persona parada 10 min generaría miles de eventos IMMOBILE, y `debounce_secs` de `rules.yaml` no sustituye al latch porque actúa después de persistir y difundir; (3) `analyze()` devuelve `list[BehaviorFinding]`, no `list[Event]` (D-3, corrige SPEC §5.7) — `perception/` no conoce `camera_id` ni el reloj de pared; (4) semántica de zonas: LOITERING cae a escena implícita (`zone_id=None`) sin zonas configuradas salvo `loiter_require_zone=True` (D-02), LOITERING e IMMOBILE coexisten (D-03), y con zonas solapadas se emite un finding por zona (D-04); (5) la clave del payload es `duration_s` literal porque `rules.py:88-91` la lee así para `duration_gte` — cualquier otro nombre rompe el criterio 5 en silencio; (6) los 4 comportamientos se quedan en `Severity.INFO` por defecto (D-01, cambio cero) — subirlos a WARNING habría activado la subida automática de clips a Google Drive. El checkpoint de calibración de umbrales con cámara real (Task 3) se difiere explícitamente — 8º checkpoint manual pendiente, no bloquea avanzar a la Fase 27
+- [Phase 31]: seed_events(): orden de rng preservado byte a byte (type/severity antes que track_id/confidence) al anadir persons/zones — el borrador del plan invertia el orden y habria roto el determinismo de los tests de la Fase 30
 
 ### Pendiente manual (no es código)
 
@@ -787,8 +788,8 @@ en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-23T10:27:16.165Z
-Stopped at: Fase 32 planificada: 8 planes en 7 waves, VALIDATION.md aprobado, plan-checker verde tras 3 iteraciones
+Last session: 2026-08-23T10:47:27.377Z
+Stopped at: Completada 31-01-PLAN.md
   "Marcar como persona" está completo: `markPerson.js` precarga el recorte del evento,
   muestra el aviso de alcance retroactivo con el N del servidor antes de confirmar,
   enrola contra `/api/enroll_face` (sin duplicar sus validaciones), aplica la identidad
@@ -797,7 +798,7 @@ Stopped at: Fase 32 planificada: 8 planes en 7 waves, VALIDATION.md aprobado, pl
   Suite completa en verde (603 passed, 2 skipped). Pendiente de comprobación manual,
   que firma 30-12: recorte real en el modal, N razonable en el aviso y filas del track
   cambiando en sitio. Siguiente: 30-12 (puerta de fase)
-Resume file: .planning/phases/32-vista-de-c-mara-y-configuraci-n-visual/32-08-PLAN.md
+Resume file: None
 
 ---
 
