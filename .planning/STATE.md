@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 32 en marcha (1/8 planes) — 32-01 cerrado (config_schema.py con los 112 campos de Settings + ConfigRepo.delete()); SET-01..SET-03 avanzan. Siguiente paso: 32-02 (router GET/PUT/restore /api/v2/config)
-last_updated: "2026-08-23T18:02:04.000Z"
-last_activity: 2026-08-23 -- 32-01 cerrado: esquema declarativo de configuracion + ConfigRepo.delete(), suite completa verde
+stopped_at: Fase 32 en marcha (2/8 planes) — 32-02 cerrado (GET/PUT/restore /api/v2/config, unico endpoint HTTP nuevo de la fase); SET-01..04 cerrados, OPS-18..20 avanzan sin cerrar (esperan interfaz). Siguiente paso: 32-03 (frontend, arranque de la vista Camara/Ajustes)
+last_updated: "2026-08-23T18:16:00.000Z"
+last_activity: 2026-08-23 -- 32-02 cerrado: router GET/PUT/restore de configuracion con validacion por lote y auditoria CONFIG_CHANGED, suite completa verde
 progress:
   total_phases: 32
   completed_phases: 16
   total_plans: 90
-  completed_plans: 79
-  percent: 88
+  completed_plans: 80
+  percent: 89
 ---
 
 # Project State
@@ -21,14 +21,39 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (1/8 planes)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (2/8 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (1/8 planes)
-Plan: 1 of 8 — 32-01 cerrado
-Status: 32-01 cerrado; siguiente paso `/gsd:execute-phase 32` (32-02, router GET/PUT/restore)
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (2/8 planes)
+Plan: 2 of 8 — 32-02 cerrado
+Status: 32-02 cerrado; siguiente paso `/gsd:execute-phase 32` (32-03, arranque de frontend)
+
+**32-02 construye el unico endpoint HTTP nuevo de la Fase 32.**
+`backend/api/v2/config.py` (296 lineas) convierte el esquema declarativo de 32-01 en
+`GET/PUT /api/v2/config` + `POST /{section}/restore`, registrados en el lifespan de
+`main.py` junto a `detection_v2_module`. GET resuelve `origin`/`applies`/`secret` por
+campo sobre las 8 secciones fijas; ningun campo `secret=True` lleva la clave `value` en
+ningun origen y `camera_url` sale siempre enmascarada. PUT valida el lote completo en un
+solo pase (rango por campo primero, invariantes cruzados de `Settings` despues via
+`build_candidate_settings`, que reejecuta los `model_validator`) devolviendo TODOS los
+errores 422 juntos, nunca solo el primero — verificado empiricamente que
+`model_validator(mode="after")` con `raise ValueError(...)` produce `loc == ()`, asi que
+el campo del error cruzado en la respuesta es la seccion, no el nombre del campo
+concreto (aclaracion documentada en `32-02-SUMMARY.md`, no una desviacion: es el
+algoritmo literal que pedia el plan). Persistir-antes-de-propagar verificado con
+`attach_mock`: `ConfigRepo.set()` siempre antes que
+`CameraPipeline.set_detection_classes()`/`set_process_size()`, las unicas 3 rutas reales
+de aplicacion en caliente. `yolo_classes` reutiliza literalmente las 4 comprobaciones de
+`detection.py` de la Fase 27 (vacia, rango COCO, duplicados, clase 0 obligatoria) en vez
+de una redaccion paralela. `restore` borra solo filas `runtime` de una seccion — nunca
+escribe defaults encima — con `CONFIG_CHANGED(restored=True)` solo si hubo algo que
+borrar. 22 tests nuevos en `tests/test_config_api.py` (5 GET, 13 PUT, 3 restore, 1 de
+wiring en `main.py`), suite completa **711 passed, 2 skipped** (+22 sobre el cierre de
+32-01). SET-01..04 quedan cerrados; OPS-18, OPS-19 y OPS-20 avanzan pero no se cierran
+(exigen interfaz visible, que llega con 32-04..32-06 y se marca en la puerta de fase
+32-08). Ver `32-02-SUMMARY.md`.
 
 **32-01 cierra la base declarativa de toda la Fase 32.** `backend/api/v2/config_schema.py`
 (1008 líneas) describe los 112 parámetros reales de `Settings` — label en español llano,

@@ -267,10 +267,10 @@
 
 ### Configuración runtime (SET)
 
-- [ ] **SET-01**: La configuración operativa se persiste en base de datos y es editable en caliente
-- [ ] **SET-02**: La precedencia es configuración runtime > `.env` > valor por defecto del código, documentada y testeada
-- [ ] **SET-03**: Todo parámetro tiene rango validado en servidor con mensaje de error legible
-- [ ] **SET-04**: Todo cambio de configuración queda auditado como evento con su diff
+- [x] **SET-01**: La configuración operativa se persiste en base de datos y es editable en caliente
+- [x] **SET-02**: La precedencia es configuración runtime > `.env` > valor por defecto del código, documentada y testeada
+- [x] **SET-03**: Todo parámetro tiene rango validado en servidor con mensaje de error legible
+- [x] **SET-04**: Todo cambio de configuración queda auditado como evento con su diff
 
 ### Testing v2 (TEST)
 
