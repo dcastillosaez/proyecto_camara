@@ -134,3 +134,245 @@ async def TEST_get_config_external_source_groups_have_no_fields():
     reglas_cargadas = next(g for g in reglas["groups"] if g["key"] == "reglas_cargadas")
     assert reglas_cargadas["external_source"] == "/api/v2/rules"
     assert reglas_cargadas["fields"] == []
+
+
+# ─── PUT /api/v2/config — rechazos 422 ───────────────────────────────────────
+async def TEST_put_config_unknown_section_returns_404():
+    repo = _fake_repo()
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config", json={"section": "no-existe", "changes": {}})
+    assert resp.status_code == 404
+
+
+async def TEST_put_config_unknown_field_returns_422():
+    repo = _fake_repo()
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={"section": "deteccion", "changes": {"campo_inventado": 1}})
+    assert resp.status_code == 422
+    errors = resp.json()["detail"]["errors"]
+    assert errors == [{"field": "campo_inventado", "message": "Campo desconocido."}]
+    repo.set.assert_not_awaited()
+
+
+async def TEST_put_config_secret_field_rejected():
+    repo = _fake_repo()
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config", json={"section": "camara", "changes": {"rtsp_pass": "x"}})
+    assert resp.status_code == 422
+    errors = resp.json()["detail"]["errors"]
+    assert errors == [{
+        "field": "rtsp_pass",
+        "message": "Este campo no es editable desde la interfaz.",
+    }]
+    repo.set.assert_not_awaited()
+
+
+async def TEST_put_config_readonly_field_rejected():
+    repo = _fake_repo()
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={"section": "camara", "changes": {"camera_url": "rtsp://x"}})
+    assert resp.status_code == 422
+    errors = resp.json()["detail"]["errors"]
+    assert errors == [{
+        "field": "camera_url",
+        "message": "Este campo no es editable desde la interfaz.",
+    }]
+    repo.set.assert_not_awaited()
+
+
+async def TEST_put_config_out_of_range_returns_exact_range_message():
+    repo = _fake_repo()
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={"section": "deteccion", "changes": {"yolo_confidence": 1.5}})
+    assert resp.status_code == 422
+    errors = resp.json()["detail"]["errors"]
+    assert errors == [{
+        "field": "yolo_confidence",
+        "message": "Debe estar entre 0.05 y 0.95.",
+    }]
+    repo.set.assert_not_awaited()
+
+
+async def TEST_put_config_cross_field_validation_uses_literal_settings_message():
+    repo = _fake_repo()
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={
+                    "section": "reconocimiento",
+                    "changes": {"identity_min_votes": 10, "identity_vote_window": 2},
+                })
+    assert resp.status_code == 422
+    errors = resp.json()["detail"]["errors"]
+    assert len(errors) == 1
+    assert "identity_vote_window (2) no puede ser menor" in errors[0]["message"]
+    assert "identity_min_votes (10)" in errors[0]["message"]
+    repo.set.assert_not_awaited()
+
+
+async def TEST_put_config_batch_returns_all_errors_not_just_first():
+    repo = _fake_repo()
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={
+                    "section": "deteccion",
+                    "changes": {
+                        "yolo_confidence": 1.5,
+                        "identity_min_votes": 10,
+                        "identity_vote_window": 2,
+                    },
+                })
+    assert resp.status_code == 422
+    errors = resp.json()["detail"]["errors"]
+    assert len(errors) == 2
+    fields = {e["field"] for e in errors}
+    assert "yolo_confidence" in fields
+    repo.set.assert_not_awaited()
+
+
+async def TEST_put_config_yolo_classes_missing_person_rejected():
+    repo = _fake_repo()
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={"section": "deteccion", "changes": {"yolo_classes": [24]}})
+    assert resp.status_code == 422
+    errors = resp.json()["detail"]["errors"]
+    assert errors[0]["field"] == "yolo_classes"
+    assert "person" in errors[0]["message"]
+    repo.set.assert_not_awaited()
+
+
+# ─── PUT /api/v2/config — camino feliz ───────────────────────────────────────
+async def TEST_put_config_yolo_classes_persists_before_propagating_to_all_pipelines():
+    repo = _fake_repo()
+    pipeline1, pipeline2 = MagicMock(), MagicMock()
+    mock_manager = MagicMock()
+    mock_manager.all.return_value = [pipeline1, pipeline2]
+    mock_engine = MagicMock()
+    config_module.configure(mock_manager, mock_engine)
+
+    parent = MagicMock()
+    parent.attach_mock(repo.set, "config_set")
+    parent.attach_mock(pipeline1.set_detection_classes, "pipeline1_set")
+
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={"section": "deteccion", "changes": {"yolo_classes": [0, 24]}})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["section"] == "deteccion"
+
+    repo.set.assert_awaited_once_with("yolo_classes", [0, 24])
+    pipeline1.set_detection_classes.assert_called_once_with([0, 24])
+    pipeline2.set_detection_classes.assert_called_once_with([0, 24])
+
+    call_names = [c[0] for c in parent.mock_calls]
+    assert call_names.index("config_set") < call_names.index("pipeline1_set")
+
+    mock_engine.config_changed.assert_called_once()
+    _, kwargs = mock_engine.config_changed.call_args
+    assert kwargs["section"] == "deteccion"
+    assert kwargs["diff"] == {"yolo_classes": {"before": [0], "after": [0, 24]}}
+
+
+async def TEST_put_config_process_width_alone_keeps_current_height():
+    repo = _fake_repo(get_all_return={"process_height": 900})
+    pipeline = MagicMock()
+    mock_manager = MagicMock()
+    mock_manager.all.return_value = [pipeline]
+    config_module.configure(mock_manager, None)
+
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={"section": "camara", "changes": {"process_width": 1600}})
+
+    assert resp.status_code == 200
+    pipeline.set_process_size.assert_called_once_with(1600, 900)
+
+
+async def TEST_put_config_restart_only_field_persists_without_pipeline_call():
+    repo = _fake_repo()
+    pipeline = MagicMock()
+    mock_manager = MagicMock()
+    mock_manager.all.return_value = [pipeline]
+    config_module.configure(mock_manager, None)
+
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={"section": "deteccion", "changes": {"yolo_confidence": 0.5}})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["requires_restart"] == ["yolo_confidence"]
+    repo.set.assert_awaited_once_with("yolo_confidence", 0.5)
+    pipeline.set_detection_classes.assert_not_called()
+    pipeline.set_process_size.assert_not_called()
+
+
+async def TEST_put_config_emits_exactly_one_config_changed_per_section():
+    repo = _fake_repo()
+    mock_engine = MagicMock()
+    config_module.configure(None, mock_engine)
+
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={
+                    "section": "deteccion",
+                    "changes": {"yolo_confidence": 0.5, "yolo_imgsz": 512},
+                })
+
+    assert resp.status_code == 200
+    mock_engine.config_changed.assert_called_once()
+    _, kwargs = mock_engine.config_changed.call_args
+    assert set(kwargs["diff"].keys()) == {"yolo_confidence", "yolo_imgsz"}
+
+
+async def TEST_put_config_secret_never_reaches_diff():
+    """Defensa en profundidad (T-32-06): ya es imposible por el 422 de arriba, pero se
+    verifica explicitamente que ningun campo secret llega nunca al diff de auditoria."""
+    repo = _fake_repo()
+    mock_engine = MagicMock()
+    config_module.configure(None, mock_engine)
+
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.put(
+                "/api/v2/config",
+                json={"section": "deteccion", "changes": {"yolo_confidence": 0.5}})
+
+    assert resp.status_code == 200
+    _, kwargs = mock_engine.config_changed.call_args
+    assert not any(field_by_key_module_secret(k) for k in kwargs["diff"])
+
+
+def field_by_key_module_secret(key: str) -> bool:
+    from backend.api.v2.config_schema import field_by_key
+    f = field_by_key(key)
+    return bool(f and f.secret)
