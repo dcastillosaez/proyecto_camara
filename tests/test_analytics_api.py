@@ -18,6 +18,7 @@ import sqlite3
 from unittest.mock import MagicMock, patch
 
 import httpx
+import numpy as np
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport
@@ -390,3 +391,82 @@ async def TEST_payload_size_7_days_hourly_under_100kb(sf, client):
     )
 
     assert len(resp.content) < 100 * 1024, f"payload de 7 dias horario: {len(resp.content)} bytes"
+
+
+# ─── /heatmap y /heatmap/scale (OPS-12) ──────────────────────────────────────
+def _heatmap_manager(*, frame=None, heatmap=None, scale=None):
+    """Doble minimo de CameraManager con un pipeline cuyos tres metodos de
+    heatmap son parametrizables — mismo patron que tests/test_scene_context.py
+    para sustituir `_camera_manager` de un router v2."""
+    pipeline = MagicMock()
+    pipeline.get_frame.return_value = frame
+    pipeline.get_heatmap.return_value = heatmap
+    pipeline.get_heatmap_scale.return_value = scale
+    manager = MagicMock()
+    manager.get.return_value = pipeline
+    return manager
+
+
+async def TEST_heatmap_returns_503_without_camera(sf, client):
+    analytics_module.configure(None)
+
+    resp = await client.get("/api/v2/analytics/heatmap", params={"camera_id": "cam1"})
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "Cámara sin señal"
+
+
+async def TEST_heatmap_returns_503_without_frame(sf, client):
+    analytics_module.configure(_heatmap_manager(frame=None))
+
+    resp = await client.get("/api/v2/analytics/heatmap", params={"camera_id": "cam1"})
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "Cámara sin señal"
+
+
+async def TEST_heatmap_returns_404_without_activity(sf, client):
+    frame = np.zeros((4, 4, 3), np.uint8)
+    analytics_module.configure(_heatmap_manager(frame=frame, heatmap=None))
+
+    resp = await client.get("/api/v2/analytics/heatmap", params={"camera_id": "cam1"})
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Sin actividad acumulada"
+
+
+async def TEST_heatmap_returns_jpeg(sf, client):
+    frame = np.zeros((4, 4, 3), np.uint8)
+    img = np.full((4, 4, 3), 128, np.uint8)
+    analytics_module.configure(_heatmap_manager(frame=frame, heatmap=img))
+
+    resp = await client.get("/api/v2/analytics/heatmap", params={"camera_id": "cam1"})
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/jpeg")
+    assert resp.content[:2] == b"\xff\xd8"
+
+
+async def TEST_heatmap_scale_returns_peak_mean_and_unit(sf, client):
+    frame = np.zeros((4, 4, 3), np.uint8)
+    analytics_module.configure(
+        _heatmap_manager(frame=frame, scale={"peak": 8.0, "mean": 2.0})
+    )
+
+    resp = await client.get("/api/v2/analytics/heatmap/scale", params={"camera_id": "cam1"})
+
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["peak"] == 8.0
+    assert body["mean"] == 2.0
+    assert body["unit"]
+
+
+async def TEST_heatmap_scale_returns_404_without_activity(sf, client):
+    frame = np.zeros((4, 4, 3), np.uint8)
+    analytics_module.configure(_heatmap_manager(frame=frame, scale=None))
+
+    resp = await client.get("/api/v2/analytics/heatmap/scale", params={"camera_id": "cam1"})
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Sin actividad acumulada"
