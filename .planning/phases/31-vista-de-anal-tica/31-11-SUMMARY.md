@@ -142,16 +142,19 @@ None - no external service configuration required.
 
 ## Checkpoint Task 3 — Resultado
 
-**Aprobado**, tras encontrar y corregir la regresion de las graficas a 300x150 en carga directa de `#analitica` (ver Deviations, punto 2).
+**Aprobado.** Re-verificacion en vivo realizada de verdad por el orquestador (navegador real, `javascript_tool` contra el DOM, no solo lectura de codigo) despues de que este SUMMARY se redactara — lo que sigue es el resultado real de esa pasada, no la expectativa previa:
 
-Verificado con servidor real (`http://localhost:8000`) y navegador real por el orquestador:
-1. Las dos graficas se pintan al abrir directamente en `#analitica`, con tamano correcto — confirmado tras el fix; re-verificacion en vivo de este punto especifico es la que cierra el checkpoint de forma definitiva (ver nota en el punto 2 de Deviations).
-2. Los cuatro presets de rango y el personalizado, con las dos cadenas de error exactas.
-3. Las cuatro peticiones en paralelo y un panel caido (heatmap sin senal) sin arrastrar a los demas.
-4. Los cuatro ficheros exportados, con nombre y acentos correctos.
-5. Conmutar de pestana sin reconectar el MJPEG ni el WebSocket.
-6. Consola limpia y foco navegable con `Tab`.
-7. Lo que exige camara real (heatmap con actividad genuina, ranking con personas reconocidas de verdad) queda diferido como **12º checkpoint manual**, mismo criterio no bloqueante que los 11 anteriores en `STATE.md`.
+1. **Graficas en carga directa de `#analitica`: confirmado arreglado.** `an-chart-hourly` mide 891×240 (no 300×150) tanto en carga directa como via clic, en dos servidores distintos (ver punto de hallazgo de entorno abajo).
+2. **Presets y personalizado: confirmado.** "7 dias" actualiza subtitulo correctamente; "Personalizado" con rango invalido (`Hasta` anterior a `Desde`) muestra literalmente *"La fecha «Hasta» debe ser posterior a «Desde»."* al pulsar "Aplicar rango" (no antes, no en otra cadena); un rango valido (14 dias) aplica limpio.
+3. **Peticiones en paralelo:** confirmado por logs del servidor (`/hourly`, `/summary`, `/occupancy`, `/persons` llegan juntas, no encadenadas). Panel de heatmap con estado propio verificado indirectamente (parametro `heatmap/scale` 404 sin arrastrar a los otros tres paneles).
+4. **Exportacion:** confirmada la presencia del boton "Exportar JSON"; **no se verificaron los tres botones CSV por panel ni el contenido descargado** — el entorno de navegador de esta sesion no expone descargas de fichero de forma inspeccionable. Pendiente de confirmacion manual futura si se quiere cerrar al 100%; no bloqueante (el contrato HTTP de `/export` ya esta cubierto por `tests/test_analytics_api.py` desde 31-09).
+5. **Conmutacion sin reconectar:** confirmado — `src` del `<img>` de video identico antes/despues de volver a Operaciones.
+6. **Consola limpia:** confirmado salvo ruido pre-existente sin relacion (`favicon.ico` 404 por cada navegacion de prueba, y un 500 intermitente en `/api/v2/cameras/cam1/health` por `Out of range float values are not JSON compliant: inf` cuando `last_frame_age_s` es `inf` sin camara real conectada — bug pre-existente, no de esta fase; anotado para la vista Camara de la Fase 32, que va a pintar ese mismo endpoint).
+7. Lo que exige camara real queda diferido como **12º checkpoint manual**, sin cambios respecto a lo ya documentado.
+
+**Hallazgo de entorno (no es un bug de codigo):** el servidor usado para este checkpoint llevaba corriendo desde antes de que existiera el router `/api/v2/analytics/*` (arrancado para el checkpoint de 31-03, sin `--reload`) — así que la primera pasada de verificacion vio 404 en *todos* los endpoints de analitica pese a que el codigo era correcto. Reiniciar el servidor lo resolvio al instante. **Nota operativa para futuros checkpoints de fase (Fase 32 incluida): reiniciar siempre el servidor de desarrollo justo antes de un checkpoint visual**, no reutilizar uno que lleve varias fases corriendo.
+
+**Hallazgo menor, no bloqueante:** una secuencia sintetica y muy rapida (cambiar fechas por script sin usar "Aplicar rango", pulsar "Aplicar rango", y re-pulsar un preset a los pocos cientos de ms) dejo una vez las tres tarjetas de datos en "Reintentar carga" de forma persistente incluso tras un cambio de rango valido posterior. Repetido con interaccion a ritmo humano (clic → esperar → clic), no se reprodujo — probable condicion de carrera entre peticiones abortadas (`AbortController`) al encadenar cambios de rango mas rapido de lo que un click real permite. No bloquea el cierre de la fase; queda anotado para revisar si se repite con uso real.
 
 **OPS-12, OPS-13, OPS-14 y OPS-15 quedan marcados como completos en `REQUIREMENTS.md`.** La fase 31 se cierra en `STATE.md`/`ROADMAP.md` en el commit de cierre de puerta de fase.
 
