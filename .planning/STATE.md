@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Completada 31-08-PLAN.md
-last_updated: "2026-08-23T16:10:00.000Z"
+stopped_at: Completada 31-09-PLAN.md
+last_updated: "2026-08-23T15:06:00.000Z"
 last_activity: 2026-08-23
 progress:
   total_phases: 32
   completed_phases: 15
   total_plans: 87
-  completed_plans: 75
-  percent: 86
+  completed_plans: 76
+  percent: 87
 ---
 
 # Project State
@@ -27,8 +27,29 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 31 (Vista de analitica) — EXECUTING
-Plan: 9 of 11
+Plan: 10 of 11
 Status: Ready to execute
+
+**31-09 anadio la exportacion CSV/JSON del rango visible.** Precondicion:
+los cuerpos de `/hourly`, `/summary`, `/occupancy` y `/persons` se extrajeron
+a `_hourly_payload`/`_summary_payload`/`_occupancy_payload`/`_persons_payload`
+(funciones `async` de modulo), y los cuatro `@router.get` quedaron como
+envoltorios de una linea — sin tocar ni una linea de los tests de 31-05/31-06.
+`GET /api/v2/analytics/export` llama a esos MISMOS constructores: es la unica
+forma real de garantizar "lo que se descarga es lo que se ve", en vez de
+confiar en que dos implementaciones paralelas no diverjan. `format` y `panel`
+son `Literal[...]` de FastAPI (422 de Pydantic, sin `if` de cuerpo), el CSV
+lleva BOM UTF-8 (Excel en Windows rompe los acentos sin el) con cabecera en
+castellano por panel y `delta_pct=None` como celda vacia, y el nombre del
+fichero (`analitica-{panel}-{YYYYMMDD}_{YYYYMMDD}.csv` /
+`analitica-{YYYYMMDD}_{YYYYMMDD}.json`) lo compone el servidor solo con
+`panel` (tres valores fijos) y fechas ya validadas — ningun texto libre del
+cliente llega al `Content-Disposition` (T-31-30). 10 tests nuevos, incluida
+la equivalencia literal entre la seccion `hourly` del JSON y `GET /hourly`
+con los mismos parametros. Peso real del JSON con 30 dias sembrados: 1847
+bytes, muy por debajo del limite de 100 KB del criterio 3. Suite completa:
+674 passed, 2 skipped. OPS-15 queda cerrado. Siguiente: 31-10 (orquestador
+`analytics.js`, panel del heatmap y `analytics-export.js`).
 
 **31-08 escribio los dos modulos de los extremos de la vista: rango y ranking.**
 `frontend/js/views/analytics-range.js` (139 lineas, nuevo) expone
