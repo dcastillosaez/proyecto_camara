@@ -22,6 +22,7 @@ mismo fichero. El export (/export) tampoco: lo anade 31-09.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 from typing import Any
 
@@ -178,4 +179,71 @@ async def get_summary(
         "min": min_,
         "known": data["known"],
         "unknown": data["unknown"],
+    }
+
+
+@router.get("/occupancy")
+@limiter.limit(V2_RATE_LIMIT)
+async def get_occupancy(
+    request: Request,
+    camera_id: str = Query(default="cam1"),
+    from_: datetime.date = Query(alias="from"),
+    to_: datetime.date = Query(alias="to"),
+) -> dict[str, Any]:
+    cur_from, cur_to, span_days = _resolve_range(from_, to_)
+
+    rows, total_zones = await _repo().occupancy(camera_id, cur_from, cur_to, limit=10)
+    # el orden ya viene descendente de SQL — prohibido sorted() aqui
+    labels = [r["name"] for r in rows]
+    values = [r["value"] for r in rows]
+    truncated = total_zones > len(labels)
+
+    return {
+        "range": {"from": from_.isoformat(), "to": to_.isoformat(), "days": span_days},
+        "labels": labels,
+        "values": values,
+        "total_zones": total_zones,
+        "truncated": truncated,
+    }
+
+
+@router.get("/persons")
+@limiter.limit(V2_RATE_LIMIT)
+async def get_persons(
+    request: Request,
+    camera_id: str = Query(default="cam1"),
+    from_: datetime.date = Query(alias="from"),
+    to_: datetime.date = Query(alias="to"),
+) -> dict[str, Any]:
+    cur_from, cur_to, span_days = _resolve_range(from_, to_)
+
+    rows = await _repo().persons_ranking(camera_id, cur_from, cur_to, limit=10)
+    avatars = await _repo().person_avatars([pid for pid, _, _ in rows])
+
+    pipeline = _camera_manager.get(camera_id) if _camera_manager is not None else None
+    recognizer = getattr(pipeline, "recognizer", None)
+    available = bool(recognizer is not None and getattr(recognizer, "available", False))
+    if available:
+        # sqlite3 sincrono bajo threading.Lock compartido con el hilo de reconocimiento:
+        # llamarlo desde la corrutina pararia el event loop y con el el MJPEG y el WS
+        # (CLAUDE.md, Pitfall 5). Mismo precedente que main.py con get_heatmap.
+        names = {p["id"]: p["name"] for p in await asyncio.to_thread(recognizer.list_persons)}
+    else:
+        names = {}   # instalacion sin modelos de cara: el ranking degrada, no revienta
+
+    persons = [
+        {
+            "person_id": pid,
+            "name": names.get(pid) or f"Persona {pid}",
+            "avatar_url": avatars.get(pid),
+            "visits": cur,
+            "delta_pct": None if not prev else round((cur - prev) * 100 / prev),
+        }
+        for pid, cur, prev in rows  # el orden ya viene de SQL — nada de sorted()
+    ]
+
+    return {
+        "range": {"from": from_.isoformat(), "to": to_.isoformat(), "days": span_days},
+        "persons": persons,
+        "recognition_available": available,
     }
