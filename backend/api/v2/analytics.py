@@ -16,8 +16,10 @@ router SOLO formatea, rellena el eje a cero y calcula porcentajes de
 variacion sobre totales que ya trajo la base — nunca vuelve a agregar sobre
 filas ya traidas (OPS-14).
 
-El heatmap (/heatmap, /heatmap/scale) NO vive aqui: lo anade 31-06 sobre este
-mismo fichero. El export (/export) tampoco: lo anade 31-09.
+El heatmap (/heatmap, /heatmap/scale) se compone sobre el ultimo frame fuera
+del event loop (asyncio.to_thread), igual que /api/heatmap en main.py, y
+distingue 503 (sin camara/frame) de 404 (sin actividad acumulada) — el v1 no
+lo hace. El export (/export) no vive aqui: lo anade 31-09.
 """
 
 from __future__ import annotations
@@ -26,7 +28,8 @@ import asyncio
 import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+import cv2
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from backend.api.v2.deps import V2_RATE_LIMIT, limiter
 from backend.database import get_session_factory
@@ -246,4 +249,47 @@ async def get_persons(
         "range": {"from": from_.isoformat(), "to": to_.isoformat(), "days": span_days},
         "persons": persons,
         "recognition_available": available,
+    }
+
+
+@router.get("/heatmap")
+@limiter.limit(V2_RATE_LIMIT)
+async def get_heatmap(request: Request, camera_id: str = Query(default="cam1")) -> Response:
+    """Mapa de calor acumulado, compuesto sobre el ultimo frame (JPEG).
+
+    Acumula desde el arranque de la camara y NO sigue el rango de la vista (D-12):
+    el panel lo dice con un chip visible en vez de fingir que responde al selector.
+    503 y 404 significan cosas distintas y el panel tiene un texto para cada una,
+    a diferencia del v1 /api/heatmap, que devuelve 404 para las dos.
+    """
+    pipeline = _camera_manager.get(camera_id) if _camera_manager is not None else None
+    if pipeline is None or pipeline.get_frame() is None:
+        raise HTTPException(status_code=503, detail="Cámara sin señal")
+    img = await asyncio.to_thread(pipeline.get_heatmap)
+    if img is None:
+        raise HTTPException(status_code=404, detail="Sin actividad acumulada")
+    ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        raise HTTPException(status_code=500, detail="No se pudo codificar el mapa de calor")
+    return Response(content=jpeg.tobytes(), media_type="image/jpeg")
+
+
+@router.get("/heatmap/scale")
+@limiter.limit(V2_RATE_LIMIT)
+async def get_heatmap_scale(request: Request, camera_id: str = Query(default="cam1")) -> dict[str, Any]:
+    """Pico y media de la mascara acumulada, para la leyenda numerica del panel.
+
+    Mismo orden de comprobaciones que /heatmap (503 antes que 404) para que los
+    dos endpoints cuenten la misma historia.
+    """
+    pipeline = _camera_manager.get(camera_id) if _camera_manager is not None else None
+    if pipeline is None or pipeline.get_frame() is None:
+        raise HTTPException(status_code=503, detail="Cámara sin señal")
+    scale = await asyncio.to_thread(pipeline.get_heatmap_scale)
+    if scale is None:
+        raise HTTPException(status_code=404, detail="Sin actividad acumulada")
+    return {
+        "peak": scale["peak"],
+        "mean": scale["mean"],
+        "unit": "frames de detección con presencia",
     }
