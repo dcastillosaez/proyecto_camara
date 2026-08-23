@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Completada 31-03-PLAN.md (checkpoint aprobado tras fix)
-last_updated: "2026-08-23T11:04:30.384Z"
+stopped_at: Completada 31-04-PLAN.md
+last_updated: "2026-08-23T11:25:00.000Z"
 last_activity: 2026-08-23
 progress:
   total_phases: 32
   completed_phases: 15
   total_plans: 87
-  completed_plans: 70
-  percent: 80
+  completed_plans: 71
+  percent: 82
 ---
 
 # Project State
@@ -27,8 +27,30 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 31 (Vista de analitica) — EXECUTING
-Plan: 4 of 11
+Plan: 5 of 11
 Status: Ready to execute
+
+**31-04 puso las cuatro agregaciones de la fase en SQL.** `AnalyticsRepo`
+(`backend/storage/repositories.py`) expone `hourly()`, `summary()`,
+`occupancy()`, `persons_ranking()` y `person_avatars()`, todas resueltas sobre
+`events` — nunca `detection_stats` — con parámetros siempre por diccionario,
+nunca f-strings con datos del cliente. `bucket_for()` decide cubo horario
+(≤7 días) o diario por encima, sobre `substr(ts,1,13)`/`substr(ts,1,10)` del
+TEXT ISO de ancho fijo (2,3x más rápido que `strftime`). `persons_ranking()`
+es la única consulta que necesita `INDEXED BY idx_events_analytics` —sin el
+hint SQLite hace skip-scan y sube de 26,7 ms a 212,6 ms @100k—, y
+`person_avatars()` resuelve el capture más reciente desde `captures`
+(vive en `events.db`, no en `persons.db`) sin `JOIN persons` ni
+`ATTACH DATABASE`. Las cuatro agregaciones quedan medidas por debajo del
+presupuesto de 500 ms del criterio 4 sobre 100.000 eventos con identidad y
+zona sembradas (`persons=60`, `zones=14`), con dos tests de regresión que
+impiden medir sobre datos vacíos y un `EXPLAIN QUERY PLAN` que fija el uso del
+índice del ranking. 20 tests nuevos, suite completa **637 passed, 2 skipped**.
+Sin desviaciones de código de producción — un ajuste de redacción de test
+donde el plan pedía un cubo con 0 eventos, irrealizable con `GROUP BY`. OPS-12
+y OPS-14 ya estaban cerrados por 31-01/31-02; OPS-13 avanza pero no se cierra
+todavía (el repositorio existe, pero nada "muestra" el ranking hasta el router
+de 31-05 y la UI de 31-08). Ver `31-04-SUMMARY.md`.
 
 **31-02 cerró el heatmap por el lado del pipeline.** `compose_heatmap` pasa de
 `cv2.COLORMAP_JET` a `cv2.COLORMAP_INFERNO` (D-13: rampa perceptualmente

@@ -594,13 +594,13 @@ Plans:
   4. Las consultas sobre 100.000 eventos responden en menos de 500 ms
   5. Exportación CSV/JSON del rango visible
 **Spec**: SPEC_v2.md Phase 31
-**Plans:** 3/11 plans executed
+**Plans:** 4/11 plans executed
 
 Plans:
 - [x] 31-01-PLAN.md — Índice `idx_events_analytics`, migración v3→v4 y siembra con identidad/zona (OPS-12, OPS-14)
 - [x] 31-02-PLAN.md — Heatmap a INFERNO y `DetectionWorker.heatmap_scale()` (OPS-12)
 - [x] 31-03-PLAN.md — Andamiaje de la segunda vista: tablist, retícula, marcado de analítica y `nav.js` (OPS-12, OPS-13, OPS-15)
-- [ ] 31-04-PLAN.md — `AnalyticsRepo`: serie, resumen, ocupación y ranking resueltos en SQL y medidos @100k (OPS-12..14)
+- [x] 31-04-PLAN.md — `AnalyticsRepo`: serie, resumen, ocupación y ranking resueltos en SQL y medidos @100k (OPS-12..14)
 - [ ] 31-05-PLAN.md — Router `/api/v2/analytics`: summary, hourly, occupancy, persons y criterio 3 (OPS-12..14)
 - [ ] 31-06-PLAN.md — Heatmap v2: `/heatmap` y `/heatmap/scale`, con 404 y 503 distintos (OPS-12)
 - [ ] 31-07-PLAN.md — `analytics-charts.js`: las dos gráficas, activación diferida y resumen accesible (OPS-12, OPS-14)
