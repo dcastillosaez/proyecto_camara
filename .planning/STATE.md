@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: 31-11-PLAN.md Tasks 1-2 completadas, Task 3 (checkpoint visual bloqueante) pendiente
-last_updated: "2026-08-23T18:00:00.000Z"
-last_activity: 2026-08-23
+stopped_at: Fase 31 completa (11/11 planes) — vista de analítica en producción; checkpoint visual de 31-11 Task 3 aprobado tras corregir una regresión real de Chart.js en carga directa de #analitica; OPS-12..OPS-15 cerrados. Siguiente paso: /gsd:plan-phase 32
+last_updated: "2026-08-23T19:15:00.000Z"
+last_activity: 2026-08-23 -- Fase 31 cerrada: fix de la regresión de nav.js encontrada por el checkpoint, OPS-12..OPS-15 marcados, ROADMAP y STATE actualizados
 progress:
   total_phases: 32
-  completed_phases: 15
+  completed_phases: 16
   total_plans: 87
-  completed_plans: 77
-  percent: 89
+  completed_plans: 78
+  percent: 90
 ---
 
 # Project State
@@ -21,33 +21,57 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 31 — Vista de analitica
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (sin planificar)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 31 (Vista de analitica) — EXECUTING
-Plan: 11 of 11
-Status: Tasks 1-2 completadas, checkpoint visual (Task 3, bloqueante) pendiente de verificacion humana
+Phase: 31 (Vista de analítica) — COMPLETA (11/11 planes)
+Plan: 11 of 11 — 31-11 cerrada
+Status: Fase 31 cerrada; siguiente paso `/gsd:plan-phase 32`
 
-**31-11 (puerta de fase, parcial) ampliо el contrato mecanico y midio los criterios 3 y 4
-con numeros reales.** `LOCKED_JS` incorpora los seis modulos de la vista (`nav.js` +
-cinco `views/analytics*.js`) y `TEST_analytics_no_client_aggregation` barre esos mismos
-ficheros buscando `.reduce(`/`.sort(`/`.filter(`/`Math.max(`/`Math.min(` — encontro y
-forzo la correccion de un incumplimiento real: el propio comentario de cabecera de
+**La Fase 31 está completa.** La vista de analítica añade un segundo tab junto a
+Operaciones: personas por hora/día con superposición del periodo anterior, ocupación
+por zona, heatmap acumulado con leyenda relativa, ranking de personas con tendencia y
+exportación CSV/JSON del rango visible. Las cuatro peticiones de cada tanda salen en
+paralelo con un único `AbortController` por tanda (D-09) y las agregaciones se
+calculan siempre en SQL — `TEST_analytics_no_client_aggregation` lo convierte en test
+permanente, no en promesa del plan. OPS-12..OPS-15 quedan marcados.
+
+**31-11 (puerta de fase) cerró las tres piezas.** `LOCKED_JS` incorpora los seis
+módulos de la vista (`nav.js` + cinco `views/analytics*.js`) y
+`TEST_analytics_no_client_aggregation` barre esos mismos ficheros buscando
+`.reduce(`/`.sort(`/`.filter(`/`Math.max(`/`Math.min(` — encontró y forzó la
+corrección de un incumplimiento real: el propio comentario de cabecera de
 `analytics-ranking.js` citaba esas expresiones al explicar que no las usaba. Criterio 4
 (presupuesto 500 ms @100k): `hourly` ~228-241 ms, `summary` ~346 ms, `occupancy` ~13-15
 ms, `persons_ranking` ~13-14 ms — los cuatro por debajo del presupuesto, con menos margen
-que lo estimado en 31-RESEARCH.md porque la medicion compartio maquina con el servidor de
+que lo estimado en 31-RESEARCH.md porque la medición compartió máquina con el servidor de
 desarrollo ya en marcha para el checkpoint. Criterio 3 (presupuesto 100 KB): 565 bytes
-(`/hourly` 30 dias), 3210 bytes (`/hourly` 7 dias), 1147 bytes (`/export json`). Migracion
-v3→v4 verificada sobre el backup automatico real que `run_migrations()` genero hoy mismo
-antes de migrar `data/events.db` (1037 filas antes y despues, `idx_events_analytics`
-aparece, `schema_version` pasa a 4) — no una base sintetica de test. Suite completa:
-**675 passed, 2 skipped** (+68 sobre la Fase 30). Queda pendiente la Task 3: checkpoint
-visual bloqueante con el servidor real (ya en marcha en este entorno) contra
-`http://localhost:8000/#analitica`. OPS-12..OPS-15 y el cierre formal de la fase esperan
-a esa aprobacion. Ver `31-11-SUMMARY.md` (parcial).
+(`/hourly` 30 días), 3210 bytes (`/hourly` 7 días), 1147 bytes (`/export json`). Migración
+v3→v4 verificada sobre el backup automático real que `run_migrations()` generó el mismo
+día antes de migrar `data/events.db` (1037 filas antes y después, `idx_events_analytics`
+aparece, `schema_version` pasa a 4) — no una base sintética de test. Suite completa:
+**675 passed, 2 skipped** (+68 sobre la Fase 30).
+
+El checkpoint visual de Task 3, verificado con servidor y navegador reales, encontró una
+**regresión real**: abrir `http://localhost:8000/#analitica` directamente (marcador,
+recarga, URL pegada) dejaba las dos gráficas ancladas al tamaño de reserva de Chart.js
+(300×150) para siempre — la trampa exacta que D-03 llevaba toda la fase advirtiendo,
+pero en el único camino de arranque (hash ya presente al cargar) que ningún plan anterior
+había ejercitado; activar la pestaña con un clic (el camino que sí se había probado)
+funcionaba bien. Causa: `initNav()` resuelve el hash y llama a `activate()` de forma
+síncrona dentro de `DOMContentLoaded`, y esa misma función crea las gráficas
+(`createCharts()`) en el mismo tick en que retira `hidden` del contenedor — antes de que
+el navegador confirme el recálculo de layout. Corregido en `nav.js`: la primera llamada a
+`_boot()` se difiere con `requestAnimationFrame`, que sí garantiza layout aplicado antes
+de medir el contenedor. Aplicado sin condicionar el origen de la activación (hash vs.
+clic) por ser idempotente e inofensivo en ambos casos. Único otro `new Chart(` del
+proyecto (`dashboard-events.js`) revisado y descartado: vive en la vista visible por
+defecto, nunca se construye dentro de un contenedor recién revelado. Checkpoint aprobado
+tras el fix; lo que exige actividad de cámara real (heatmap con datos genuinos, ranking
+con personas reconocidas) queda diferido como **12º checkpoint manual**, mismo criterio
+no bloqueante que los 11 anteriores. Ver `31-11-SUMMARY.md`.
 
 **31-10 cerro el orquestador: `analytics.js` y `analytics-export.js` cablean por
 primera vez el andamiaje de 31-03, las graficas de 31-07, el rango/ranking de 31-08
@@ -452,7 +476,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   uno a uno con comando `pytest -k` en `24-06-SUMMARY.md` (criterio 6:
   87.5% de reducción de inferencias faciales sobre un track no
   confirmado, umbral exigido ≥70%). FACE-07..FACE-11 cerrados.
-  Quedan **11 checkpoints con cámara real** sin ejecutar, ninguno
+  Quedan **12 checkpoints con cámara real** sin ejecutar, ninguno
   bloqueante para seguir programando: 19-01 Task 5 (migrar BD real),
   19-02 Task 5 (validación de reglas en vivo), 20-02 Task 4 (validación
   visual del pre-buffer), 21-01 Task 5 (coste de instrumentación y
@@ -475,13 +499,18 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   `UNKNOWN_PERSON` reciente con recorte y `track_id`, y el ciclo
   silenciar → atenuar → reactivar sobre un grupo con regla activa — el
   resto del checkpoint sí se verificó con navegador y servidor reales,
-  ver `30-12-SUMMARY.md`).
+  ver `30-12-SUMMARY.md`), y 31-11 Task 3 (lo que exige actividad de
+  cámara real en la vista de analítica: heatmap con datos genuinos,
+  ranking con personas reconocidas de verdad — el resto del checkpoint sí
+  se verificó con navegador y servidor reales, incluida una regresión
+  real de Chart.js encontrada y corregida en el propio checkpoint, ver
+  `31-11-SUMMARY.md`).
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
 Last activity: 2026-08-23
 
-Progress v2.0: [██████░░░░] ~64% (14/22 fases completas)
+Progress v2.0: [███████░░░] ~68% (15/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
 
 ## Mediciones acumuladas del bloque A y Fase 23
@@ -499,35 +528,35 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 ## Siguiente paso
 
 ```
-/gsd:plan-phase 31
+/gsd:plan-phase 32
 ```
 
-La **Fase 30 (Event Timeline y centro de alertas) está completa**: 12/12 planes
-(`30-01`..`30-12`), OPS-07..OPS-11 cerrados, suite **607 passed, 2 skipped**. La
-línea temporal accionable sustituye al card plano de eventos, con filtros
-resueltos en servidor por cursor, scroll infinito, centro de alertas agrupado por
-regla con silenciado temporal y "Marcar como persona" con alcance retroactivo. Las
-decisiones no obvias de la fase: un **suscriptor único ordenado** del `EventBus`
-(`make_event_pipeline()`) como solución a la carrera de reglas de D-14 —evaluar,
-escribir `payload.rules`, `INSERT`, emitir por WS, y solo después diferir
-`run_actions()`—; el **silenciado persistido en `app_config`** (clave
-`alerts.muted_rules`, duraciones en lista blanca, sin "para siempre") y **solo de
-presentación**, de modo que la regla silenciada sigue grabando su clip y mandando
-su aviso; el `GET /api/v2/timeline` que planteaba SPEC_v2 se **descartó** en favor
-de extender `/api/v2/events`, que ya tenía consumidor; el **snapshot de evento**
-—`Event.snapshot_path` existía desde la Fase 19 y nadie lo escribía— se implementó
-en 30-04 para que la miniatura no cayera siempre al marcador; y `person_name` se
-**resuelve en el cliente** contra el `Map` de `/persons` en vez de denormalizarlo
-en cada fila de `events`.
+La **Fase 31 (Vista de analítica) está completa**: 11/11 planes (`31-01`..`31-11`),
+OPS-12..OPS-15 cerrados, suite **675 passed, 2 skipped**. La vista de analítica añade
+un segundo tab junto a Operaciones: personas por hora/día con superposición del
+periodo anterior, ocupación por zona, heatmap acumulado con leyenda relativa, ranking
+de personas con tendencia y export CSV/JSON del rango visible, con las cuatro
+peticiones de cada tanda en paralelo (D-08/D-09) y las agregaciones siempre resueltas
+en SQL —`TEST_analytics_no_client_aggregation` lo fija como test permanente, no como
+promesa del plan (D-07)—. El checkpoint visual de `31-11` Task 3 encontró y corrigió
+una regresión real: abrir `#analitica` directamente en la URL dejaba las gráficas
+ancladas al tamaño de reserva de Chart.js (300×150) porque `createCharts()` se
+ejecutaba en el mismo tick síncrono que revelar el contenedor, antes de que el
+navegador confirmara el layout; corregido diferiendo esa primera llamada con
+`requestAnimationFrame` en `nav.js`. Lo que exige actividad de cámara real (heatmap
+con datos genuinos, ranking con personas reconocidas) queda diferido como **12º
+checkpoint manual**, no bloqueante.
 
-La Fase 31 (Vista de analítica, OPS-12..OPS-15: personas por hora, ocupación por
-zona, heatmap, ranking, tendencias y export CSV/JSON, con las agregaciones en base
-de datos y no en el navegador) es la siguiente y **no está planificada todavía**.
+La Fase 32 (Vista de cámara y configuración visual, OPS-16..OPS-20 y SET-01..SET-04:
+operar y configurar el sistema sin tocar `.env`) es la siguiente y **no está
+planificada todavía** — ya cuenta con un borrador de `32-UI-SPEC.md` preparado en
+paralelo en la rama `feature/fase-31-32-design`, pendiente de planificación formal.
 
-Las Fases 28 (Refactor del frontend a módulos ES) y 29 (Vista de operaciones)
-están **completas en código** y aportan cada una un checkpoint manual pendiente
-—paridad funcional y carga en LAN la 28, verificación visual de los criterios
-1/4/5/6 la 29—, ninguno bloqueante.
+Las Fases 28 (Refactor del frontend a módulos ES), 29 (Vista de operaciones) y 30
+(Event Timeline y centro de alertas) están **completas en código** y aportan cada una
+un checkpoint manual pendiente —paridad funcional y carga en LAN la 28, verificación
+visual de los criterios 1/4/5/6 la 29, y los cuatro puntos que exigen cámara real de
+30-12 Task 2 la 30—, ninguno bloqueante.
 
 La Fase 27 (Multi-clase y contexto de escena) está **completa**: 11/11
 planes (`27-01`..`27-11`), BEH-06..BEH-09 cerrados, suite 519/519.
@@ -738,7 +767,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 28 — Frontend a módulos ES | C | ✓ Completa (código) | 2026-08-20 | ⧗ Checklist de paridad funcional + medición de carga en LAN (28-09) |
 | 29 — Vista de operaciones | C | ✓ Completa (código) | 2026-08-20 | ⧗ Checkpoint visual Task 3 de 29-03 (criterios éxito 1/4/5/6 del ROADMAP) |
 | 30 — Event Timeline y alertas | C | ✓ Completa (código) | 2026-08-21 | ⧗ Cuatro puntos del checkpoint visual 30-12 Task 2 que exigen cámara real (criterios 3, 4 y 5 del ROADMAP y el ciclo completo de silenciado) |
-| 31 — Vista de analítica | C | — Sin planificar | — | Depende de 30 |
+| 31 — Vista de analítica | C | ✓ Completa | 2026-08-23 | ⧗ Lo que exige actividad de cámara real (heatmap con datos genuinos, ranking con personas reconocidas) — 12º checkpoint manual |
 | 32 — Vista de cámara y config visual | C | — Sin planificar | — | Depende de 31 |
 | 33 — Editores visuales | C | — Sin planificar | — | Depende de 32 |
 | 34 — Tests E2E | C | — Sin planificar | — | Depende de 33 |
@@ -780,11 +809,16 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **607 passed, 2 skipped** (última ejecución 2026-08-21 tras `30-12`,
-puerta de la Fase 30: +4 tests de rendimiento en `tests/test_repositories.py` que miden el
-criterio 3 con 10.000 eventos sembrados por `scripts/seed_events.py` — primera página,
-página 100 por cursor, filtro multi-tipo y existencia de `idx_events_ts_id` —, todos por
-debajo del presupuesto de 100 ms; `test_architecture.py`, `test_security_regression.py` y
+Suite completa: **675 passed, 2 skipped** (última ejecución 2026-08-23 tras `31-11`,
+puerta de la Fase 31: +68 sobre la Fase 30, entre ellos `TEST_analytics_no_client_aggregation`
+—barrido literal de `.reduce(`/`.sort(`/`.filter(`/`Math.max(`/`Math.min(` sobre los seis
+módulos de la vista de analítica, OPS-14/D-07— y `LOCKED_JS` ampliado con esos mismos seis
+módulos. `tests/test_frontend_modules.py` verificado de nuevo tras el fix de `nav.js` del
+checkpoint de Task 3 (9 passed, sin regresión). Cifra anterior **607 passed, 2 skipped**
+(tras `30-12`, puerta de la Fase 30: +4 tests de rendimiento en `tests/test_repositories.py`
+que miden el criterio 3 con 10.000 eventos sembrados por `scripts/seed_events.py` — primera
+página, página 100 por cursor, filtro multi-tipo y existencia de `idx_events_ts_id` —, todos
+por debajo del presupuesto de 100 ms; `test_architecture.py`, `test_security_regression.py` y
 `test_rule_engine.py` verdes, este último sin un solo commit en toda la fase. Cifra
 anterior **570/570** (tras `30-04`:
 +15 tests — 11 en `tests/test_snapshots.py` (recorte real en disco, `bbox=None`, deshabilitado,

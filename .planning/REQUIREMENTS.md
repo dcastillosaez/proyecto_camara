@@ -252,7 +252,7 @@
 - [x] **OPS-10**: Un evento nuevo aparece en la interfaz en menos de un segundo
 - [x] **OPS-11**: El centro de alertas agrupa alertas activas, muestra qué regla las disparó y permite silenciarlas
 - [x] **OPS-12**: Existe una vista de analítica con personas por hora, ocupación por zona y heatmap
-- [ ] **OPS-13**: La analítica muestra ranking de personas por visitas y tendencia frente al periodo anterior
+- [x] **OPS-13**: La analítica muestra ranking de personas por visitas y tendencia frente al periodo anterior
 - [x] **OPS-14**: Las agregaciones se calculan en base de datos, no en el navegador
 - [x] **OPS-15**: La analítica es exportable a CSV y JSON en el rango visible
 - [ ] **OPS-16**: Existe una vista de cámara con live view y salud en tiempo real (FPS, latencia, CPU, RAM, estado RTSP)
