@@ -1070,3 +1070,12 @@ class ConfigRepo:
         async with self._sf() as session:
             result = await session.execute(select(models.AppConfig))
             return {r.key: r.value for r in result.scalars().all()}
+
+    async def delete(self, key: str) -> bool:
+        async with self._sf() as session:
+            async with session.begin():
+                row = await session.get(models.AppConfig, key)
+                if row:
+                    await session.delete(row)
+                    return True
+        return False
