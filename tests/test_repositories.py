@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime
+import re
+import sqlite3
 import time
 
 import pytest
@@ -690,3 +692,65 @@ async def TEST_timeline_index_exists_after_init_10k(db):
         names = {row[0] for row in result.all()}
 
     assert "idx_events_ts_id" in names
+
+
+# --- Fase 31 (OPS-12/OPS-14): siembra de identidad y zona en seed_events ----------
+
+
+def TEST_seed_events_populates_persons_and_zones(tmp_path):
+    """Con persons/zones pedidos, la siembra reparte identidad y zona en las
+    proporciones del banco de pruebas del research (35% / 60%), necesarias para
+    que los tests de ranking y ocupacion de 31-04 midan sobre datos reales."""
+    db_path = tmp_path / "seed_persons_zones.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    models.Base.metadata.create_all(engine)
+    engine.dispose()
+
+    seed_events(str(db_path), n=5_000, days=30, camera_id="cam1", persons=60, zones=14)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        with_person = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE person_id IS NOT NULL").fetchone()[0]
+        with_zone = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE zone_id IS NOT NULL").fetchone()[0]
+        distinct_persons = conn.execute(
+            "SELECT COUNT(DISTINCT person_id) FROM events").fetchone()[0]
+        zone_values = [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT zone_id FROM events WHERE zone_id IS NOT NULL")
+        ]
+    finally:
+        conn.close()
+
+    assert total == 5_000
+    person_ratio = with_person / total
+    zone_ratio = with_zone / total
+    assert 0.30 <= person_ratio <= 0.40, person_ratio
+    assert 0.55 <= zone_ratio <= 0.65, zone_ratio
+    assert distinct_persons <= 60
+    assert all(re.fullmatch(r"zona-\d+", z) for z in zone_values)
+
+
+def TEST_seed_events_defaults_leave_person_and_zone_null(tmp_path):
+    """Guarda de compatibilidad con la Fase 30: sin persons/zones, la siembra
+    sigue dejando person_id/zone_id a NULL en el 100% de las filas."""
+    db_path = tmp_path / "seed_defaults.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    models.Base.metadata.create_all(engine)
+    engine.dispose()
+
+    seed_events(str(db_path), n=500, days=30, camera_id="cam1")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        with_person = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE person_id IS NOT NULL").fetchone()[0]
+        with_zone = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE zone_id IS NOT NULL").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert with_person == 0
+    assert with_zone == 0
