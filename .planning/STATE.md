@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Completada 31-01-PLAN.md
-last_updated: "2026-08-23T10:47:27.387Z"
+stopped_at: Completada 31-02-PLAN.md
+last_updated: "2026-08-23T10:50:56.657Z"
 last_activity: 2026-08-23
 progress:
   total_phases: 32
   completed_phases: 15
   total_plans: 87
-  completed_plans: 68
-  percent: 78
+  completed_plans: 69
+  percent: 79
 ---
 
 # Project State
@@ -27,8 +27,18 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 31 (Vista de analitica) — EXECUTING
-Plan: 2 of 11
+Plan: 3 of 11
 Status: Ready to execute
+
+**31-02 cerró el heatmap por el lado del pipeline.** `compose_heatmap` pasa de
+`cv2.COLORMAP_JET` a `cv2.COLORMAP_INFERNO` (D-13: rampa perceptualmente
+uniforme, se funde con un frame nocturno en vez de inventar fronteras de
+arcoiris) y `DetectionWorker.heatmap_scale()` expone `{"peak", "mean"}` de la
+máscara acumulada bajo `self._lock` — mismo molde que `get_object_boxes()` —,
+devolviendo `None` tanto sin máscara como con pico 0 para que 31-06 distinga
+404 de 503 al construir `GET /api/v2/analytics/heatmap/scale`. El endpoint v1
+`/api/heatmap` no se tocó y hereda INFERNO por compartir `compose_heatmap`. 4
+tests nuevos, suite de detección y arquitectura en verde. Ver `31-02-SUMMARY.md`.
 
 **La Fase 30 está completa.** El card plano de "Eventos recientes" ya no existe:
 en su sitio hay una línea temporal accionable de filas de 52 px con barra de
@@ -788,8 +798,8 @@ en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-23T10:47:27.377Z
-Stopped at: Completada 31-01-PLAN.md
+Last session: 2026-08-23T10:50:56.647Z
+Stopped at: Completada 31-02-PLAN.md
   "Marcar como persona" está completo: `markPerson.js` precarga el recorte del evento,
   muestra el aviso de alcance retroactivo con el N del servidor antes de confirmar,
   enrola contra `/api/enroll_face` (sin duplicar sus validaciones), aplica la identidad
