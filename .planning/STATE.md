@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 32 en marcha (2/8 planes) — 32-02 cerrado (GET/PUT/restore /api/v2/config, unico endpoint HTTP nuevo de la fase); SET-01..04 cerrados, OPS-18..20 avanzan sin cerrar (esperan interfaz). Siguiente paso: 32-03 (frontend, arranque de la vista Camara/Ajustes)
-last_updated: "2026-08-23T18:16:00.000Z"
-last_activity: 2026-08-23 -- 32-02 cerrado: router GET/PUT/restore de configuracion con validacion por lote y auditoria CONFIG_CHANGED, suite completa verde
+stopped_at: Fase 32 en marcha (3/8 planes) — 32-03 cerrado (8 clases CSS de contrato visual para Camara/Ajustes en components.css, 172->231 lineas); capa CSS lista para que 32-04/32-05 la consuman por classList. Siguiente paso: 32-04 (vista Camara)
+last_updated: "2026-08-23T18:40:00.000Z"
+last_activity: 2026-08-23 -- 32-03 cerrado: .metric-tile/.rtsp-card/.cfg-tree/.cfg-node/.cfg-row/.cfg-badge/.cfg-applies/.cfg-savebar anadidas y .cam-toggle::before de 44x44 (WCAG 2.2 AA 2.5.8), TEST_line_limit en verde
 progress:
   total_phases: 32
   completed_phases: 16
   total_plans: 90
-  completed_plans: 80
-  percent: 89
+  completed_plans: 81
+  percent: 90
 ---
 
 # Project State
@@ -21,14 +21,34 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (2/8 planes)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (3/8 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (2/8 planes)
-Plan: 2 of 8 — 32-02 cerrado
-Status: 32-02 cerrado; siguiente paso `/gsd:execute-phase 32` (32-03, arranque de frontend)
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (3/8 planes)
+Plan: 3 of 8 — 32-03 cerrado
+Status: 32-03 cerrado; siguiente paso `/gsd:execute-phase 32` (32-04, vista Cámara)
+
+**32-03 añade la capa de contrato visual CSS que 32-04 y 32-05 importan como dado.**
+`frontend/css/components.css` gana las 8 clases fijadas por `32-UI-SPEC.md`:
+`.metric-tile`/`.rtsp-card` para la vista Cámara y `.cfg-tree`/`.cfg-node`/`.cfg-row`/
+`.cfg-badge`/`.cfg-applies`/`.cfg-savebar` para la vista Ajustes, todas con las medidas
+exactas del spec (padding 12px de `.metric-tile`, altura mínima 56px de `.cfg-row`, 56px
+sticky de `.cfg-savebar`, etc.) y sin inventar valores. De paso corrige `.cam-toggle`
+(heredado de la Fase 11): un `::before` con inset asimétrico lleva la pista de 40×20 a un
+área de pulsación real de 44×44 (WCAG 2.2 AA 2.5.8) sin tocar el tamaño visual, arreglando
+los 4 interruptores de "Ajustes de cámara" que ya existían. La medición real al ejecutar
+(172 líneas, no las 163 estimadas en la investigación, porque la Fase 31 ya había dejado su
+propio bloque en el mismo fichero) dejó margen de sobra para extender in situ sin crear un
+`config.css` nuevo ni tocar `LOCKED_CSS`: 172 → 231 líneas, `TEST_line_limit` en verde con
+69 líneas de margen restante bajo el tope de 300. Sin novena clase inventada: el estado de
+error de `.cfg-row` engancha a los elementos nativos `input`/`select` que ya usan los
+controles reales del proyecto (`.filter-input`, `input[type=time]`, `.cam-toggle`). OPS-16,
+OPS-17 y OPS-18 avanzan (la capa CSS ya soporta métricas/RTSP/árbol/filas de config) pero
+no se cierran: exigen interfaz visible funcionando, que llega con 32-04/32-05 y se marca en
+la puerta de fase 32-08. Suite dirigida verde (`tests/test_frontend_modules.py` 9 passed);
+plan solo de CSS, sin relanzar la suite completa. Ver `32-03-SUMMARY.md`.
 
 **32-02 construye el unico endpoint HTTP nuevo de la Fase 32.**
 `backend/api/v2/config.py` (296 lineas) convierte el esquema declarativo de 32-01 en
