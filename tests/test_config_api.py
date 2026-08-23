@@ -376,3 +376,63 @@ def field_by_key_module_secret(key: str) -> bool:
     from backend.api.v2.config_schema import field_by_key
     f = field_by_key(key)
     return bool(f and f.secret)
+
+
+# ─── POST /api/v2/config/{section}/restore ───────────────────────────────────
+async def TEST_restore_unknown_section_returns_404():
+    repo = _fake_repo()
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.post("/api/v2/config/no-existe/restore")
+    assert resp.status_code == 404
+    repo.delete.assert_not_awaited()
+
+
+async def TEST_restore_deletes_only_runtime_rows_of_that_section():
+    repo = _fake_repo(get_all_return={
+        "yolo_confidence": 0.6, "yolo_imgsz": 512, "yolo_model_path": "custom.pt",
+        "process_width": 1600,  # pertenece a "camara", no a "deteccion"
+    })
+    mock_engine = MagicMock()
+    config_module.configure(None, mock_engine)
+
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.post("/api/v2/config/deteccion/restore")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["section"] == "deteccion"
+    assert body["restored_count"] == 3
+    deleted_keys = {c.args[0] for c in repo.delete.await_args_list}
+    assert deleted_keys == {"yolo_confidence", "yolo_imgsz", "yolo_model_path"}
+
+    mock_engine.config_changed.assert_called_once()
+    _, kwargs = mock_engine.config_changed.call_args
+    assert kwargs["section"] == "deteccion"
+    assert kwargs["restored"] is True
+    assert set(kwargs["diff"].keys()) == {"yolo_confidence", "yolo_imgsz", "yolo_model_path"}
+
+
+async def TEST_restore_with_no_runtime_fields_is_a_noop():
+    repo = _fake_repo(get_all_return={})
+    mock_engine = MagicMock()
+    config_module.configure(None, mock_engine)
+
+    with patch.object(config_module, "_config_repo", return_value=repo):
+        async with await _client() as client:
+            resp = await client.post("/api/v2/config/deteccion/restore")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["restored_count"] == 0
+    repo.delete.assert_not_awaited()
+    mock_engine.config_changed.assert_not_called()
+
+
+# ─── Wiring en main.py ───────────────────────────────────────────────────────
+def TEST_main_imports_with_config_router_registered():
+    import backend.main as main_module
+    paths = {getattr(r, "path", None) for r in main_module.app.routes}
+    assert "/api/v2/config" in paths
+    assert "/api/v2/config/{section_key}/restore" in paths
