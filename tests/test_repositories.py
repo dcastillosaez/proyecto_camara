@@ -920,3 +920,141 @@ async def TEST_analytics_summary_previous_total_zero_is_not_an_error(db):
     assert result["previous_total"] == 0
     assert "percent" not in result
     assert "change_pct" not in result
+
+
+async def TEST_analytics_occupancy_orders_desc_and_truncates(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    for i in range(1, 13):
+        for _ in range(i):
+            await events.insert(make_event(
+                type=EventType.ZONE_ENTERED, ts=ts, zone_id=f"zona-{i}"))
+
+    zones, total_zones = await repo.occupancy("cam1", cur_from, cur_to)
+
+    assert total_zones == 12
+    assert len(zones) == 10
+    values = [z["value"] for z in zones]
+    assert values == sorted(values, reverse=True)
+    assert zones[0] == {"zone_id": "zona-12", "name": "zona-12", "value": 12}
+
+
+async def TEST_analytics_occupancy_only_counts_zone_entered(db):
+    """Una intrusion ya esta contada como entrada: sumarla tambien duplicaria
+    la ocupacion de la zona."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    await events.insert(make_event(type=EventType.ZONE_ENTERED, ts=ts, zone_id="zona-1"))
+    await events.insert(make_event(type=EventType.INTRUSION, ts=ts, zone_id="zona-1"))
+
+    zones, total_zones = await repo.occupancy("cam1", cur_from, cur_to)
+
+    assert total_zones == 1
+    assert zones == [{"zone_id": "zona-1", "name": "zona-1", "value": 1}]
+
+
+async def TEST_analytics_occupancy_falls_back_to_zone_id_when_zone_deleted(db):
+    """Sin fila en `zones` (zona borrada, o nunca dada de alta), el COALESCE
+    devuelve el zone_id crudo -- nunca None ni la cadena 'null'."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    await events.insert(make_event(type=EventType.ZONE_ENTERED, ts=ts, zone_id="zona-borrada"))
+
+    zones, _ = await repo.occupancy("cam1", cur_from, cur_to)
+
+    assert zones == [{"zone_id": "zona-borrada", "name": "zona-borrada", "value": 1}]
+
+
+async def TEST_analytics_ranking_orders_desc_and_limits(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    for person_id in range(1, 13):
+        for _ in range(person_id):
+            await events.insert(make_event(
+                type=EventType.PERSON_RECOGNIZED, ts=ts, person_id=person_id))
+
+    ranking = await repo.persons_ranking("cam1", cur_from, cur_to)
+
+    assert len(ranking) == 10
+    cur_values = [cur for _, cur, _ in ranking]
+    assert cur_values == sorted(cur_values, reverse=True)
+    assert ranking[0] == (12, 12, 0)
+
+
+async def TEST_analytics_ranking_excludes_null_person_id(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    await events.insert(make_event(type=EventType.PERSON_RECOGNIZED, ts=ts, person_id=1))
+    await events.insert(make_event(type=EventType.UNKNOWN_PERSON, ts=ts, track_id=99))
+
+    ranking = await repo.persons_ranking("cam1", cur_from, cur_to)
+
+    assert ranking == [(1, 1, 0)]
+
+
+async def TEST_analytics_ranking_returns_previous_window_counts(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    for _ in range(3):
+        await events.insert(make_event(
+            type=EventType.PERSON_RECOGNIZED, ts=datetime.datetime(2026, 1, 2, 10, 0), person_id=7))
+    for _ in range(5):
+        await events.insert(make_event(
+            type=EventType.PERSON_RECOGNIZED, ts=datetime.datetime(2026, 1, 1, 10, 0), person_id=7))
+
+    ranking = await repo.persons_ranking("cam1", cur_from, cur_to)
+
+    assert ranking == [(7, 3, 5)]
+
+
+async def TEST_analytics_person_avatars_returns_latest_capture(db):
+    """`captures` vive en events.db pero NO en storage.models (Base distinta en
+    backend/database.py): se crea a mano aqui, igual que el resto de tests de
+    este fichero crean estado con sqlite3 directo cuando hace falta."""
+    db_file, sf = db
+    repo = AnalyticsRepo(sf)
+
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS captures ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, person_id INTEGER NOT NULL, "
+            "timestamp DATETIME NOT NULL, image_path VARCHAR(255))"
+        )
+        conn.executemany(
+            "INSERT INTO captures (person_id, timestamp, image_path) VALUES (?, ?, ?)",
+            [
+                (1, "2026-01-01 09:00:00.000000", "/data/gallery/1/old.jpg"),
+                (1, "2026-01-02 09:00:00.000000", "/data/gallery/1/new.jpg"),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    avatars = await repo.person_avatars([1])
+
+    assert avatars == {1: "/gallery/1/new.jpg"}

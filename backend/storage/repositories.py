@@ -10,6 +10,7 @@ import base64
 import datetime
 import json
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import String, and_, bindparam, case, func, select, text, tuple_, update
@@ -932,6 +933,116 @@ class AnalyticsRepo:
             "min_value": int(totals.min_value or 0),
             "known": int(identity.known or 0),
             "unknown": int(identity.unknown or 0),
+        }
+
+    async def occupancy(
+        self,
+        camera_id: str,
+        cur_from: datetime.datetime,
+        cur_to: datetime.datetime,
+        limit: int = 10,
+    ) -> tuple[list[dict], int]:
+        """([{'zone_id', 'name', 'value'}, ...] ordenado desc, total_zones).
+
+        "Ocupacion" es cuanta gente ENTRO en la zona: solo cuenta ZONE_ENTERED,
+        nunca INTRUSION — una intrusion ya esta contada como entrada, sumarla
+        tambien duplicaria la cifra. El COALESCE es obligatorio: si la zona se
+        borro, el LEFT JOIN da NULL y sin el el panel pintaria la cadena "null"
+        en vez del id de la zona.
+        """
+        rows_sql = text("""
+            SELECT e.zone_id AS zone_id,
+                   COALESCE(z.name, e.zone_id) AS zone_name,
+                   COUNT(*) AS n
+              FROM events e
+              LEFT JOIN zones z ON z.id = e.zone_id
+             WHERE e.camera_id = :cam AND e.ts >= :cur_from AND e.ts < :cur_to
+               AND e.type = :etype AND e.zone_id IS NOT NULL
+             GROUP BY e.zone_id
+             ORDER BY n DESC
+             LIMIT :limit
+        """)
+        total_sql = text("""
+            SELECT COUNT(DISTINCT zone_id) AS n FROM events
+             WHERE camera_id = :cam AND ts >= :cur_from AND ts < :cur_to
+               AND type = :etype AND zone_id IS NOT NULL
+        """)
+        params = {
+            "cam": camera_id, "cur_from": cur_from, "cur_to": cur_to,
+            "etype": EventType.ZONE_ENTERED.value,
+        }
+        async with self._sf() as session:
+            rows = (await session.execute(rows_sql, {**params, "limit": limit})).all()
+            total = (await session.execute(total_sql, params)).scalar_one()
+
+        zones = [{"zone_id": r.zone_id, "name": r.zone_name, "value": int(r.n)} for r in rows]
+        return zones, int(total or 0)
+
+    async def persons_ranking(
+        self,
+        camera_id: str,
+        cur_from: datetime.datetime,
+        cur_to: datetime.datetime,
+        limit: int = 10,
+    ) -> list[tuple[int, int, int]]:
+        """[(person_id, actual, anterior), ...] ordenado por actual desc. SIN
+        nombre: los nombres viven en persons.db, otro fichero distinto de
+        events.db — los resuelve el router (31-05).
+
+        `INDEXED BY idx_events_analytics` es obligatorio aqui (26,7 ms con hint
+        frente a 212,6 ms sin el, medido @100k): sin el, SQLite elige
+        idx_events_person y hace skip-scan. Se probaron cinco reescrituras para
+        desviarlo sin hint y ninguna cambia el plan — camera_id y ts siguen
+        siendo terminos indexables de idx_events_person. `INDEXED BY` FALLA LA
+        CONSULTA si el indice no existe: la migracion v4 de 31-01 es precondicion
+        dura, y TEST_analytics_ranking_uses_analytics_index (Task 3) es lo que
+        detecta su desaparicion en CI, no en produccion.
+        """
+        prev_from = cur_from - (cur_to - cur_from)
+        sql = text("""
+            SELECT person_id,
+                   SUM(CASE WHEN ts >= :cur_from THEN 1 ELSE 0 END) AS cur,
+                   SUM(CASE WHEN ts <  :cur_from THEN 1 ELSE 0 END) AS prev
+              FROM events INDEXED BY idx_events_analytics
+             WHERE camera_id = :cam AND ts >= :prev_from AND ts < :cur_to
+               AND person_id IS NOT NULL
+             GROUP BY person_id
+            HAVING cur > 0
+             ORDER BY cur DESC
+             LIMIT :limit
+        """)
+        params = {
+            "cam": camera_id, "cur_from": cur_from, "cur_to": cur_to,
+            "prev_from": prev_from, "limit": limit,
+        }
+        async with self._sf() as session:
+            rows = (await session.execute(sql, params)).all()
+        return [(int(r.person_id), int(r.cur or 0), int(r.prev or 0)) for r in rows]
+
+    async def person_avatars(self, person_ids: list[int]) -> dict[int, str]:
+        """{person_id: '/gallery/{id}/{fichero}'} del capture mas reciente de cada
+        uno, mismo formato que main.py:1246. `captures` vive en events.db (a
+        diferencia de los nombres, que viven en persons.db) — subconsulta
+        correlacionada del MAX(timestamp) por persona, sin ATTACH DATABASE ni
+        JOIN persons.
+        """
+        if not person_ids:
+            return {}
+        sql = text("""
+            SELECT c.person_id AS person_id, c.image_path AS image_path
+              FROM captures c
+             WHERE c.person_id IN :ids
+               AND c.image_path IS NOT NULL
+               AND c.timestamp = (
+                   SELECT MAX(c2.timestamp) FROM captures c2
+                    WHERE c2.person_id = c.person_id
+               )
+        """).bindparams(bindparam("ids", expanding=True))
+        async with self._sf() as session:
+            rows = (await session.execute(sql, {"ids": list(person_ids)})).all()
+        return {
+            int(r.person_id): f"/gallery/{r.person_id}/{Path(r.image_path).name}"
+            for r in rows
         }
 
 
