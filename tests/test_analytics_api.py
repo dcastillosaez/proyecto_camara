@@ -470,3 +470,127 @@ async def TEST_heatmap_scale_returns_404_without_activity(sf, client):
 
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Sin actividad acumulada"
+
+
+# ─── /export (OPS-15) ────────────────────────────────────────────────────────
+_EXPORT_RANGE = {"from": "2026-07-23", "to": "2026-08-22"}
+
+
+async def TEST_export_csv_sets_attachment_filename(sf, client):
+    resp = await client.get(
+        "/api/v2/analytics/export",
+        params={**_EXPORT_RANGE, "format": "csv", "panel": "hourly"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"] == (
+        "attachment; filename=analitica-hourly-20260723_20260822.csv"
+    )
+    assert resp.headers["content-type"].startswith("text/csv")
+
+
+async def TEST_export_csv_starts_with_bom(sf, client):
+    resp = await client.get(
+        "/api/v2/analytics/export",
+        params={**_EXPORT_RANGE, "format": "csv", "panel": "hourly"},
+    )
+
+    assert resp.content.startswith(b"\xef\xbb\xbf")
+
+
+async def TEST_export_csv_hourly_has_one_row_per_bucket(sf, client):
+    hourly_resp = await client.get("/api/v2/analytics/hourly", params=_EXPORT_RANGE)
+    n_buckets = len(hourly_resp.json()["values"])
+
+    resp = await client.get(
+        "/api/v2/analytics/export",
+        params={**_EXPORT_RANGE, "format": "csv", "panel": "hourly"},
+    )
+
+    text = resp.content.decode("utf-8-sig")
+    lines = [line for line in text.split("\n") if line]
+    assert lines[0] == "cubo,etiqueta,personas,personas_anterior"
+    assert len(lines) - 1 == n_buckets
+
+
+async def TEST_export_csv_persons_writes_empty_cell_for_null_delta(sf, client):
+    await _insert(
+        sf,
+        make_event(
+            type=EventType.PERSON_RECOGNIZED,
+            ts=datetime.datetime(2026, 8, 1, 10, 0),
+            person_id=1,
+        ),
+    )
+
+    resp = await client.get(
+        "/api/v2/analytics/export",
+        params={**_EXPORT_RANGE, "format": "csv", "panel": "persons"},
+    )
+
+    text = resp.content.decode("utf-8-sig")
+    lines = [line for line in text.split("\n") if line]
+    assert lines[0] == "posicion,person_id,nombre,visitas,variacion_pct"
+    assert lines[1].endswith(",")
+
+
+async def TEST_export_csv_without_panel_returns_422(sf, client):
+    resp = await client.get(
+        "/api/v2/analytics/export", params={**_EXPORT_RANGE, "format": "csv"}
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Falta el panel para exportar en CSV."
+
+
+async def TEST_export_unknown_panel_returns_422(sf, client):
+    resp = await client.get(
+        "/api/v2/analytics/export",
+        params={**_EXPORT_RANGE, "format": "csv", "panel": "zonas"},
+    )
+
+    assert resp.status_code == 422
+
+
+async def TEST_export_unknown_format_returns_422(sf, client):
+    resp = await client.get(
+        "/api/v2/analytics/export",
+        params={**_EXPORT_RANGE, "format": "pdf", "panel": "hourly"},
+    )
+
+    assert resp.status_code == 422
+
+
+async def TEST_export_json_has_the_four_sections(sf, client):
+    resp = await client.get(
+        "/api/v2/analytics/export", params={**_EXPORT_RANGE, "format": "json"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.headers["content-disposition"] == (
+        "attachment; filename=analitica-20260723_20260822.json"
+    )
+    body = resp.json()
+    assert set(body.keys()) == {"range", "summary", "hourly", "occupancy", "persons"}
+
+
+async def TEST_export_json_matches_panel_endpoints(sf, client):
+    await _insert(sf, make_event(ts=datetime.datetime(2026, 8, 1, 10, 0)))
+
+    export_resp = await client.get(
+        "/api/v2/analytics/export", params={**_EXPORT_RANGE, "format": "json"}
+    )
+    hourly_resp = await client.get("/api/v2/analytics/hourly", params=_EXPORT_RANGE)
+
+    assert export_resp.json()["hourly"] == hourly_resp.json()
+
+
+async def TEST_export_respects_range_validation(sf, client):
+    resp = await client.get(
+        "/api/v2/analytics/export",
+        params={"from": "2026-01-01", "to": "2026-05-01", "format": "csv", "panel": "hourly"},
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "El rango máximo es de 90 días."
