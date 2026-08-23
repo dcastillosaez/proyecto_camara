@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 32 en marcha (3/8 planes) — 32-03 cerrado (8 clases CSS de contrato visual para Camara/Ajustes en components.css, 172->231 lineas); capa CSS lista para que 32-04/32-05 la consuman por classList. Siguiente paso: 32-04 (vista Camara)
-last_updated: "2026-08-23T18:40:00.000Z"
-last_activity: 2026-08-23 -- 32-03 cerrado: .metric-tile/.rtsp-card/.cfg-tree/.cfg-node/.cfg-row/.cfg-badge/.cfg-applies/.cfg-savebar anadidas y .cam-toggle::before de 44x44 (WCAG 2.2 AA 2.5.8), TEST_line_limit en verde
+stopped_at: Fase 32 en marcha (4/8 planes) — 32-04 cerrado (camera.js + camera-quick.js: panel de salud consolidada y 4 ajustes rapidos contra PUT /api/v2/config); dashboard-observability.js extendido con los ids #cam-* del mismo tick de 5s. Siguiente paso: 32-05 (vista Ajustes)
+last_updated: "2026-08-23T19:10:00.000Z"
+last_activity: 2026-08-23 -- 32-04 cerrado: camera.js (activacion diferida del feed, tarjeta RTSP, teselas) y camera-quick.js (4 controles con debounce/badge/revertir-en-error) listos para que 32-07 los cablee al marcado real
 progress:
   total_phases: 32
   completed_phases: 16
   total_plans: 90
-  completed_plans: 81
-  percent: 90
+  completed_plans: 82
+  percent: 91
 ---
 
 # Project State
@@ -21,14 +21,43 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (3/8 planes)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (4/8 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (3/8 planes)
-Plan: 3 of 8 — 32-03 cerrado
-Status: 32-03 cerrado; siguiente paso `/gsd:execute-phase 32` (32-04, vista Cámara)
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (4/8 planes)
+Plan: 4 of 8 — 32-04 cerrado
+Status: 32-04 cerrado; siguiente paso `/gsd:execute-phase 32` (32-05, vista Ajustes)
+
+**32-04 construye la vista Cámara completa por el lado del cliente (OPS-16, OPS-17), consumidora pura de `32-02` y de los endpoints de salud ya existentes.**
+`frontend/js/views/camera.js` (119 líneas, nuevo) expone `activateCameraFeed()` (asigna
+`src="/video_feed"` a `#camera-feed` una sola vez, con flag de módulo, para que el
+`onerror` de reconexión no se dispare en cada cambio de pestaña), `loadRtspCard()`
+(semáforo de 3 estados heredado de la Fase 29 sobre `GET /api/v2/cameras/cam1/health`,
+más la URL RTSP siempre enmascarada por el servidor desde `GET /api/v2/config`),
+`tickCameraFooter()` e `initCamera()`. `frontend/js/views/camera-quick.js` (240 líneas,
+nuevo) implementa los 4 controles de la barra de ajustes rápidos (clases, resolución,
+confianza con debounce de 600ms, severidad de subida a Drive), todos contra el mismo
+`PUT /api/v2/config` del árbol de Ajustes — sin toast en éxito (D-13, el vídeo es la
+confirmación), badge de aplicación siempre pintado desde la respuesta del servidor, y
+reversión al valor real vía `GET /api/v2/config` en cualquier error. `dashboard-
+observability.js` (65 → 77 líneas) gana un segundo set de ids `#cam-*` pintado desde
+el mismo tick de 5s que ya usa Operaciones, sin fetch ni intervalo nuevos. Dos
+desviaciones ya anticipadas por el propio `<behavior>` de la Task 1 quedan
+documentadas en el SUMMARY: sin countdown de segundos en "Reconectando" (el backoff no
+se expone por API) y "Frames descartados" leído de `/api/v2/metrics` en vez de
+`/api/v2/cameras/{id}/health` (se siguió el código real ya establecido). El contrato de
+ids de la barra de ajustes rápidos (`#quick-classes`/`#quick-resolution`/
+`#quick-confidence`/`#quick-severity` + sus badges), no fijado por el UI-SPEC, queda
+documentado en la cabecera de `camera-quick.js` para que `32-07` lo consuma
+literalmente. Los ids reales (`#rtsp-*`, `#cam-*`, `#quick-*`) todavía no existen en
+`index.html` — los crea `32-07` — así que la verificación funcional queda diferida al
+checkpoint manual de la puerta de fase `32-08`, mismo patrón que SET-01..04 en
+`32-01`/`32-02` y OPS-18 en `32-03`. Suite dirigida verde
+(`tests/test_frontend_modules.py` 9 passed); plan solo de frontend, sin relanzar la
+suite completa. OPS-16 y OPS-17 avanzan pero no se cierran formalmente. Ver
+`32-04-SUMMARY.md`.
 
 **32-03 añade la capa de contrato visual CSS que 32-04 y 32-05 importan como dado.**
 `frontend/css/components.css` gana las 8 clases fijadas por `32-UI-SPEC.md`:
