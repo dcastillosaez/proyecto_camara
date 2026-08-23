@@ -12,6 +12,7 @@ import { loadPersons, bindPersonGallery } from './components/personGallery.js';
 import { loadAlerts, bindAlertCenter } from './components/alertCenter.js';
 import { bindMarkPerson } from './components/markPerson.js';
 import { initTimeline, refreshPersonNames } from './views/timeline.js';
+import { initAnalytics } from './views/analytics.js';
 import { initNav } from './nav.js';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -25,6 +26,9 @@ document.addEventListener('DOMContentLoaded', () => {
   bindEventExport();
   bindAlertCenter();
   bindMarkPerson();
+  // initAnalytics() ANTES de initNav(): registra el boot diferido que initNav puede
+  // disparar al instante si la pagina se abre directamente en #analitica.
+  initAnalytics();
   initNav();
 
   // Carga inicial — mismo orden que index.html:1362-2023 en el script original, para
