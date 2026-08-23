@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Completada 31-09-PLAN.md
-last_updated: "2026-08-23T15:06:00.000Z"
+stopped_at: Completada 31-10-PLAN.md
+last_updated: "2026-08-23T16:20:00.000Z"
 last_activity: 2026-08-23
 progress:
   total_phases: 32
   completed_phases: 15
   total_plans: 87
-  completed_plans: 76
-  percent: 87
+  completed_plans: 77
+  percent: 89
 ---
 
 # Project State
@@ -27,8 +27,33 @@ See: .planning/PROJECT.md (updated 2026-05-01)
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 31 (Vista de analitica) — EXECUTING
-Plan: 10 of 11
+Plan: 11 of 11
 Status: Ready to execute
+
+**31-10 cerro el orquestador: `analytics.js` y `analytics-export.js` cablean por
+primera vez el andamiaje de 31-03, las graficas de 31-07, el rango/ranking de 31-08
+y los siete endpoints de 31-05/06/09 en una vista que funciona.** `initAnalytics()`
+solo registra el arranque diferido en `nav.js` — quien no abre la pestana no paga
+ni una peticion. `load(range)` cancela la tanda anterior con un unico
+`AbortController` y dispara `summary`/`hourly`/`occupancy`/`persons` en paralelo
+(sin combinador que aborte las tres buenas por la cuarta mala) mas `loadHeatmap()`
+aparte; cada `loadPanel()` resuelve su propio estado y una respuesta rezagada de una
+tanda abortada no toca el DOM ni decrementa el contador de la tanda nueva — la mitad
+de D-09 que se olvida siempre. El panel del heatmap pregunta primero a
+`/heatmap/scale` porque un `<img>` no puede distinguir un 404 (sin actividad) de un
+503 (sin senal), pinta la leyenda relativa con el valor absoluto en el `title`, y
+difiere su recarga con `activeView()` cuando la pestana esta oculta. Los cuatro
+botones de exportacion validan la URL con `isSafeMediaUrl()` antes de
+`window.location.href`, sin serializar nada en cliente — el servidor de 31-09 genera
+el fichero. Import por namespace de `nav.js` (`import * as nav`) para que la unica
+cita literal de `registerAnalyticsBoot` sea la llamada real, exigido por un criterio
+de aceptacion de conteo exacto. `analytics.js` 211 lineas, `analytics-export.js` 47
+—la valvula de escape del heatmap a `analytics-charts.js` no hizo falta—. Suite
+dirigida verde (`tests/test_frontend_modules.py` 8 passed); plan solo de frontend,
+sin relanzar la suite completa. OPS-12/14/15 quedan funcionalmente completos por
+primera vez en la fase; OPS-13 avanza pero se cierra formalmente en la puerta de
+fase 31-11, mismo patron que Fases 27/28/29/30. Siguiente: 31-11 (puerta de fase:
+`LOCKED_JS` con los seis modulos y checkpoint visual con servidor real).
 
 **31-09 anadio la exportacion CSV/JSON del rango visible.** Precondicion:
 los cuerpos de `/hourly`, `/summary`, `/occupancy` y `/persons` se extrajeron
