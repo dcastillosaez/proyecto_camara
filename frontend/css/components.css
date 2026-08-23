@@ -170,3 +170,62 @@
 .range-seg { display: flex; align-items: center; gap: 4px; }
 .rank-row { height: 40px; display: flex; align-items: center; gap: 8px; background: #1e293b; border-radius: 6px; padding: 4px 8px; }
 .chart-skeleton { background: #1e293b; border-radius: 6px; animation: none; }
+
+/* ── Fase 32: vista Camara (metricas y estado RTSP) ──────────────── */
+.metric-tile {
+  padding: 12px; border-radius: 10px; background: #1e293b;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.metric-tile .metric-label { font-size: 12px; color: #94a3b8; }
+.metric-tile .metric-value {
+  font-size: 16px; font-weight: 600; color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+}
+
+.rtsp-card {
+  background: #0f172a; border: 1px solid #1e293b; border-radius: 10px;
+  padding: 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.rtsp-status-dot { width: 8px; height: 8px; border-radius: 9999px; flex-shrink: 0; background: var(--rtsp-color, #64748b); }
+.rtsp-status-dot.connected    { --rtsp-color: #4ade80; }
+.rtsp-status-dot.reconnecting { --rtsp-color: #f59e0b; }
+.rtsp-status-dot.offline      { --rtsp-color: #ef4444; }
+
+/* Area de pulsacion 44x44 sobre la pista 40x20 heredada de la Fase 11 (WCAG 2.2 AA 2.5.8).
+   El track ya lleva position:relative por Tailwind (clase `relative` en el marcado). */
+.cam-toggle::before { content: ''; position: absolute; inset: -12px -2px; }
+
+/* ── Fase 32: vista Ajustes (arbol, filas y badges de configuracion) ─ */
+.cfg-tree {
+  position: sticky; top: 112px; min-width: 200px; max-width: 260px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.cfg-node {
+  height: 32px; padding: 8px 12px; display: flex; align-items: center; gap: 8px;
+  border-radius: 8px; color: #94a3b8; background: transparent; border: none;
+  font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.cfg-node.sub { padding-left: 28px; }
+.cfg-node[aria-current="true"] { color: #fff; background: #2563eb; }
+.cfg-node:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+.cfg-node-dot { width: 6px; height: 6px; border-radius: 9999px; background: #3b82f6; flex-shrink: 0; }
+
+.cfg-row { min-height: 56px; padding: 8px 0; display: flex; gap: 16px; border-bottom: 1px solid #1e293b; }
+.cfg-row.dirty { box-shadow: inset 2px 0 0 #3b82f6; background: rgba(59,130,246,0.04); }
+.cfg-row.error input,
+.cfg-row.error select { border-color: #ef4444; }
+
+.cfg-badge { display: inline-flex; align-items: center; height: 20px; padding: 4px 8px; line-height: 1; border-radius: 6px; font-size: 12px; font-weight: 600; }
+.cfg-badge--runtime { color: #3b82f6; background: rgba(59,130,246,0.10); }
+.cfg-badge--env     { color: #64748b; background: #1e293b; }
+.cfg-badge--default { color: #475569; background: transparent; }
+
+.cfg-applies { display: inline-flex; align-items: center; height: 20px; padding: 4px 8px; line-height: 1; border-radius: 6px; font-size: 12px; font-weight: 600; }
+.cfg-applies--hot     { color: #64748b; background: #1e293b; }
+.cfg-applies--restart { color: #f59e0b; background: rgba(245,158,11,0.10); }
+
+.cfg-savebar {
+  position: sticky; bottom: 0; height: 56px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 0 16px;
+  background: rgba(15,23,42,0.92); backdrop-filter: blur(6px); border-top: 1px solid #1e293b;
+}
