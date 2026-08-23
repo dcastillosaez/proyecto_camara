@@ -19,17 +19,27 @@ filas ya traidas (OPS-14).
 El heatmap (/heatmap, /heatmap/scale) se compone sobre el ultimo frame fuera
 del event loop (asyncio.to_thread), igual que /api/heatmap en main.py, y
 distingue 503 (sin camara/frame) de 404 (sin actividad acumulada) — el v1 no
-lo hace. El export (/export) no vive aqui: lo anade 31-09.
+lo hace.
+
+/export (OPS-15, 31-09) reutiliza los MISMOS constructores de payload
+(_hourly_payload, _summary_payload, _occupancy_payload, _persons_payload) que
+los cuatro GET de arriba: lo que se descarga es, por construccion, lo que se
+ve. El nombre del fichero lo compone el servidor con `panel` (un Literal) y
+fechas ya normalizadas, nunca con texto libre del cliente.
 """
 
 from __future__ import annotations
 
 import asyncio
+import csv
 import datetime
-from typing import Any
+import io
+import json
+from typing import Any, Literal
 
 import cv2
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 
 from backend.api.v2.deps import V2_RATE_LIMIT, limiter
 from backend.database import get_session_factory
@@ -100,14 +110,7 @@ def _parse_bucket_key(key: str, bucket: str) -> datetime.datetime:
     return datetime.datetime.strptime(key, fmt)
 
 
-@router.get("/hourly")
-@limiter.limit(V2_RATE_LIMIT)
-async def get_hourly(
-    request: Request,
-    camera_id: str = Query(default="cam1"),
-    from_: datetime.date = Query(alias="from"),
-    to_: datetime.date = Query(alias="to"),
-) -> dict[str, Any]:
+async def _hourly_payload(camera_id: str, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
     cur_from, cur_to, span_days = _resolve_range(from_, to_)
     bucket = bucket_for(cur_from, cur_to)
 
@@ -142,14 +145,18 @@ async def get_hourly(
     }
 
 
-@router.get("/summary")
+@router.get("/hourly")
 @limiter.limit(V2_RATE_LIMIT)
-async def get_summary(
+async def get_hourly(
     request: Request,
     camera_id: str = Query(default="cam1"),
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
+    return await _hourly_payload(camera_id, from_, to_)
+
+
+async def _summary_payload(camera_id: str, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
     cur_from, cur_to, span_days = _resolve_range(from_, to_)
     bucket = bucket_for(cur_from, cur_to)
 
@@ -185,14 +192,18 @@ async def get_summary(
     }
 
 
-@router.get("/occupancy")
+@router.get("/summary")
 @limiter.limit(V2_RATE_LIMIT)
-async def get_occupancy(
+async def get_summary(
     request: Request,
     camera_id: str = Query(default="cam1"),
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
+    return await _summary_payload(camera_id, from_, to_)
+
+
+async def _occupancy_payload(camera_id: str, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
     cur_from, cur_to, span_days = _resolve_range(from_, to_)
 
     rows, total_zones = await _repo().occupancy(camera_id, cur_from, cur_to, limit=10)
@@ -210,14 +221,18 @@ async def get_occupancy(
     }
 
 
-@router.get("/persons")
+@router.get("/occupancy")
 @limiter.limit(V2_RATE_LIMIT)
-async def get_persons(
+async def get_occupancy(
     request: Request,
     camera_id: str = Query(default="cam1"),
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
+    return await _occupancy_payload(camera_id, from_, to_)
+
+
+async def _persons_payload(camera_id: str, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
     cur_from, cur_to, span_days = _resolve_range(from_, to_)
 
     rows = await _repo().persons_ranking(camera_id, cur_from, cur_to, limit=10)
@@ -250,6 +265,17 @@ async def get_persons(
         "persons": persons,
         "recognition_available": available,
     }
+
+
+@router.get("/persons")
+@limiter.limit(V2_RATE_LIMIT)
+async def get_persons(
+    request: Request,
+    camera_id: str = Query(default="cam1"),
+    from_: datetime.date = Query(alias="from"),
+    to_: datetime.date = Query(alias="to"),
+) -> dict[str, Any]:
+    return await _persons_payload(camera_id, from_, to_)
 
 
 @router.get("/heatmap")
@@ -293,3 +319,79 @@ async def get_heatmap_scale(request: Request, camera_id: str = Query(default="ca
         "mean": scale["mean"],
         "unit": "frames de detección con presencia",
     }
+
+
+@router.get("/export")
+@limiter.limit(V2_RATE_LIMIT)
+async def export_analytics(
+    request: Request,
+    camera_id: str = Query(default="cam1"),
+    from_: datetime.date = Query(alias="from"),
+    to_: datetime.date = Query(alias="to"),
+    fmt: Literal["csv", "json"] = Query(default="csv", alias="format"),
+    panel: Literal["hourly", "occupancy", "persons"] | None = Query(default=None),
+):
+    """Exportacion del rango visible (OPS-15).
+
+    Pasa por los MISMOS constructores de payload que los paneles: lo que se
+    descarga es, por construccion, lo que se ve. El nombre del fichero lo compone
+    el servidor con fechas ya normalizadas — ningun fragmento viene del cliente
+    (V12 del Security Domain: path traversal en el nombre de fichero).
+    """
+    stamp = f"{from_:%Y%m%d}_{to_:%Y%m%d}"
+
+    if fmt == "json":
+        payload = {
+            "range": {"from": from_.isoformat(), "to": to_.isoformat()},
+            "summary": await _summary_payload(camera_id, from_, to_),
+            "hourly": await _hourly_payload(camera_id, from_, to_),
+            "occupancy": await _occupancy_payload(camera_id, from_, to_),
+            "persons": await _persons_payload(camera_id, from_, to_),
+        }
+        text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        fname = f"analitica-{stamp}.json"
+        return StreamingResponse(
+            iter([text]),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename={fname}"},
+        )
+
+    if panel is None:
+        raise HTTPException(status_code=422, detail="Falta el panel para exportar en CSV.")
+
+    buf = io.StringIO()
+    buf.write("\ufeff")  # BOM: sin el, Excel en Windows rompe los acentos de nombres de
+                          # persona y de zona. El export v1 no lo lleva porque sus datos
+                          # eran ASCII; los de esta fase no lo son.
+    w = csv.writer(buf, lineterminator="\n")
+
+    if panel == "hourly":
+        data = await _hourly_payload(camera_id, from_, to_)
+        bucket = data["range"]["bucket"]
+        # mismo calculo de limites que _resolve_range, sin repetir su validacion
+        # (ya ocurrida dentro de _hourly_payload): solo se necesita el eje para
+        # componer la clave de cubo con los MISMOS _axis()/_key() del router.
+        cur_from = datetime.datetime.combine(from_, datetime.time.min)
+        cur_to = datetime.datetime.combine(to_ + datetime.timedelta(days=1), datetime.time.min)
+        cur_axis = _axis(cur_from, cur_to, bucket)
+        w.writerow(["cubo", "etiqueta", "personas", "personas_anterior"])
+        for i, d in enumerate(cur_axis):
+            w.writerow([_key(d, bucket), data["labels"][i], data["values"][i], data["previous"][i]])
+    elif panel == "occupancy":
+        data = await _occupancy_payload(camera_id, from_, to_)
+        w.writerow(["zona", "entradas"])
+        for label, value in zip(data["labels"], data["values"]):
+            w.writerow([label, value])
+    else:  # persons
+        data = await _persons_payload(camera_id, from_, to_)
+        w.writerow(["posicion", "person_id", "nombre", "visitas", "variacion_pct"])
+        for i, p in enumerate(data["persons"]):
+            delta = "" if p["delta_pct"] is None else p["delta_pct"]
+            w.writerow([i + 1, p["person_id"], p["name"], p["visits"], delta])
+
+    fname = f"analitica-{panel}-{stamp}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
