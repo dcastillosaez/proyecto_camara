@@ -382,22 +382,25 @@ No aplica una tabla "old vs new" — esta fase no reemplaza ningún mecanismo pr
 | A2 | Los campos sin `field_validator`/`model_validator` explícito en `config.py` (p. ej. `recording_fps`, `pre_buffer_max_mb`, `local_retention_days`) necesitan un rango inventado razonablemente para el esquema, ya que el CONTEXT delega esto al investigador/planificador sin fijar valores | Standard Stack / Pattern 1 | Bajo — es discreción explícita del usuario (CONTEXT §Claude's Discretion), no una afirmación fáctica sobre el sistema. Riesgo solo si el rango elegido es tan estrecho que bloquea un valor operativo legítimo |
 | A3 | El agrupamiento de los ~88 campos en las 8 secciones × subsecciones de la tabla del UI-SPEC (Cámara/Detección/Tracking/Reconocimiento/Zonas/Reglas/Alertas/Almacenamiento) es coherente con los bloques de comentarios ya existentes en `backend/config.py` (p. ej. "--- Identidad temporal (Fase 24) ---"), pero no se verificó campo por campo que los ~88 caigan exactamente en esa partición sin solapes ni huecos | Architecture Patterns → Recommended Project Structure | Medio — si algún campo no encaja limpiamente en una sección (p. ej. `gallery_throttle_secs`, que no tiene bloque de comentario propio), el planificador tiene que decidir dónde va sin que esta investigación lo haya resuelto |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **¿La Fase 31 debe ejecutarse (código real, no solo planes) antes de que arranque la ejecución de la Fase 32?**
    - What we know: El `32-UI-SPEC.md` asume literalmente el armazón de navegación de la Fase 31 (`nav.js`, `role="tablist"`, hash-routing); verificado que ese código no existe hoy en el árbol de trabajo, solo 11 `PLAN.md` sin ejecutar.
    - What's unclear: Si el orquestador de fases fuerza la ejecución secuencial (Fase 31 antes que 32) o si es responsabilidad del usuario/operador confirmarlo antes de lanzar `/gsd:plan-phase 32` en modo ejecución.
    - Recommendation: El plan de la Fase 32 debe incluir, como primer paso de su primer wave, una verificación explícita de que `frontend/js/nav.js` existe y expone la superficie que el UI-SPEC da por hecha — fallar rápido y explícito si no, en vez de que la Fase 32 reescriba silenciosamente su propia versión de navegación.
+   - **RESOLVED:** `32-01` Task 0 hace la verificación temprana y no bloqueante (deja constancia en el SUMMARY sin detener el wave, porque 32-01..32-06 no dependen del tablist). `32-07` Task 1 —el único plan que toca `nav.js`— sí bloquea de forma dura si `frontend/js/nav.js` sigue sin existir, y detiene la ejecución con instrucciones explícitas de lanzar `/gsd-execute-phase 31` primero, sin construir un tablist sustituto.
 
 2. **¿Se reutiliza, sustituye o se deja intacto `GET /api/alerts/config`?**
    - What we know: Existe, está huérfano, y filtra `webhook_url` sin enmascarar (contradice D-12 si se reutiliza tal cual para la sección Alertas → Canales).
    - What's unclear: El CONTEXT lo deja explícitamente a discreción del planificador — no es una decisión de producto del usuario.
    - Recommendation: Si se reutiliza como fuente de `telegram_configured`, envolver el resultado y quitar `webhook_url` en crudo de lo que llega al navegador; si se deja intacto, la nueva sección "Alertas" del árbol no debe apuntar a él y debe leer todo desde el nuevo `GET /api/v2/config`.
+   - **RESOLVED:** Ningún plan (32-01..32-08) referencia `/api/alerts/config` — la sección "Alertas → Canales" del árbol se sirve íntegramente desde el nuevo `GET /api/v2/config`, dejando el endpoint huérfano intacto y sin relación, tal y como recomendaba la segunda opción.
 
 3. **¿Cómo se representan en el esquema los campos de solo lectura calculados (p. ej. "Zonas definidas", "Reglas cargadas"), que no viven en `Settings` sino en tablas `zones`/`rules`?**
    - What we know: El UI-SPEC dice que las subsecciones "Zonas definidas" y "Reglas cargadas" son de solo lectura dentro del árbol de Ajustes, con su propio empty state ("Las zonas se crean... desde el panel «Zonas de interés» de Operaciones").
    - What's unclear: Si esas filas de solo lectura viven en el mismo esquema `GET /api/v2/config` (mezclando `Settings`-backed y BD-backed en la misma respuesta) o si el frontend hace una consulta aparte a los endpoints ya existentes de zonas/reglas y las inyecta visualmente en el árbol.
    - Recommendation: Mantenerlas fuera del esquema de `Settings` — consultar los endpoints ya existentes (zonas/reglas) desde `settings-section.js` cuando el usuario entra en esas subsecciones, evitando que el router de config tenga que conocer tablas que no le pertenecen.
+   - **RESOLVED:** `32-01` Task 2 marca esas filas con `external_source="/api/zones"` / `external_source="/api/v2/rules"` en vez de incluirlas como campos `Settings`-backed — el router de config no consulta esas tablas.
 
 ## Validation Architecture
 
