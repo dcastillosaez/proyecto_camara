@@ -592,6 +592,9 @@ async def lifespan(app: FastAPI):
     from backend.api.v2 import detection as detection_v2_module
     detection_v2_module.configure(camera_manager, event_engine)
 
+    from backend.api.v2 import config as config_v2_module
+    config_v2_module.configure(camera_manager, event_engine)
+
     from backend.api.v2 import alerts as alerts_v2_module
     alerts_v2_module.configure(event_engine)
 
@@ -764,6 +767,9 @@ app.include_router(metrics_v2_router)
 
 from backend.api.v2.detection import router as detection_v2_router
 app.include_router(detection_v2_router)
+
+from backend.api.v2.config import router as config_v2_router
+app.include_router(config_v2_router)
 
 from backend.api.v2.context import router as context_v2_router
 app.include_router(context_v2_router)

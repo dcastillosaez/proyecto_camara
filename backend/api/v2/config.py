@@ -270,3 +270,27 @@ async def get_config(request: Request) -> dict[str, Any]:
                 })
         sections.append({"key": section.key, "label": section.label, "groups": groups})
     return {"sections": sections}
+
+
+@router.post("/{section_key}/restore")
+@limiter.limit(V2_RATE_LIMIT)
+async def restore_section(request: Request, section_key: str) -> dict[str, Any]:
+    """Borra las filas `runtime` (app_config) de una seccion — nunca escribe los defaults
+    del codigo encima, asi un valor que venia de `.env` vuelve a `.env` en vez de
+    congelarse (D-11, OPS-20)."""
+    section = next((s for s in ALL_SECTIONS if s.key == section_key), None)
+    if section is None:
+        raise HTTPException(404, detail=f"Sección desconocida: {section_key}")
+
+    overrides = await _config_repo().get_all()
+    keys = [f.key for grp in section.groups for f in grp.fields if f.key in overrides]
+    for key in keys:
+        await _config_repo().delete(key)
+    if keys and _event_engine is not None:
+        diff = {k: {"before": overrides[k], "after": None} for k in keys}
+        _event_engine.config_changed(
+            datetime.datetime.now(), section=section_key, diff=diff, restored=True)
+
+    fresh_overrides = await _config_repo().get_all()
+    fields = _section_fields_payload(section, fresh_overrides, get_settings())
+    return {"section": section_key, "restored_count": len(keys), "fields": fields}
