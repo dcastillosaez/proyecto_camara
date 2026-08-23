@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 32 contexto capturado (UI-SPEC verificado + 32-CONTEXT.md)
-last_updated: "2026-08-22T16:39:47.957Z"
+stopped_at: "Fase 32 planificada: 8 planes en 7 waves, VALIDATION.md aprobado, plan-checker verde tras 3 iteraciones"
+last_updated: "2026-08-23T10:27:16.173Z"
 last_activity: 2026-08-22 -- Phase 31 planning complete
 progress:
   total_phases: 32
   completed_phases: 15
-  total_plans: 79
+  total_plans: 87
   completed_plans: 67
-  percent: 85
+  percent: 77
 ---
 
 # Project State
@@ -787,8 +787,8 @@ en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-22T16:39:47.948Z
-Stopped at: Fase 32 contexto capturado (UI-SPEC verificado + 32-CONTEXT.md)
+Last session: 2026-08-23T10:27:16.165Z
+Stopped at: Fase 32 planificada: 8 planes en 7 waves, VALIDATION.md aprobado, plan-checker verde tras 3 iteraciones
   "Marcar como persona" está completo: `markPerson.js` precarga el recorte del evento,
   muestra el aviso de alcance retroactivo con el N del servidor antes de confirmar,
   enrola contra `/api/enroll_face` (sin duplicar sus validaciones), aplica la identidad
@@ -797,7 +797,7 @@ Stopped at: Fase 32 contexto capturado (UI-SPEC verificado + 32-CONTEXT.md)
   Suite completa en verde (603 passed, 2 skipped). Pendiente de comprobación manual,
   que firma 30-12: recorte real en el modal, N razonable en el aviso y filas del track
   cambiando en sitio. Siguiente: 30-12 (puerta de fase)
-Resume file: .planning/phases/32-vista-de-c-mara-y-configuraci-n-visual/32-CONTEXT.md
+Resume file: .planning/phases/32-vista-de-c-mara-y-configuraci-n-visual/32-08-PLAN.md
 
 ---
 
