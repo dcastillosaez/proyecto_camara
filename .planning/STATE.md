@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 33 en ejecucion (ola 2/6 cerrada, 10/14 planes) en rama feature/fase-33, sin /gsd:execute-phase interactivo (ejecucion secuencial manual, sin worktrees por CLAUDE.md, sin gsd-sdk). Fase 32 sigue abierta aparte (7/8 planes, falta 32-08). Siguiente paso: ola 3 de la Fase 33 (33-07, router /api/v2/lines)
-last_updated: "2026-08-24T19:00:00.000Z"
-last_activity: 2026-08-24 -- Fase 33 ola 2 ejecutada (33-05 hot-reload de lineas + zonas leen polygon lista + horario de zona, 33-06 router /api/v2/rules con shape 422 custom, 33-10 editor visual de zonas sobre canvas -- reescribe zoneEditor.js completo, deja pendiente para 33-13 que app.js aun importa bindZoneForm ya no exportado, 33-11 editor visual de lineas con direccion). Mismo protocolo que la ola 1 (gsd-executor secuencial sin worktree/gsd-sdk, commits normales con hooks). Suite completa tras la ola: 758 passed, 2 skipped. Fase 32 no se toco: sigue abierta en 32-08.
+stopped_at: Fase 33 en ejecucion (ola 3/6 cerrada, 11/14 planes) en rama feature/fase-33, sin /gsd:execute-phase interactivo (ejecucion secuencial manual, sin worktrees por CLAUDE.md, sin gsd-sdk). Fase 32 sigue abierta aparte (7/8 planes, falta 32-08). Siguiente paso: ola 4 de la Fase 33 (33-08, integracion backend)
+last_updated: "2026-08-24T19:30:00.000Z"
+last_activity: 2026-08-24 -- Fase 33 ola 3 ejecutada (33-07 router /api/v2/lines: CRUD validado, hot-reload via CameraPipeline.set_lines, shape 422 nativo de FastAPI). Mismo protocolo (gsd-executor secuencial sin worktree/gsd-sdk, commits normales con hooks). Suite completa tras la ola: 766 passed, 2 skipped. Fase 32 no se toco: sigue abierta en 32-08.
 progress:
   total_phases: 32
   completed_phases: 16
   total_plans: 104
-  completed_plans: 95
-  percent: 91
+  completed_plans: 96
+  percent: 92
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08). Phase 33 — Editores visuales de zonas, líneas y reglas (EN EJECUCIÓN, ola 2/6 cerrada, 10/14 planes)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08). Phase 33 — Editores visuales de zonas, líneas y reglas (EN EJECUCIÓN, ola 3/6 cerrada, 11/14 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes, sin cerrar)
-Phase: 33 (Editores visuales de zonas, líneas y reglas) — EN EJECUCIÓN (ola 2/6 cerrada, 10/14 planes), rama `feature/fase-33`
-Plan: 32 en 7 of 8 — 32-07 cerrado. 33 con olas 1-2 cerradas (33-01/02/03/04/09/12/05/06/10/11), ola 3 siguiente (33-07)
-Status: Phase 32 sigue abierta en 32-08 (puerta de fase, checkpoint manual `autonomous: false`) — no se tocó en esta sesión. Phase 33 en ejecución secuencial manual (sin worktrees por restricción de CLAUDE.md, sin gsd-sdk): olas 1-2 completas con suite en verde (758 passed, 2 skipped), siguiente paso ola 3
+Phase: 33 (Editores visuales de zonas, líneas y reglas) — EN EJECUCIÓN (ola 3/6 cerrada, 11/14 planes), rama `feature/fase-33`
+Plan: 32 en 7 of 8 — 32-07 cerrado. 33 con olas 1-3 cerradas (33-01/02/03/04/09/12/05/06/10/11/07), ola 4 siguiente (33-08)
+Status: Phase 32 sigue abierta en 32-08 (puerta de fase, checkpoint manual `autonomous: false`) — no se tocó en esta sesión. Phase 33 en ejecución secuencial manual (sin worktrees por restricción de CLAUDE.md, sin gsd-sdk): olas 1-3 completas con suite en verde (766 passed, 2 skipped), siguiente paso ola 4 (integración backend: wiring v2, retirada v1)
 
 **32-07 cierra la fase conectando las cinco waves anteriores a la navegación real — el único plan que toca `nav.js`.**
 `frontend/js/nav.js` extiende `VIEWS` de 2 a 4 (`operaciones`/`analitica`/`camara`/`ajustes`)
