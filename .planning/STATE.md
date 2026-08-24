@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 32 aun abierta (7/8 planes, falta 32-08 puerta de fase manual). Fase 33 (Editores visuales de zonas, lineas y reglas) planificada en paralelo en rama feature/fase-33: 14 planes en 6 olas, gsd-plan-checker en verde tras 1 iteracion de revision (VALIDATION PASSED). Siguiente paso: ejecutar 32-08 y/o `/gsd:execute-phase 33`
-last_updated: "2026-08-24T15:00:00.000Z"
-last_activity: 2026-08-24 -- Fase 33 planificada sin /gsd-plan-phase interactivo (no disponible como comando en esta sesion): investigacion (33-RESEARCH.md), 3 decisiones de alcance del usuario (D-01 lineas N con refactor de PersonTracker, D-02 modelo Zone unificado en v2, D-03 editor montado en vista Camara) registradas en 33-CONTEXT.md, mapeo de patrones (33-PATTERNS.md), 14 PLAN.md en 6 olas, y verificacion con gsd-plan-checker -- primera pasada encontro 4 blockers reales (falta 33-VALIDATION.md, contradiccion de shape 422 entre 33-06/33-12, migracion incompleta de PersonTracker en tests/test_detection_worker.py, Open Questions sin marcar RESOLVED), corregidos en una iteracion de revision y confirmados en la segunda pasada (VERIFICATION PASSED). Fase 32 no se toco: sigue abierta en 32-08.
+stopped_at: Fase 33 en ejecucion (ola 1/6 cerrada, 6/14 planes) en rama feature/fase-33, sin /gsd:execute-phase interactivo (ejecucion secuencial manual, sin worktrees por CLAUDE.md, sin gsd-sdk). Fase 32 sigue abierta aparte (7/8 planes, falta 32-08). Siguiente paso: ola 2 de la Fase 33 (33-05, 33-06, 33-10, 33-11)
+last_updated: "2026-08-24T18:00:00.000Z"
+last_activity: 2026-08-24 -- Fase 33 ola 1 ejecutada (33-01 LineRepo/RuleRepo/would_match/is_schedule_active, 33-02 migracion v4->v5, 33-03 router /api/v2/zones, 33-04 refactor PersonTracker a N lineas -- incluyo fix de Rule 3 en backend/main.py:460 que el plan no cubria, 33-09 canvasClickToFrac compartido, 33-12 editor de reglas por formularios). Cada plan ejecutado por un gsd-executor secuencial (sin isolation=worktree, sin gsd-sdk -- STATE/ROADMAP/REQUIREMENTS los actualiza el orquestador, no el executor) con commits normales (con hooks). Suite completa tras la ola: 745 passed, 2 skipped. Fase 32 no se toco: sigue abierta en 32-08.
 progress:
   total_phases: 32
   completed_phases: 16
   total_plans: 104
-  completed_plans: 85
-  percent: 82
+  completed_plans: 91
+  percent: 88
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08). Phase 33 — Editores visuales de zonas, líneas y reglas (planificada, 0/14 planes ejecutados)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08). Phase 33 — Editores visuales de zonas, líneas y reglas (EN EJECUCIÓN, ola 1/6 cerrada, 6/14 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes, sin cerrar)
-Phase: 33 (Editores visuales de zonas, líneas y reglas) — PLANIFICADA (0/14 planes ejecutados), rama `feature/fase-33`
-Plan: 32 en 7 of 8 — 32-07 cerrado. 33 con 14 planes listos, sin ejecutar
-Status: Phase 32 sigue abierta en 32-08 (puerta de fase, checkpoint manual `autonomous: false`, no se ejecuta en modo autónomo) — no se tocó en esta sesión. Phase 33 planificada de extremo a extremo (investigación → contexto → patrones → 14 planes → checker en verde tras 1 revisión); siguiente paso `/gsd:execute-phase 33` cuando el usuario lo decida, o cerrar antes 32-08 dado que Phase 33 depende de Phase 32 en el roadmap
+Phase: 33 (Editores visuales de zonas, líneas y reglas) — EN EJECUCIÓN (ola 1/6 cerrada, 6/14 planes), rama `feature/fase-33`
+Plan: 32 en 7 of 8 — 32-07 cerrado. 33 con ola 1 cerrada (33-01, 33-02, 33-03, 33-04, 33-09, 33-12), ola 2 siguiente (33-05, 33-06, 33-10, 33-11)
+Status: Phase 32 sigue abierta en 32-08 (puerta de fase, checkpoint manual `autonomous: false`) — no se tocó en esta sesión. Phase 33 en ejecución secuencial manual (sin worktrees por restricción de CLAUDE.md, sin gsd-sdk): ola 1 completa con suite en verde (745 passed, 2 skipped), siguiente paso ola 2
 
 **32-07 cierra la fase conectando las cinco waves anteriores a la navegación real — el único plan que toca `nav.js`.**
 `frontend/js/nav.js` extiende `VIEWS` de 2 a 4 (`operaciones`/`analitica`/`camara`/`ajustes`)
