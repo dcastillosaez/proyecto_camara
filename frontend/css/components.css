@@ -229,3 +229,9 @@
   display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 0 16px;
   background: rgba(15,23,42,0.92); backdrop-filter: blur(6px); border-top: 1px solid #1e293b;
 }
+
+/* Popover de "Restaurar valores por defecto" (32-07/settings-save.js), mismo patron
+   display:none/.open que #alert-mute-popover de la Fase 30 -- sin este par de reglas el
+   popover quedaria visible por defecto en cuanto 32-07 monta su marcado. */
+#restore-config-popover { display: none; position: fixed; z-index: 55; inset: 0; margin: auto; height: fit-content; }
+#restore-config-popover.open { display: flex; }
