@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 32 en marcha (7/8 planes) — 32-07 cerrado (nav.js extendido a 4 pestanas + armazon HTML de Camara/Ajustes + wiring en app.js). Siguiente paso: 32-08 (puerta de fase, checkpoint manual no autonomo)
-last_updated: "2026-08-24T02:00:00.000Z"
-last_activity: 2026-08-24 -- 32-07 cerrado: nav.js (VIEWS a 4, activateCameraFeed en la primera activacion de Camara, hash de Ajustes preserva #ajustes/{seccion}), tabpanel Camara y Ajustes montados en index.html con los ids exactos que 32-04/32-05/32-06 ya esperaban, app.js arranca initCamera/initCameraQuick/initSettings y LOCKED_JS cubre los 8 modulos de la fase. Falta 32-08 (puerta de fase, autonomous:false)
+stopped_at: Fase 32 aun abierta (7/8 planes, falta 32-08 puerta de fase manual). Fase 33 (Editores visuales de zonas, lineas y reglas) planificada en paralelo en rama feature/fase-33: 14 planes en 6 olas, gsd-plan-checker en verde tras 1 iteracion de revision (VALIDATION PASSED). Siguiente paso: ejecutar 32-08 y/o `/gsd:execute-phase 33`
+last_updated: "2026-08-24T15:00:00.000Z"
+last_activity: 2026-08-24 -- Fase 33 planificada sin /gsd-plan-phase interactivo (no disponible como comando en esta sesion): investigacion (33-RESEARCH.md), 3 decisiones de alcance del usuario (D-01 lineas N con refactor de PersonTracker, D-02 modelo Zone unificado en v2, D-03 editor montado en vista Camara) registradas en 33-CONTEXT.md, mapeo de patrones (33-PATTERNS.md), 14 PLAN.md en 6 olas, y verificacion con gsd-plan-checker -- primera pasada encontro 4 blockers reales (falta 33-VALIDATION.md, contradiccion de shape 422 entre 33-06/33-12, migracion incompleta de PersonTracker en tests/test_detection_worker.py, Open Questions sin marcar RESOLVED), corregidos en una iteracion de revision y confirmados en la segunda pasada (VERIFICATION PASSED). Fase 32 no se toco: sigue abierta en 32-08.
 progress:
   total_phases: 32
   completed_phases: 16
-  total_plans: 90
+  total_plans: 104
   completed_plans: 85
-  percent: 94
+  percent: 82
 ---
 
 # Project State
@@ -21,14 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08). Phase 33 — Editores visuales de zonas, líneas y reglas (planificada, 0/14 planes ejecutados)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes)
-Plan: 7 of 8 — 32-07 cerrado
-Status: 32-07 cerrado; siguiente paso `/gsd:execute-phase 32` (32-08, puerta de fase — checkpoint manual `autonomous: false`, no se ejecuta en modo autónomo)
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes, sin cerrar)
+Phase: 33 (Editores visuales de zonas, líneas y reglas) — PLANIFICADA (0/14 planes ejecutados), rama `feature/fase-33`
+Plan: 32 en 7 of 8 — 32-07 cerrado. 33 con 14 planes listos, sin ejecutar
+Status: Phase 32 sigue abierta en 32-08 (puerta de fase, checkpoint manual `autonomous: false`, no se ejecuta en modo autónomo) — no se tocó en esta sesión. Phase 33 planificada de extremo a extremo (investigación → contexto → patrones → 14 planes → checker en verde tras 1 revisión); siguiente paso `/gsd:execute-phase 33` cuando el usuario lo decida, o cerrar antes 32-08 dado que Phase 33 depende de Phase 32 en el roadmap
 
 **32-07 cierra la fase conectando las cinco waves anteriores a la navegación real — el único plan que toca `nav.js`.**
 `frontend/js/nav.js` extiende `VIEWS` de 2 a 4 (`operaciones`/`analitica`/`camara`/`ajustes`)
