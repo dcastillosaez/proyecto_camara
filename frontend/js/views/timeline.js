@@ -145,7 +145,7 @@ function _onListClick(e) {
 // ── Catalogos ─────────────────────────────────────────────────────
 async function _loadZones() {
   try {
-    const data = await apiFetch('/api/zones');
+    const data = await apiFetch('/api/v2/zones');
     const select = $('tl-filter-zone');
     (data.zones ?? []).forEach((z) => {
       const opt = document.createElement('option');
