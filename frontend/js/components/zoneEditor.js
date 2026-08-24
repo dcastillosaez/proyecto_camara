@@ -2,14 +2,10 @@
 // Fase 33 (OPS-21/OPS-23): editor visual de zonas sobre <canvas>, sustituye al
 // formulario JSON de /api/zones v1. CRUD exclusivamente contra /api/v2/zones (D-02);
 // coordenadas siempre en fraccion [0,1] (canvasClickToFrac, D-06 33-RESEARCH.md).
-//
-// Contrato de ids que el Plan 33-13 debe crear en index.html, tabpanel Camara:
-// #zone-line-canvas (sobre #camera-feed) #zone-mode-toggle (activa captura de clicks)
-// #zone-list (click en nombre = editar) #zone-new-btn #zone-form-kind (select)
-// #zone-kind-locked-label (texto si kind=exclude_objects) #zone-form-days (chips 0-6)
-// #zone-form-time-start / #zone-form-time-end #zone-save-btn #zone-cancel-btn #zone-error
-//
-// initZoneEditor() la llama initCamera() (Plan 33-13), mismo patron que initSettings().
+// Ids en index.html (montado por 33-13, tabpanel Camara): #zone-line-canvas (sobre
+// #camera-feed, compartido con lineEditor.js) #zone-mode-toggle #zone-list #zone-new-btn
+// #zone-form-kind #zone-kind-locked-label #zone-form-days #zone-form-time-start/-end
+// #zone-save-btn #zone-cancel-btn #zone-error. initZoneEditor() la llama initCamera().
 
 import { showToast } from '../views/dashboard.js';
 import { canvasClickToFrac, syncCanvasToImage } from './videoCanvas.js';
@@ -268,6 +264,14 @@ function _toggleEditMode() {
     _zonesLoaded = true;
     loadZones();
   }
+}
+
+// Exportada: camera.js la usa para desactivar este modo al activar "Editar lineas".
+export function disableZoneEditMode() {
+  if (!_editMode) return;
+  _editMode = false;
+  _byId('zone-mode-toggle')?.setAttribute('aria-pressed', 'false');
+  if (_canvas) _canvas.classList.remove('zone-editor-canvas');
 }
 
 // Punto de entrada unico (llamado por initCamera(), Plan 33-13). Solo engancha

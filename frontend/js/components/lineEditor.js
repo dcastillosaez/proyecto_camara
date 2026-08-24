@@ -258,6 +258,15 @@ function _toggleEditMode() {
   }
 }
 
+// Exportada para que camera.js (Plan 33-13) desactive este modo cuando el operador
+// activa "Editar zonas" en el <canvas> compartido — nunca ambos _editMode a la vez.
+export function disableLineEditMode() {
+  if (!_editMode) return;
+  _editMode = false;
+  _byId('line-mode-toggle')?.setAttribute('aria-pressed', 'false');
+  if (_canvas) _canvas.classList.remove('zone-editor-canvas');
+}
+
 // Punto de entrada unico (llamado por initCamera(), Plan 33-13). Solo engancha
 // listeners: no dispara red hasta que el operador entra en modo edicion.
 export function initLineEditor() {

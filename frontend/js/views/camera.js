@@ -21,6 +21,10 @@
 //     /api/v2/cameras/{id}/health como sugiere la tabla de teselas del UI-SPEC -- se
 //     sigue el codigo real ya establecido, no el texto del documento.
 
+import { initZoneEditor, disableZoneEditMode } from '../components/zoneEditor.js';
+import { initLineEditor, disableLineEditMode } from '../components/lineEditor.js';
+import { initRulesEditor } from './rules-editor.js';
+
 let _feedActivated = false;
 
 /**
@@ -116,4 +120,15 @@ export function initCamera() {
   setInterval(loadRtspCard, 5000);
   tickCameraFooter();
   setInterval(tickCameraFooter, 1000);
+
+  // D-03: los tres editores viven en Camara, sobre el MISMO <canvas>
+  // (#zone-line-canvas). Solo enganchan listeners -- sin red hasta que el operador
+  // entra en modo edicion (OPS-21/OPS-22) o abre el formulario de reglas (OPS-24).
+  initZoneEditor();
+  initLineEditor();
+  initRulesEditor();
+  // Un unico <canvas> compartido: activar un modo debe desactivar el otro para que
+  // los clicks de raton no compitan entre zoneEditor.js y lineEditor.js.
+  document.getElementById('zone-mode-toggle')?.addEventListener('click', disableLineEditMode);
+  document.getElementById('line-mode-toggle')?.addEventListener('click', disableZoneEditMode);
 }
