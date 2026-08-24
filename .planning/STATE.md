@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 32 en marcha (4/8 planes) — 32-04 cerrado (camera.js + camera-quick.js: panel de salud consolidada y 4 ajustes rapidos contra PUT /api/v2/config); dashboard-observability.js extendido con los ids #cam-* del mismo tick de 5s. Siguiente paso: 32-05 (vista Ajustes)
-last_updated: "2026-08-23T19:10:00.000Z"
-last_activity: 2026-08-23 -- 32-04 cerrado: camera.js (activacion diferida del feed, tarjeta RTSP, teselas) y camera-quick.js (4 controles con debounce/badge/revertir-en-error) listos para que 32-07 los cablee al marcado real
+stopped_at: Fase 32 en marcha (5/8 planes) — 32-05 cerrado (settings-field.js + settings-save.js: motor de renderizado y guardado de la vista Ajustes, un control por tipo y diff por seccion con popover de restaurar). Siguiente paso: 32-06 (orquestador settings.js/settings-section.js)
+last_updated: "2026-08-24T00:00:00.000Z"
+last_activity: 2026-08-24 -- 32-05 cerrado: settings-field.js (9 renderers por tipo, badges, error 422) y settings-save.js (diff en memoria por seccion, PUT con mapeo 422, popover de restaurar) listos para que 32-06 los cablee al marcado real
 progress:
   total_phases: 32
   completed_phases: 16
   total_plans: 90
-  completed_plans: 82
-  percent: 91
+  completed_plans: 83
+  percent: 92
 ---
 
 # Project State
@@ -21,14 +21,42 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (4/8 planes)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (5/8 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (4/8 planes)
-Plan: 4 of 8 — 32-04 cerrado
-Status: 32-04 cerrado; siguiente paso `/gsd:execute-phase 32` (32-05, vista Ajustes)
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (5/8 planes)
+Plan: 5 of 8 — 32-05 cerrado
+Status: 32-05 cerrado; siguiente paso `/gsd:execute-phase 32` (32-06, orquestador settings.js/settings-section.js)
+
+**32-05 construye las dos piezas "hoja" del motor de la vista Ajustes, interface-first antes que su orquestador (`32-06`).**
+`frontend/js/views/settings-field.js` (298 líneas, nuevo) expone `renderField(field,
+sectionKey)` con un `switch(field.type)` que delega a 9 renderers propios (bool/int/
+float/str/enum/time/list_int/list_str/secret/readonly — el noveno tipo, `"str"`, no
+figuraba en la lista de 8 del contrato de `<interfaces>` pero es real en el esquema de
+`32-01`/`32-02`, Rule 2), con badges de origen/aplicación siempre presentes y estado de
+error 422 (`aria-invalid`+`aria-describedby`+mensaje literal). Establece por primera vez
+en el repo el patrón de chips `.filter-chip` con `aria-pressed` real para `list_int`
+(32-PATTERNS.md lo señalaba como pendiente). Cero `innerHTML`: todo dato de servidor
+entra por `textContent` sobre nodos creados con `createElement`, ni siquiera el atajo
+que `detectionClasses.js:18-21` usa hoy. `frontend/js/views/settings-save.js` (180
+líneas, nuevo) lleva el diff pendiente en `Map<sectionKey, Map<fieldKey,value>>` a nivel
+de módulo (nunca en el DOM); `saveSection` pone `.busy` en el botón y deshabilita los
+controles de la sección durante el `PUT`, en 422 NO descarta el diff (mapea cada error a
+su fila por `dataset.fieldKey`, `scrollIntoView`+foco en la primera, las filas válidas
+siguen `.dirty`), y en red/5xx conserva el diff con el toast "los cambios siguen aquí".
+`restoreSection` abre un popover que replica literalmente `_muteTarget`/
+`openMutePopover`/`closeMutePopover` de `alertCenter.js` (D-07 de la Fase 30: nunca
+`confirm()`), deshabilitado con `title` explicativo cuando la sección no tiene ningún
+valor `runtime`. Documenta una convención de marcado nueva (`[data-cfg-section]`,
+`[data-cfg-action]`, `#restore-config-popover` + 4 sub-ids) para que `32-06` la use
+literalmente al montar el marcado real, mismo principio que el contrato de ids de
+`camera-quick.js` en `32-04`. Suite dirigida verde (`tests/test_frontend_modules.py` 9
+passed); plan solo de frontend, sin relanzar la suite completa. OPS-18, OPS-19, OPS-20,
+SET-03 y SET-04 avanzan pero no se cierran formalmente (exigen interfaz visible con el
+marcado real de `32-06`/`32-07`, se marca en la puerta de fase `32-08`). Ver
+`32-05-SUMMARY.md`.
 
 **32-04 construye la vista Cámara completa por el lado del cliente (OPS-16, OPS-17), consumidora pura de `32-02` y de los endpoints de salud ya existentes.**
 `frontend/js/views/camera.js` (119 líneas, nuevo) expone `activateCameraFeed()` (asigna
