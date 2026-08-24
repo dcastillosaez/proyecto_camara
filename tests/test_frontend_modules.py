@@ -58,6 +58,13 @@ LOCKED_JS = [
     "views/analytics-range.js",
     "views/analytics-ranking.js",
     "views/analytics-export.js",
+    # Fase 32: vistas Camara y Ajustes.
+    "views/camera.js",
+    "views/camera-quick.js",
+    "views/settings.js",
+    "views/settings-section.js",
+    "views/settings-field.js",
+    "views/settings-save.js",
 ]
 
 

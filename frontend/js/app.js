@@ -14,6 +14,9 @@ import { bindMarkPerson } from './components/markPerson.js';
 import { initTimeline, refreshPersonNames } from './views/timeline.js';
 import { initAnalytics } from './views/analytics.js';
 import { initNav } from './nav.js';
+import { initCamera } from './views/camera.js';
+import { initCameraQuick } from './views/camera-quick.js';
+import { initSettings } from './views/settings.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   // Wiring de listeners — el orden entre si no importa (no hay llamadas de red aqui,
@@ -61,4 +64,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   loadObservability();
   setInterval(loadObservability, 5000);
+
+  // Fase 32 (32-07): las tres vistas nuevas -- seguras de llamar aunque su pestana no
+  // este activa (initCamera arma el timer de la tarjeta RTSP pero no activa
+  // #camera-feed hasta que nav.js llame activateCameraFeed(); initSettings carga el
+  // esquema una vez y lo deja en memoria).
+  initCamera();
+  initCameraQuick();
+  initSettings();
 });
