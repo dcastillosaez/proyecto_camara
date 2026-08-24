@@ -17,7 +17,7 @@ import { setFieldError, clearFieldError, markFieldDirty } from './settings-field
 import { showToast } from './dashboard.js';
 
 const _pending = new Map();     // sectionKey -> Map(fieldKey -> value)
-let _onSectionSaved = null;     // callback(sectionKey, freshFields) inyectado por settings.js
+let _onSectionSaved = null;     // callback(sectionKey, freshFields, requiresRestart) inyectado por settings.js
 let _restoreTarget = null;      // { sectionKey, count } | null -- nunca en el DOM
 
 export function setOnSectionSaved(cb) {
@@ -110,7 +110,7 @@ export async function saveSection(sectionKey) {
   const savedCount = Object.keys(changes).length;
   discardChanges(sectionKey);
   for (const row of _rowsOf(panel)) markFieldDirty(row, false);
-  _onSectionSaved?.(sectionKey, data.fields);
+  _onSectionSaved?.(sectionKey, data.fields, data.requires_restart);
   const msg = (data.requires_restart?.length ?? 0) > 0
     ? `Configuración guardada. ${savedCount} valores se aplicarán al reiniciar.`
     : `Configuración guardada. ${savedCount} valores actualizados.`;
