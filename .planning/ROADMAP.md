@@ -622,7 +622,7 @@ Plans:
   6. Cada cambio genera un evento CONFIG_CHANGED con el diff
   7. La precedencia app_config > .env > default está documentada y testeada
 **Spec**: SPEC_v2.md Phase 32
-**Plans:** 5/8 plans complete (8 plans en 7 olas) — `.planning/phases/32-vista-de-c-mara-y-configuraci-n-visual/`
+**Plans:** 6/8 plans complete (8 plans en 7 olas) — `.planning/phases/32-vista-de-c-mara-y-configuraci-n-visual/`
 
 Plans:
 - [x] 32-01-PLAN.md — Esquema declarativo de 112 campos (config_schema.py) + ConfigRepo.delete()
@@ -630,7 +630,7 @@ Plans:
 - [x] 32-03-PLAN.md — Clases CSS .metric-tile/.rtsp-card/.cfg-* + área de pulsación 44x44 de .cam-toggle
 - [x] 32-04-PLAN.md — Vista Cámara: camera.js + camera-quick.js (4 ajustes rápidos)
 - [x] 32-05-PLAN.md — settings-field.js (control por tipo) + settings-save.js (diff/PUT/restaurar)
-- [ ] 32-06-PLAN.md — settings.js (árbol/deep-link) + settings-section.js (fieldsets por grupo)
+- [x] 32-06-PLAN.md — settings.js (árbol/deep-link) + settings-section.js (fieldsets por grupo)
 - [ ] 32-07-PLAN.md — Integración de navegación: nav.js (+2 pestañas), armazón HTML, wiring en app.js
 - [ ] 32-08-PLAN.md — Puerta de fase: trazabilidad de los 7 criterios + checkpoint visual
 

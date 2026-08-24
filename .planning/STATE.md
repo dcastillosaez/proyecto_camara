@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 32 en marcha (5/8 planes) — 32-05 cerrado (settings-field.js + settings-save.js: motor de renderizado y guardado de la vista Ajustes, un control por tipo y diff por seccion con popover de restaurar). Siguiente paso: 32-06 (orquestador settings.js/settings-section.js)
-last_updated: "2026-08-24T00:00:00.000Z"
-last_activity: 2026-08-24 -- 32-05 cerrado: settings-field.js (9 renderers por tipo, badges, error 422) y settings-save.js (diff en memoria por seccion, PUT con mapeo 422, popover de restaurar) listos para que 32-06 los cablee al marcado real
+stopped_at: Fase 32 en marcha (6/8 planes) — 32-06 cerrado (settings.js + settings-section.js: orquestador de la vista Ajustes, arbol tablist vertical con deep-link y panel por seccion con subsecciones de solo lectura). Siguiente paso: 32-07 (integracion de navegacion: nav.js + armazon HTML + wiring en app.js)
+last_updated: "2026-08-24T01:00:00.000Z"
+last_activity: 2026-08-24 -- 32-06 cerrado: settings.js (initSettings, arbol de 8 secciones, deep-link #ajustes/{seccion}) y settings-section.js (renderSection, fieldsets por grupo, subsecciones de zonas/reglas, savebar, restaurar) listos para que 32-07 monte el marcado real
 progress:
   total_phases: 32
   completed_phases: 16
   total_plans: 90
-  completed_plans: 83
-  percent: 92
+  completed_plans: 84
+  percent: 93
 ---
 
 # Project State
@@ -21,14 +21,44 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (5/8 planes)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (6/8 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (5/8 planes)
-Plan: 5 of 8 — 32-05 cerrado
-Status: 32-05 cerrado; siguiente paso `/gsd:execute-phase 32` (32-06, orquestador settings.js/settings-section.js)
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (6/8 planes)
+Plan: 6 of 8 — 32-06 cerrado
+Status: 32-06 cerrado; siguiente paso `/gsd:execute-phase 32` (32-07, integración de navegación: nav.js + armazón HTML + wiring en app.js)
+
+**32-06 construye el orquestador de la vista Ajustes, consumidor directo de las dos piezas "hoja" de `32-05`.**
+`frontend/js/views/settings.js` (198 líneas, nuevo) expone `initSettings()`: carga `GET
+/api/v2/config` una única vez (8 filas esqueleto sin texto ni spinner mientras está en
+vuelo, "Reintentar carga" si falla), pinta el árbol de las 8 secciones fijas como
+`tablist` vertical (`role="tab"` de 32px, navegación `↑`/`↓`/`Home`/`End`/`Enter` con un
+único listener delegado — mismo mecanismo ARIA que el `tablist` horizontal de vistas de
+la Fase 31, en vertical) y resuelve el deep-link `#ajustes/{sección}` con
+`history.replaceState`. Cambiar de sección con cambios pendientes no pierde el diff (vive
+en `settings-save.js`, D-09): el punto azul del árbol (`_refreshTreeDirtyDots`) es la
+única señal. `frontend/js/views/settings-section.js` (177 líneas, nuevo) expone
+`renderSection(section, sectionKey, requiresRestart)`: un `<fieldset>` por grupo
+delegando cada fila a `renderField()` de `32-05` (nunca un panel por subsección, D-03),
+las dos subsecciones de solo lectura `zonas_definidas`/`reglas_cargadas` resueltas bajo
+demanda (`GET /api/zones`/`GET /api/v2/rules`) solo al pintarse esa sección, con los dos
+empty states exactos del UI-SPEC y nombre de zona/regla por `textContent` (T-32-19), más
+la barra de guardado sticky y el botón "Restaurar valores por defecto" (deshabilitado con
+el `title` literal cuando ninguna fila tiene `origin==="runtime"`). Dos desviaciones
+documentadas: `_mergeFreshFields` reinyecta por `key` los campos frescos que devuelve cada
+`PUT`/`restore` en el esquema en memoria antes de repintar — sin esto, guardar una sección
+revertía visualmente el valor recién confirmado (Rule 1, bug real detectado al trazar el
+flujo completo); y `setOnSectionSaved` de `settings-save.js` (32-05) gana un tercer
+argumento aditivo (`requires_restart`) porque el diff pendiente se descarta antes de
+invocar el callback y no había otro canal para la barra ámbar de OPS-19 (Rule 3, único
+fichero tocado fuera de los dos declarados por el plan, cambio de una línea). Suite
+dirigida verde (`tests/test_frontend_modules.py` 9 passed, `TEST_line_limit` en verde con
+102 y 123 líneas de margen); plan solo de frontend, sin relanzar la suite completa. OPS-18,
+OPS-19, OPS-20, SET-03 y SET-04 avanzan pero no se cierran formalmente (exigen interfaz
+visible con el marcado real de `32-07`, se marca en la puerta de fase `32-08`). Ver
+`32-06-SUMMARY.md`.
 
 **32-05 construye las dos piezas "hoja" del motor de la vista Ajustes, interface-first antes que su orquestador (`32-06`).**
 `frontend/js/views/settings-field.js` (298 líneas, nuevo) expone `renderField(field,
