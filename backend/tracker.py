@@ -22,7 +22,7 @@ class PersonTracker:
     CROSSING_THRESHOLD = 2
     LOST_TRACK_BUFFER = 60
 
-    def __init__(self, start: sv.Point, end: sv.Point, frame_rate: int = 15) -> None:
+    def __init__(self, lines: list[dict[str, Any]] | None = None, frame_rate: int = 15) -> None:
         # frame_rate debe ser el FPS real del pipeline (MEJORAS.md punto 14):
         # ByteTrack calcula max_time_lost = frame_rate/30 * lost_track_buffer,
         # así que con el default (30) y un stream real a ~15 FPS el buffer
@@ -33,14 +33,6 @@ class PersonTracker:
         # Suaviza las bboxes entre frames (MEJORAS.md Bajas): menos jitter
         # visual y menos cruces falsos — complementa minimum_crossing_threshold.
         self._smoother = sv.DetectionsSmoother(length=5)
-        # BOTTOM_CENTER (los pies) cruza la línea de forma más fiable que el
-        # centro de la caja, que oscila con los brazos/postura (MEJORAS.md Bajas).
-        self._line_zone = sv.LineZone(
-            start=start,
-            end=end,
-            triggering_anchors=[sv.Position.BOTTOM_CENTER],
-            minimum_crossing_threshold=self.CROSSING_THRESHOLD,
-        )
 
         self._box_annotator = sv.BoxAnnotator(thickness=1)
         self._label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1)
@@ -48,10 +40,35 @@ class PersonTracker:
         # de conteo (MEJORAS.md Bajas).
         self._trace_annotator = sv.TraceAnnotator(trace_length=30, thickness=1)
 
-        self._in_count = 0
-        self._out_count = 0
-        self._crossed_ids: set[int] = set()
         self._lock = threading.Lock()
+        # Lista de líneas independientes (D-01, OPS-22): cada entrada lleva su
+        # propio LineZone + contadores. ByteTrack/smoother arriba se COMPARTEN
+        # entre todas las líneas — una misma persona conserva su identidad al
+        # cruzar varias líneas, solo el conteo es por-línea.
+        self._lines: list[dict[str, Any]] = [self._build_line(line) for line in (lines or [])]
+
+    def _build_line(
+        self,
+        line: dict[str, Any],
+        in_count: int = 0,
+        out_count: int = 0,
+        crossed_ids: set[int] | None = None,
+    ) -> dict[str, Any]:
+        # BOTTOM_CENTER (los pies) cruza la línea de forma más fiable que el
+        # centro de la caja, que oscila con los brazos/postura (MEJORAS.md Bajas).
+        return {
+            "id": line["id"],
+            "name": line["name"],
+            "zone": sv.LineZone(
+                start=line["start"],
+                end=line["end"],
+                triggering_anchors=[sv.Position.BOTTOM_CENTER],
+                minimum_crossing_threshold=self.CROSSING_THRESHOLD,
+            ),
+            "in_count": in_count,
+            "out_count": out_count,
+            "crossed_ids": set(crossed_ids) if crossed_ids else set(),
+        }
 
     # ------------------------------------------------------------------
     # Public API
@@ -59,37 +76,47 @@ class PersonTracker:
 
     def update(self, detections: sv.Detections) -> tuple[sv.Detections, list[dict[str, Any]]]:
         """
-        Update ByteTrack with *detections*, trigger the line zone, and
-        accumulate crossing counts.
+        Update ByteTrack with *detections*, trigger every configured line
+        zone, and accumulate crossing counts per line.
 
         Returns ``(tracked_detections, crossings)`` where *crossings* is a
-        list of ``{"direction": "in"|"out", "timestamp": datetime}`` dicts
-        for each new crossing in this frame — ready to persist to the DB.
+        list of ``{"direction": "in"|"out", "timestamp": datetime,
+        "tracker_id": int, "line_id": str, "line_name": str}`` dicts for each
+        new crossing in this frame — ready to persist to the DB. A person
+        crossing two lines in the same frame produces two entries, one per
+        line, sharing the same ``tracker_id``.
 
         LineZone already deduplicates per tracker_id (it keeps crossing state
         per track and only fires on real state changes), so every True in
         crossed_in/crossed_out is a genuine new crossing: a person entering
         and later leaving produces one "in" AND one "out" event.
-        ``_crossed_ids`` only tracks distinct persons for the "total" count
+        ``crossed_ids`` only tracks distinct persons for the "total" count
         and must never gate the directional counters.
         """
         tracked = self._byte_tracker.update_with_detections(detections)
         if tracked.tracker_id is not None:
             tracked = self._smoother.update_with_detections(tracked)
-        crossed_in, crossed_out = self._line_zone.trigger(tracked)
         ids = tracked.tracker_id if tracked.tracker_id is not None else []
         crossings: list[dict[str, Any]] = []
         now = datetime.datetime.now()
         with self._lock:
-            for i, tid in enumerate(ids):
-                if crossed_in[i]:
-                    self._in_count += 1
-                    self._crossed_ids.add(int(tid))
-                    crossings.append({"direction": "in", "timestamp": now, "tracker_id": int(tid)})
-                elif crossed_out[i]:
-                    self._out_count += 1
-                    self._crossed_ids.add(int(tid))
-                    crossings.append({"direction": "out", "timestamp": now, "tracker_id": int(tid)})
+            for line in self._lines:
+                crossed_in, crossed_out = line["zone"].trigger(tracked)
+                for i, tid in enumerate(ids):
+                    if crossed_in[i]:
+                        line["in_count"] += 1
+                        line["crossed_ids"].add(int(tid))
+                        crossings.append({
+                            "direction": "in", "timestamp": now, "tracker_id": int(tid),
+                            "line_id": line["id"], "line_name": line["name"],
+                        })
+                    elif crossed_out[i]:
+                        line["out_count"] += 1
+                        line["crossed_ids"].add(int(tid))
+                        crossings.append({
+                            "direction": "out", "timestamp": now, "tracker_id": int(tid),
+                            "line_id": line["id"], "line_name": line["name"],
+                        })
         return tracked, crossings
 
     def annotate(
@@ -117,13 +144,17 @@ class PersonTracker:
         out = self._label_annotator.annotate(out, tracked, labels=labels)
         return out
 
-    def get_counts(self) -> dict[str, int]:
-        """Return cumulative ``{"in": N, "out": N, "total": N}`` counts."""
+    def get_counts(self) -> dict[str, dict[str, Any]]:
+        """Return cumulative counts per line: ``{line_id: {"name", "in", "out", "total"}}``."""
         with self._lock:
             return {
-                "in": self._in_count,
-                "out": self._out_count,
-                "total": len(self._crossed_ids),
+                line["id"]: {
+                    "name": line["name"],
+                    "in": line["in_count"],
+                    "out": line["out_count"],
+                    "total": len(line["crossed_ids"]),
+                }
+                for line in self._lines
             }
 
     def set_frame_rate(self, frame_rate: float) -> None:
@@ -141,15 +172,36 @@ class PersonTracker:
                 frame_rate / 30.0 * self.LOST_TRACK_BUFFER
             )
 
-    def reconfigure_line(self, start: sv.Point, end: sv.Point) -> None:
-        """Replace the LineZone with new pixel coordinates. Thread-safe."""
+    def reconfigure_lines(self, lines: list[dict[str, Any]]) -> None:
+        """Replace the full line list with new pixel coordinates. Thread-safe.
+
+        Conserva in_count/out_count/crossed_ids de cada línea cuyo ``id`` ya
+        existiera (mover un vértice o reordenar la lista no debe perder el
+        conteo acumulado) — solo las líneas realmente nuevas arrancan en cero.
+        ``self._byte_tracker``/``self._smoother`` NUNCA se recrean aquí:
+        recrearlos perdería todos los tracks activos y sus IDs (mismo motivo
+        que ``set_frame_rate``, más arriba).
+        """
         with self._lock:
-            self._line_zone = sv.LineZone(
-                start=start,
-                end=end,
-                triggering_anchors=[sv.Position.BOTTOM_CENTER],
-                minimum_crossing_threshold=self.CROSSING_THRESHOLD,
-            )
+            existing = {line["id"]: line for line in self._lines}
+            new_lines = []
+            for line in lines:
+                prev = existing.get(line["id"])
+                if prev is not None:
+                    new_lines.append(self._build_line(
+                        line, prev["in_count"], prev["out_count"], prev["crossed_ids"]
+                    ))
+                else:
+                    new_lines.append(self._build_line(line))
+            self._lines = new_lines
+
+    def reconfigure_line(self, start: sv.Point, end: sv.Point) -> None:
+        """Wrapper de compatibilidad — la única llamada real sigue siendo
+        posicional (backend/camera.py:194, endpoint /resolution). El Plan
+        33-05 migra ese caller a reconfigure_lines/LineRepo y retira este
+        wrapper; hasta entonces sustituye la lista completa por una única
+        línea "_legacy"."""
+        self.reconfigure_lines([{"id": "_legacy", "name": "Linea", "start": start, "end": end}])
 
 
 class ObjectTracker:
