@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 32 en marcha (6/8 planes) — 32-06 cerrado (settings.js + settings-section.js: orquestador de la vista Ajustes, arbol tablist vertical con deep-link y panel por seccion con subsecciones de solo lectura). Siguiente paso: 32-07 (integracion de navegacion: nav.js + armazon HTML + wiring en app.js)
-last_updated: "2026-08-24T01:00:00.000Z"
-last_activity: 2026-08-24 -- 32-06 cerrado: settings.js (initSettings, arbol de 8 secciones, deep-link #ajustes/{seccion}) y settings-section.js (renderSection, fieldsets por grupo, subsecciones de zonas/reglas, savebar, restaurar) listos para que 32-07 monte el marcado real
+stopped_at: Fase 32 en marcha (7/8 planes) — 32-07 cerrado (nav.js extendido a 4 pestanas + armazon HTML de Camara/Ajustes + wiring en app.js). Siguiente paso: 32-08 (puerta de fase, checkpoint manual no autonomo)
+last_updated: "2026-08-24T02:00:00.000Z"
+last_activity: 2026-08-24 -- 32-07 cerrado: nav.js (VIEWS a 4, activateCameraFeed en la primera activacion de Camara, hash de Ajustes preserva #ajustes/{seccion}), tabpanel Camara y Ajustes montados en index.html con los ids exactos que 32-04/32-05/32-06 ya esperaban, app.js arranca initCamera/initCameraQuick/initSettings y LOCKED_JS cubre los 8 modulos de la fase. Falta 32-08 (puerta de fase, autonomous:false)
 progress:
   total_phases: 32
   completed_phases: 16
   total_plans: 90
-  completed_plans: 84
-  percent: 93
+  completed_plans: 85
+  percent: 94
 ---
 
 # Project State
@@ -21,14 +21,50 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (6/8 planes)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (6/8 planes)
-Plan: 6 of 8 — 32-06 cerrado
-Status: 32-06 cerrado; siguiente paso `/gsd:execute-phase 32` (32-07, integración de navegación: nav.js + armazón HTML + wiring en app.js)
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes)
+Plan: 7 of 8 — 32-07 cerrado
+Status: 32-07 cerrado; siguiente paso `/gsd:execute-phase 32` (32-08, puerta de fase — checkpoint manual `autonomous: false`, no se ejecuta en modo autónomo)
+
+**32-07 cierra la fase conectando las cinco waves anteriores a la navegación real — el único plan que toca `nav.js`.**
+`frontend/js/nav.js` extiende `VIEWS` de 2 a 4 (`operaciones`/`analitica`/`camara`/`ajustes`)
+sin reescribir el mecanismo: `_tabFor`/`_panelFor` pasan de un `switch` a resolución
+genérica por id (`tab-{view}`/`view-{view}`), y `activate()` gana dos comportamientos
+aditivos — llama `activateCameraFeed()` de `32-04` la primera vez que se entra en
+Cámara (el propio módulo ya se protege contra reasignar `src` en activaciones
+repetidas) y **no pisa** el hash cuando ya apunta a la vista activa con un segundo
+nivel (`#ajustes/{sección}`), un bug real que se habría colado si `initNav()` hubiera
+seguido sobrescribiendo el hash con `history.replaceState(null,'','#ajustes')` en cada
+activación: el deep-link de `32-06` habría llegado siempre vacío a `_sectionFromHash()`
+al abrir directamente un marcador con sección (Rule 1, detectado al trazar el orden de
+arranque de `DOMContentLoaded` antes de comitear). `frontend/index.html` gana el
+armazón del `tabpanel` Cámara (feed diferido sin `src`, bloque `#camera-offline` con el
+mismo copy/patrón que Operaciones, tarjeta RTSP, 6 teselas de métrica, barra de ajustes
+rápidos con los 4 controles — checkboxes de clases estáticos porque `camera-quick.js`
+solo alterna checkboxes ya presentes en el DOM, nunca los crea) y del `tabpanel`
+Ajustes (`#settings-tree`/`#settings-panel`), con los ids exactos que `camera.js`/
+`camera-quick.js`/`settings.js`/`settings-section.js` ya esperaban desde `32-04`/`32-05`.
+`app.js` llama `initCamera()`/`initCameraQuick()`/`initSettings()` tras el bloque de
+observabilidad existente, y `LOCKED_JS` incorpora los 6 módulos nuevos de la fase (más
+`nav.js`/`dashboard-observability.js`, que ya estaban). Una desviación fuera de los
+ficheros declarados por el plan: `#restore-config-popover` (contrato de `32-05`) no
+tenía ninguna regla CSS que lo mantuviera oculto por defecto — sin ella habría quedado
+visible en cuanto se montara el marcado, rompiendo visualmente la vista Ajustes desde el
+primer render; se añadieron dos líneas a `components.css` (`display:none`/`.open`),
+mismo patrón que `#alert-mute-popover` de la Fase 30 (Rule 2). El PTZ duplicado que el
+UI-SPEC dibuja en la fila 3 de la retícula de Cámara **no** se construyó: el plan (fuente
+de verdad para esta ejecución) no lo lista entre los ids requeridos por `camera.js`/
+`camera-quick.js`, y duplicar los ids del PTZ existente (`#ptz-stop-btn`, `data-dir`,
+`#presets-container`...) habría roto `bindPtzControls()` sobre el único control real —
+documentado como decisión, no como hueco. Suite completa relanzada (toca navegación/
+wiring compartido). OPS-16..OPS-18 avanzan con interfaz visible por primera vez pero
+siguen sin cerrarse formalmente — mismo patrón que el resto de la fase, cierre en la
+puerta de fase `32-08` (checkpoint manual, `autonomous: false`, no ejecutable en modo
+autónomo). Ver `32-07-SUMMARY.md`.
 
 **32-06 construye el orquestador de la vista Ajustes, consumidor directo de las dos piezas "hoja" de `32-05`.**
 `frontend/js/views/settings.js` (198 líneas, nuevo) expone `initSettings()`: carga `GET

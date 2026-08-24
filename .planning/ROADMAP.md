@@ -631,7 +631,7 @@ Plans:
 - [x] 32-04-PLAN.md — Vista Cámara: camera.js + camera-quick.js (4 ajustes rápidos)
 - [x] 32-05-PLAN.md — settings-field.js (control por tipo) + settings-save.js (diff/PUT/restaurar)
 - [x] 32-06-PLAN.md — settings.js (árbol/deep-link) + settings-section.js (fieldsets por grupo)
-- [ ] 32-07-PLAN.md — Integración de navegación: nav.js (+2 pestañas), armazón HTML, wiring en app.js
+- [x] 32-07-PLAN.md — Integración de navegación: nav.js (+2 pestañas), armazón HTML, wiring en app.js
 - [ ] 32-08-PLAN.md — Puerta de fase: trazabilidad de los 7 criterios + checkpoint visual
 
 ### Phase 33: Editores visuales de zonas, líneas y reglas
