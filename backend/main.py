@@ -457,15 +457,22 @@ async def lifespan(app: FastAPI):
         label=settings.detection_label,
         imgsz=settings.yolo_imgsz,
     )
+    # id/name "linea-1"/"Linea de conteo" replican la siembra de
+    # migrations.py:_migrate_v4_to_v5 (D-01) — el Plan 33-08 sustituye este
+    # bloque por la carga real desde LineRepo (N lineas persistidas).
     tracker = PersonTracker(
-        start=sv.Point(
-            int(settings.line_start_x_frac * settings.process_width),
-            int(settings.line_start_y_frac * settings.process_height),
-        ),
-        end=sv.Point(
-            int(settings.line_end_x_frac * settings.process_width),
-            int(settings.line_end_y_frac * settings.process_height),
-        ),
+        lines=[{
+            "id": "linea-1",
+            "name": "Linea de conteo",
+            "start": sv.Point(
+                int(settings.line_start_x_frac * settings.process_width),
+                int(settings.line_start_y_frac * settings.process_height),
+            ),
+            "end": sv.Point(
+                int(settings.line_end_x_frac * settings.process_width),
+                int(settings.line_end_y_frac * settings.process_height),
+            ),
+        }],
         frame_rate=settings.tracker_frame_rate,
     )
     recognizer = PersonRecognizer(

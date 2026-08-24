@@ -97,6 +97,8 @@ class EventEngine:
             payload={
                 "direction": crossing["direction"],
                 "is_intrusion": bool(crossing.get("is_intrusion", False)),
+                "line_id": crossing.get("line_id"),
+                "line_name": crossing.get("line_name"),
             },
         )
 
