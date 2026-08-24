@@ -295,22 +295,25 @@ def _matches(when: When, event: Event) -> bool:
 | A2 | Esta fase debe soportar múltiples líneas de conteo (no solo mejorar la edición de la línea única existente) | Pitfall 4 | Alto — si la decisión real es "solo una línea, mejor editada", el refactor de `PersonTracker` es trabajo innecesario; si la decisión es "N líneas" y no se planifica el refactor, el criterio OPS-22 (plural) queda incumplido |
 | A3 | La migración de reglas de YAML a tabla `rules` es aceptable (no hay compromiso operativo de mantener `rules.yaml` como fuente editable a mano en producción) | State of the Art | Medio — si el usuario edita `rules.yaml` manualmente en producción hoy, migrar a BD sin plan de sincronización rompería ese flujo |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **¿Dónde vive el editor en la navegación de 4 pestañas?**
    - Qué sabemos: `nav.js` tiene Operaciones/Analítica/Cámara/Ajustes; Ajustes ya tiene un grupo "Zonas definidas" (solo lectura) y "Reglas cargadas" (solo lectura) apuntando a `external_source`.
    - Qué no está claro: si el editor visual (canvas) sustituye esas listas de solo lectura dentro de Ajustes, o si vive como modal lanzado desde la pestaña Cámara (donde está el feed grande `#camera-feed`), o si necesita una pestaña propia.
    - Recomendación: decidirlo en discuss-phase antes de planificar tareas de frontend — condiciona qué ficheros JS/HTML se tocan y si `#tracks-overlay` se reutiliza o se crea un canvas nuevo sobre `#camera-feed`.
+   - **RESOLVED: ver 33-CONTEXT.md D-03** — el editor vive dentro de la vista Cámara (no en Ajustes ni en pestaña nueva), como panel/sub-vista que reutiliza el frame de vídeo en vivo (extensión del patrón de `videoCanvas.js`). Las subsecciones de solo lectura de Ajustes se mantienen como listado/resumen con enlace al editor real.
 
 2. **¿La migración de `/api/zones` (v1) a `/api/v2/zones` (ZoneRepo) es parte de esta fase o se mantiene el v1 y se añade v2 en paralelo?**
    - Qué sabemos: ambas rutas escriben a la misma tabla física con columnas distintas (Pitfall 1).
    - Qué no está claro: si mantener las dos rutas coexistiendo introduce inconsistencia visible al usuario (zona creada por una no aparece en la otra).
    - Recomendación: unificar en `/api/v2/zones` sobre `ZoneRepo`/columna `polygon`, con migración de datos de `polygon_json`→`polygon` si hay filas existentes, y dejar `/api/zones` como alias de compatibilidad o eliminarlo si nada más lo consume (verificar `frontend/*.js` primero).
+   - **RESOLVED: ver 33-CONTEXT.md D-02** — unificar en el modelo v2 (`storage/models.py:Zone` + `ZoneRepo`). El editor visual escribe y lee únicamente contra el esquema v2; el modelo legacy de `database.py` queda fuera de esta fase salvo verificación previa de qué código v1 sigue usándolo (documentar como riesgo conocido si algo v1 lo usa activamente, sin migrarlo a ciegas). Si `/api/zones` (v1) se unifica o coexiste con `/api/v2/zones` queda a discreción del planificador (33-CONTEXT.md "Claude's Discretion").
 
 3. **¿Cuántos eventos históricos hay realmente disponibles para probar `/rules/{id}/test` con datos reales?**
    - Qué sabemos: el endpoint debe evaluar "los últimos 500 eventos" (RULE-05/criterio 5).
    - Qué no está claro: si el volumen de eventos en `data/events.db` en desarrollo es suficiente para verificar el comportamiento sin generar eventos sintéticos.
    - Recomendación: el plan de verificación debería incluir un fixture/seed de eventos de prueba (pytest) más que depender de datos reales de la cámara.
+   - **RESOLVED: ver 33-CONTEXT.md "Claude's Discretion"** — si el volumen de eventos reales no basta para una prueba significativa, usar `scripts/seed_events.py` (ya existe, usado en la Fase 30) en vez de inventar un generador ad hoc. Los tests automatizados (33-06) mockean `EventRepo.query`; el volumen real solo importa para el checkpoint manual (33-14).
 
 ## Environment Availability
 
