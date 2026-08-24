@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 33 con las 5 olas autonomas cerradas (13/14 planes) en rama feature/fase-33. Solo falta 33-14 (ola 6, puerta de fase, checkpoint manual autonomous:false -- verificacion visual con servidor real, NO ejecutable en modo autonomo). Fase 32 sigue abierta aparte (7/8 planes, falta 32-08).
-last_updated: "2026-08-24T20:30:00.000Z"
-last_activity: 2026-08-24 -- Fase 33 ola 5 ejecutada (33-13: armazon HTML de zonas/lineas/reglas montado dentro de la vista Camara segun D-03, camera.js cablea initZoneEditor/initLineEditor/initRulesEditor con mutex de modo de edicion, retirada de bindZoneForm/loadZones legacy que 33-10 habia dejado roto a proposito para que este plan lo cerrara, settings-section.js actualizado a 3 subsecciones de solo lectura). Suite completa: 767 passed, 2 skipped, sin regresiones. Fase 32 no se toco: sigue abierta en 32-08. Fase 33 lista para el checkpoint manual 33-14.
+stopped_at: Fase 33 COMPLETA (14/14 planes, checkpoint 33-14 APROBADO con servidor real) en rama feature/fase-33. OPS-21..OPS-24/RULE-05 cerrados en REQUIREMENTS.md. Fase 32 sigue abierta aparte (7/8 planes, falta 32-08) -- no forma parte de esta rama de trabajo.
+last_updated: "2026-08-24T21:15:00.000Z"
+last_activity: 2026-08-24 -- Fase 33 cerrada con checkpoint 33-14: trazabilidad de los 7 criterios de exito (Task 1, suite completa 767 passed/2 skipped/0 failed) + checkpoint visual con servidor real (Task 2, APROBADO) -- zona (kind=restricted, horario 08:00-18:00), 2 lineas coexistiendo (D-01), regla LINE_CROSSED+log probada contra 500 eventos reales (would_fire=1), tarjeta legacy de Operaciones retirada, subsecciones de Ajustes con datos reales, hot-reload confirmado sin restart en logs del servidor. Datos de prueba limpiados tras verificar (DELETE 200 en zona/linea/regla). Bug 500 preexistente de /api/v2/cameras/cam1/health confirmado no relacionado con esta fase (Fase 30). Fase 32 no se toco: sigue abierta en 32-08.
 progress:
   total_phases: 32
-  completed_phases: 16
+  completed_phases: 17
   total_plans: 104
-  completed_plans: 98
-  percent: 94
+  completed_plans: 99
+  percent: 95
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08). Phase 33 — Editores visuales de zonas, líneas y reglas (5/6 olas cerradas, 13/14 planes, solo falta el checkpoint manual 33-14)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08, rama distinta). Phase 33 — Editores visuales de zonas, líneas y reglas — **COMPLETA** (14/14 planes, checkpoint 33-14 aprobado)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes, sin cerrar)
-Phase: 33 (Editores visuales de zonas, líneas y reglas) — 13/14 planes, rama `feature/fase-33`
-Plan: 32 en 7 of 8 — 32-07 cerrado. 33 con olas 1-5 cerradas (todos los planes autónomos); solo queda 33-14
-Status: Phase 32 sigue abierta en 32-08 — no se tocó en esta sesión. Phase 33: todo el trabajo autónomo terminado (backend v2 completo, frontend con los 3 editores montados en Cámara, suite 767 passed/2 skipped); 33-14 es un checkpoint manual (`autonomous: false`) que requiere que el usuario (o Claude con servidor real arrancado y navegador) verifique visualmente dibujar zonas/líneas y probar reglas — no se ejecuta en modo autónomo
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes, sin cerrar, rama distinta)
+Phase: 33 (Editores visuales de zonas, líneas y reglas) — **COMPLETA** (14/14 planes), rama `feature/fase-33`
+Plan: 32 en 7 of 8 — 32-07 cerrado. 33: las 14 planes cerrados, checkpoint 33-14 aprobado
+Status: Phase 32 sigue abierta en 32-08 — no se tocó en esta sesión (rama distinta). Phase 33 cerrada de extremo a extremo: backend v2 (zonas/líneas/reglas con hot-reload), frontend con los 3 editores montados en Cámara, suite 767 passed/2 skipped, checkpoint visual con servidor real aprobado, OPS-21..OPS-24/RULE-05 marcados en REQUIREMENTS.md. Siguiente paso natural: revisar/mergear `feature/fase-33` a `main`, o continuar con Fase 34 (Tests E2E e integración del pipeline) cuando el usuario lo decida
 
 **32-07 cierra la fase conectando las cinco waves anteriores a la navegación real — el único plan que toca `nav.js`.**
 `frontend/js/nav.js` extiende `VIEWS` de 2 a 4 (`operaciones`/`analitica`/`camara`/`ajustes`)
