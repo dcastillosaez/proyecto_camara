@@ -87,6 +87,27 @@ def make_v2_db(path):
     engine.dispose()
 
 
+def make_v3_db(path):
+    """Build a DB in the v3 state: full v2 schema (which already includes the
+    Fase 30 timeline index), schema_version=3, and WITHOUT the Fase 31 analytics
+    index.
+
+    The DROP is deliberate, same reasoning as make_v2_db(): create_all() already
+    declares idx_events_analytics via today's __table_args__, so the test needs a
+    starting point where it's absent to prove the migration creates it.
+    """
+    engine = create_engine(f"sqlite:///{path}")
+    models.Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP INDEX IF EXISTS idx_events_analytics"))
+        conn.execute(text("DELETE FROM app_config WHERE key='schema_version'"))
+        conn.execute(
+            text("INSERT INTO app_config (key, value, updated_at) VALUES ('schema_version', '3', :now)"),
+            {"now": datetime.datetime.now().isoformat(sep=" ")},
+        )
+    engine.dispose()
+
+
 def _index_names(engine, name: str) -> list[str]:
     with engine.connect() as conn:
         rows = conn.execute(
@@ -248,7 +269,10 @@ def TEST_migration_v3_creates_timeline_index(tmp_path):
     run_migrations(engine)
 
     assert _index_names(engine, "idx_events_ts_id") == ["idx_events_ts_id"]
-    assert _schema_version(engine) == 3
+    # run_migrations() siempre encadena hasta SCHEMA_VERSION, no se detiene en el
+    # escalon v3 (Fase 31 subio SCHEMA_VERSION a 4) — mismo patron dinamico que
+    # TEST_schema_version_recorded, no un literal que quede obsoleto en cada fase.
+    assert _schema_version(engine) == SCHEMA_VERSION
 
 
 def TEST_migration_v3_is_idempotent(tmp_path):
@@ -260,7 +284,7 @@ def TEST_migration_v3_is_idempotent(tmp_path):
     run_migrations(engine)  # must not raise
 
     assert _index_names(engine, "idx_events_ts_id") == ["idx_events_ts_id"]
-    assert _schema_version(engine) == 3
+    assert _schema_version(engine) == SCHEMA_VERSION
 
 
 def TEST_fresh_db_has_timeline_index(tmp_path):
@@ -285,3 +309,39 @@ def TEST_zones_and_recordings_preserved(tmp_path):
 
     assert zone is not None and zone[1] == "Jardin"
     assert recording is not None
+
+
+# ─── v3 -> v4: indice compuesto de analitica (Fase 31, OPS-12/OPS-14) ────────
+
+
+def TEST_migration_v4_creates_analytics_index(tmp_path):
+    db_path = tmp_path / "v3.db"
+    make_v3_db(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+    assert _index_names(engine, "idx_events_analytics") == []  # punto de partida real
+
+    run_migrations(engine)
+
+    assert _index_names(engine, "idx_events_analytics") == ["idx_events_analytics"]
+    assert _schema_version(engine) == 4
+
+
+def TEST_migration_v4_is_idempotent(tmp_path):
+    db_path = tmp_path / "v3.db"
+    make_v3_db(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+    run_migrations(engine)  # must not raise
+
+    assert _index_names(engine, "idx_events_analytics") == ["idx_events_analytics"]
+    assert _schema_version(engine) == 4
+
+
+def TEST_fresh_db_has_analytics_index(tmp_path):
+    """Una base nueva lo hereda de Event.__table_args__, sin pasar por la migracion."""
+    db_path = tmp_path / "fresh_v4.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    models.Base.metadata.create_all(engine)
+
+    assert _index_names(engine, "idx_events_analytics") == ["idx_events_analytics"]

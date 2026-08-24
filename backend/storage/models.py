@@ -109,6 +109,12 @@ class Event(Base):
         # cursor (ts,id) por valor de fila y ORDER BY sin TEMP B-TREE
         # (Fase 30, medido: severity sola 19,0ms -> 0,60ms @100k)
         Index("idx_events_ts_id", ts.desc(), id.desc()),
+        # Fase 31 (OPS-12/OPS-14): covering index de analitica. Anchura de 5 columnas
+        # MEDIDA (31-RESEARCH.md "Anchura del indice"): sin track_id, personas distintas
+        # por hora se queda en 590 ms; con `type` dentro, el ranking sube a 190 ms.
+        # Medido @100k: ocupacion 551->28 ms, conocidas/desconocidas 535->14 ms,
+        # personas distintas por hora 618->78 ms.
+        Index("idx_events_analytics", "camera_id", "ts", "person_id", "zone_id", "track_id"),
     )
 
 

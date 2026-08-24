@@ -251,10 +251,10 @@
 - [x] **OPS-09**: Los filtros de eventos se resuelven en servidor con paginación por cursor
 - [x] **OPS-10**: Un evento nuevo aparece en la interfaz en menos de un segundo
 - [x] **OPS-11**: El centro de alertas agrupa alertas activas, muestra qué regla las disparó y permite silenciarlas
-- [ ] **OPS-12**: Existe una vista de analítica con personas por hora, ocupación por zona y heatmap
-- [ ] **OPS-13**: La analítica muestra ranking de personas por visitas y tendencia frente al periodo anterior
-- [ ] **OPS-14**: Las agregaciones se calculan en base de datos, no en el navegador
-- [ ] **OPS-15**: La analítica es exportable a CSV y JSON en el rango visible
+- [x] **OPS-12**: Existe una vista de analítica con personas por hora, ocupación por zona y heatmap
+- [x] **OPS-13**: La analítica muestra ranking de personas por visitas y tendencia frente al periodo anterior
+- [x] **OPS-14**: Las agregaciones se calculan en base de datos, no en el navegador
+- [x] **OPS-15**: La analítica es exportable a CSV y JSON en el rango visible
 - [ ] **OPS-16**: Existe una vista de cámara con live view y salud en tiempo real (FPS, latencia, CPU, RAM, estado RTSP)
 - [ ] **OPS-17**: Los ajustes rápidos de detección y grabación son accesibles desde la vista de cámara
 - [ ] **OPS-18**: La configuración se edita desde la interfaz mediante un árbol de secciones
@@ -267,10 +267,10 @@
 
 ### Configuración runtime (SET)
 
-- [ ] **SET-01**: La configuración operativa se persiste en base de datos y es editable en caliente
-- [ ] **SET-02**: La precedencia es configuración runtime > `.env` > valor por defecto del código, documentada y testeada
-- [ ] **SET-03**: Todo parámetro tiene rango validado en servidor con mensaje de error legible
-- [ ] **SET-04**: Todo cambio de configuración queda auditado como evento con su diff
+- [x] **SET-01**: La configuración operativa se persiste en base de datos y es editable en caliente
+- [x] **SET-02**: La precedencia es configuración runtime > `.env` > valor por defecto del código, documentada y testeada
+- [x] **SET-03**: Todo parámetro tiene rango validado en servidor con mensaje de error legible
+- [x] **SET-04**: Todo cambio de configuración queda auditado como evento con su diff
 
 ### Testing v2 (TEST)
 
@@ -316,7 +316,7 @@
 - Requisitos v2 totales: **107**
 - Mapeados a fases: **107**
 - Sin mapear: **0**
-- Completados: **43/107** (bloque A completo salvo RULE-05; FACE-01..06 de la Fase 23 completos en código, verificación con datos reales pendiente — checkpoint 23-02 Task 4)
+- Completados: **44/107** (bloque A completo salvo RULE-05; FACE-01..06 de la Fase 23 completos en código, verificación con datos reales pendiente — checkpoint 23-02 Task 4)
 
 ---
 *Requisitos v2 definidos: 2026-08-07*

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10). El modal
-last_updated: "2026-08-22T11:01:34.478Z"
-last_activity: 2026-08-22 -- Phase 31 planning complete
+stopped_at: Fase 32 en marcha (7/8 planes) — 32-07 cerrado (nav.js extendido a 4 pestanas + armazon HTML de Camara/Ajustes + wiring en app.js). Siguiente paso: 32-08 (puerta de fase, checkpoint manual no autonomo)
+last_updated: "2026-08-24T02:00:00.000Z"
+last_activity: 2026-08-24 -- 32-07 cerrado: nav.js (VIEWS a 4, activateCameraFeed en la primera activacion de Camara, hash de Ajustes preserva #ajustes/{seccion}), tabpanel Camara y Ajustes montados en index.html con los ids exactos que 32-04/32-05/32-06 ya esperaban, app.js arranca initCamera/initCameraQuick/initSettings y LOCKED_JS cubre los 8 modulos de la fase. Falta 32-08 (puerta de fase, autonomous:false)
 progress:
   total_phases: 32
-  completed_phases: 15
-  total_plans: 79
-  completed_plans: 67
-  percent: 85
+  completed_phases: 16
+  total_plans: 90
+  completed_plans: 85
+  percent: 94
 ---
 
 # Project State
@@ -21,14 +21,387 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 31 — Vista de analítica (sin planificar)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
-Phase: 30 (Event Timeline y centro de alertas) — COMPLETA (12/12 planes)
-Plan: 12 of 12 — 30-12 cerrada
-Status: Ready to execute
+Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes)
+Plan: 7 of 8 — 32-07 cerrado
+Status: 32-07 cerrado; siguiente paso `/gsd:execute-phase 32` (32-08, puerta de fase — checkpoint manual `autonomous: false`, no se ejecuta en modo autónomo)
+
+**32-07 cierra la fase conectando las cinco waves anteriores a la navegación real — el único plan que toca `nav.js`.**
+`frontend/js/nav.js` extiende `VIEWS` de 2 a 4 (`operaciones`/`analitica`/`camara`/`ajustes`)
+sin reescribir el mecanismo: `_tabFor`/`_panelFor` pasan de un `switch` a resolución
+genérica por id (`tab-{view}`/`view-{view}`), y `activate()` gana dos comportamientos
+aditivos — llama `activateCameraFeed()` de `32-04` la primera vez que se entra en
+Cámara (el propio módulo ya se protege contra reasignar `src` en activaciones
+repetidas) y **no pisa** el hash cuando ya apunta a la vista activa con un segundo
+nivel (`#ajustes/{sección}`), un bug real que se habría colado si `initNav()` hubiera
+seguido sobrescribiendo el hash con `history.replaceState(null,'','#ajustes')` en cada
+activación: el deep-link de `32-06` habría llegado siempre vacío a `_sectionFromHash()`
+al abrir directamente un marcador con sección (Rule 1, detectado al trazar el orden de
+arranque de `DOMContentLoaded` antes de comitear). `frontend/index.html` gana el
+armazón del `tabpanel` Cámara (feed diferido sin `src`, bloque `#camera-offline` con el
+mismo copy/patrón que Operaciones, tarjeta RTSP, 6 teselas de métrica, barra de ajustes
+rápidos con los 4 controles — checkboxes de clases estáticos porque `camera-quick.js`
+solo alterna checkboxes ya presentes en el DOM, nunca los crea) y del `tabpanel`
+Ajustes (`#settings-tree`/`#settings-panel`), con los ids exactos que `camera.js`/
+`camera-quick.js`/`settings.js`/`settings-section.js` ya esperaban desde `32-04`/`32-05`.
+`app.js` llama `initCamera()`/`initCameraQuick()`/`initSettings()` tras el bloque de
+observabilidad existente, y `LOCKED_JS` incorpora los 6 módulos nuevos de la fase (más
+`nav.js`/`dashboard-observability.js`, que ya estaban). Una desviación fuera de los
+ficheros declarados por el plan: `#restore-config-popover` (contrato de `32-05`) no
+tenía ninguna regla CSS que lo mantuviera oculto por defecto — sin ella habría quedado
+visible en cuanto se montara el marcado, rompiendo visualmente la vista Ajustes desde el
+primer render; se añadieron dos líneas a `components.css` (`display:none`/`.open`),
+mismo patrón que `#alert-mute-popover` de la Fase 30 (Rule 2). El PTZ duplicado que el
+UI-SPEC dibuja en la fila 3 de la retícula de Cámara **no** se construyó: el plan (fuente
+de verdad para esta ejecución) no lo lista entre los ids requeridos por `camera.js`/
+`camera-quick.js`, y duplicar los ids del PTZ existente (`#ptz-stop-btn`, `data-dir`,
+`#presets-container`...) habría roto `bindPtzControls()` sobre el único control real —
+documentado como decisión, no como hueco. Suite completa relanzada (toca navegación/
+wiring compartido). OPS-16..OPS-18 avanzan con interfaz visible por primera vez pero
+siguen sin cerrarse formalmente — mismo patrón que el resto de la fase, cierre en la
+puerta de fase `32-08` (checkpoint manual, `autonomous: false`, no ejecutable en modo
+autónomo). Ver `32-07-SUMMARY.md`.
+
+**32-06 construye el orquestador de la vista Ajustes, consumidor directo de las dos piezas "hoja" de `32-05`.**
+`frontend/js/views/settings.js` (198 líneas, nuevo) expone `initSettings()`: carga `GET
+/api/v2/config` una única vez (8 filas esqueleto sin texto ni spinner mientras está en
+vuelo, "Reintentar carga" si falla), pinta el árbol de las 8 secciones fijas como
+`tablist` vertical (`role="tab"` de 32px, navegación `↑`/`↓`/`Home`/`End`/`Enter` con un
+único listener delegado — mismo mecanismo ARIA que el `tablist` horizontal de vistas de
+la Fase 31, en vertical) y resuelve el deep-link `#ajustes/{sección}` con
+`history.replaceState`. Cambiar de sección con cambios pendientes no pierde el diff (vive
+en `settings-save.js`, D-09): el punto azul del árbol (`_refreshTreeDirtyDots`) es la
+única señal. `frontend/js/views/settings-section.js` (177 líneas, nuevo) expone
+`renderSection(section, sectionKey, requiresRestart)`: un `<fieldset>` por grupo
+delegando cada fila a `renderField()` de `32-05` (nunca un panel por subsección, D-03),
+las dos subsecciones de solo lectura `zonas_definidas`/`reglas_cargadas` resueltas bajo
+demanda (`GET /api/zones`/`GET /api/v2/rules`) solo al pintarse esa sección, con los dos
+empty states exactos del UI-SPEC y nombre de zona/regla por `textContent` (T-32-19), más
+la barra de guardado sticky y el botón "Restaurar valores por defecto" (deshabilitado con
+el `title` literal cuando ninguna fila tiene `origin==="runtime"`). Dos desviaciones
+documentadas: `_mergeFreshFields` reinyecta por `key` los campos frescos que devuelve cada
+`PUT`/`restore` en el esquema en memoria antes de repintar — sin esto, guardar una sección
+revertía visualmente el valor recién confirmado (Rule 1, bug real detectado al trazar el
+flujo completo); y `setOnSectionSaved` de `settings-save.js` (32-05) gana un tercer
+argumento aditivo (`requires_restart`) porque el diff pendiente se descarta antes de
+invocar el callback y no había otro canal para la barra ámbar de OPS-19 (Rule 3, único
+fichero tocado fuera de los dos declarados por el plan, cambio de una línea). Suite
+dirigida verde (`tests/test_frontend_modules.py` 9 passed, `TEST_line_limit` en verde con
+102 y 123 líneas de margen); plan solo de frontend, sin relanzar la suite completa. OPS-18,
+OPS-19, OPS-20, SET-03 y SET-04 avanzan pero no se cierran formalmente (exigen interfaz
+visible con el marcado real de `32-07`, se marca en la puerta de fase `32-08`). Ver
+`32-06-SUMMARY.md`.
+
+**32-05 construye las dos piezas "hoja" del motor de la vista Ajustes, interface-first antes que su orquestador (`32-06`).**
+`frontend/js/views/settings-field.js` (298 líneas, nuevo) expone `renderField(field,
+sectionKey)` con un `switch(field.type)` que delega a 9 renderers propios (bool/int/
+float/str/enum/time/list_int/list_str/secret/readonly — el noveno tipo, `"str"`, no
+figuraba en la lista de 8 del contrato de `<interfaces>` pero es real en el esquema de
+`32-01`/`32-02`, Rule 2), con badges de origen/aplicación siempre presentes y estado de
+error 422 (`aria-invalid`+`aria-describedby`+mensaje literal). Establece por primera vez
+en el repo el patrón de chips `.filter-chip` con `aria-pressed` real para `list_int`
+(32-PATTERNS.md lo señalaba como pendiente). Cero `innerHTML`: todo dato de servidor
+entra por `textContent` sobre nodos creados con `createElement`, ni siquiera el atajo
+que `detectionClasses.js:18-21` usa hoy. `frontend/js/views/settings-save.js` (180
+líneas, nuevo) lleva el diff pendiente en `Map<sectionKey, Map<fieldKey,value>>` a nivel
+de módulo (nunca en el DOM); `saveSection` pone `.busy` en el botón y deshabilita los
+controles de la sección durante el `PUT`, en 422 NO descarta el diff (mapea cada error a
+su fila por `dataset.fieldKey`, `scrollIntoView`+foco en la primera, las filas válidas
+siguen `.dirty`), y en red/5xx conserva el diff con el toast "los cambios siguen aquí".
+`restoreSection` abre un popover que replica literalmente `_muteTarget`/
+`openMutePopover`/`closeMutePopover` de `alertCenter.js` (D-07 de la Fase 30: nunca
+`confirm()`), deshabilitado con `title` explicativo cuando la sección no tiene ningún
+valor `runtime`. Documenta una convención de marcado nueva (`[data-cfg-section]`,
+`[data-cfg-action]`, `#restore-config-popover` + 4 sub-ids) para que `32-06` la use
+literalmente al montar el marcado real, mismo principio que el contrato de ids de
+`camera-quick.js` en `32-04`. Suite dirigida verde (`tests/test_frontend_modules.py` 9
+passed); plan solo de frontend, sin relanzar la suite completa. OPS-18, OPS-19, OPS-20,
+SET-03 y SET-04 avanzan pero no se cierran formalmente (exigen interfaz visible con el
+marcado real de `32-06`/`32-07`, se marca en la puerta de fase `32-08`). Ver
+`32-05-SUMMARY.md`.
+
+**32-04 construye la vista Cámara completa por el lado del cliente (OPS-16, OPS-17), consumidora pura de `32-02` y de los endpoints de salud ya existentes.**
+`frontend/js/views/camera.js` (119 líneas, nuevo) expone `activateCameraFeed()` (asigna
+`src="/video_feed"` a `#camera-feed` una sola vez, con flag de módulo, para que el
+`onerror` de reconexión no se dispare en cada cambio de pestaña), `loadRtspCard()`
+(semáforo de 3 estados heredado de la Fase 29 sobre `GET /api/v2/cameras/cam1/health`,
+más la URL RTSP siempre enmascarada por el servidor desde `GET /api/v2/config`),
+`tickCameraFooter()` e `initCamera()`. `frontend/js/views/camera-quick.js` (240 líneas,
+nuevo) implementa los 4 controles de la barra de ajustes rápidos (clases, resolución,
+confianza con debounce de 600ms, severidad de subida a Drive), todos contra el mismo
+`PUT /api/v2/config` del árbol de Ajustes — sin toast en éxito (D-13, el vídeo es la
+confirmación), badge de aplicación siempre pintado desde la respuesta del servidor, y
+reversión al valor real vía `GET /api/v2/config` en cualquier error. `dashboard-
+observability.js` (65 → 77 líneas) gana un segundo set de ids `#cam-*` pintado desde
+el mismo tick de 5s que ya usa Operaciones, sin fetch ni intervalo nuevos. Dos
+desviaciones ya anticipadas por el propio `<behavior>` de la Task 1 quedan
+documentadas en el SUMMARY: sin countdown de segundos en "Reconectando" (el backoff no
+se expone por API) y "Frames descartados" leído de `/api/v2/metrics` en vez de
+`/api/v2/cameras/{id}/health` (se siguió el código real ya establecido). El contrato de
+ids de la barra de ajustes rápidos (`#quick-classes`/`#quick-resolution`/
+`#quick-confidence`/`#quick-severity` + sus badges), no fijado por el UI-SPEC, queda
+documentado en la cabecera de `camera-quick.js` para que `32-07` lo consuma
+literalmente. Los ids reales (`#rtsp-*`, `#cam-*`, `#quick-*`) todavía no existen en
+`index.html` — los crea `32-07` — así que la verificación funcional queda diferida al
+checkpoint manual de la puerta de fase `32-08`, mismo patrón que SET-01..04 en
+`32-01`/`32-02` y OPS-18 en `32-03`. Suite dirigida verde
+(`tests/test_frontend_modules.py` 9 passed); plan solo de frontend, sin relanzar la
+suite completa. OPS-16 y OPS-17 avanzan pero no se cierran formalmente. Ver
+`32-04-SUMMARY.md`.
+
+**32-03 añade la capa de contrato visual CSS que 32-04 y 32-05 importan como dado.**
+`frontend/css/components.css` gana las 8 clases fijadas por `32-UI-SPEC.md`:
+`.metric-tile`/`.rtsp-card` para la vista Cámara y `.cfg-tree`/`.cfg-node`/`.cfg-row`/
+`.cfg-badge`/`.cfg-applies`/`.cfg-savebar` para la vista Ajustes, todas con las medidas
+exactas del spec (padding 12px de `.metric-tile`, altura mínima 56px de `.cfg-row`, 56px
+sticky de `.cfg-savebar`, etc.) y sin inventar valores. De paso corrige `.cam-toggle`
+(heredado de la Fase 11): un `::before` con inset asimétrico lleva la pista de 40×20 a un
+área de pulsación real de 44×44 (WCAG 2.2 AA 2.5.8) sin tocar el tamaño visual, arreglando
+los 4 interruptores de "Ajustes de cámara" que ya existían. La medición real al ejecutar
+(172 líneas, no las 163 estimadas en la investigación, porque la Fase 31 ya había dejado su
+propio bloque en el mismo fichero) dejó margen de sobra para extender in situ sin crear un
+`config.css` nuevo ni tocar `LOCKED_CSS`: 172 → 231 líneas, `TEST_line_limit` en verde con
+69 líneas de margen restante bajo el tope de 300. Sin novena clase inventada: el estado de
+error de `.cfg-row` engancha a los elementos nativos `input`/`select` que ya usan los
+controles reales del proyecto (`.filter-input`, `input[type=time]`, `.cam-toggle`). OPS-16,
+OPS-17 y OPS-18 avanzan (la capa CSS ya soporta métricas/RTSP/árbol/filas de config) pero
+no se cierran: exigen interfaz visible funcionando, que llega con 32-04/32-05 y se marca en
+la puerta de fase 32-08. Suite dirigida verde (`tests/test_frontend_modules.py` 9 passed);
+plan solo de CSS, sin relanzar la suite completa. Ver `32-03-SUMMARY.md`.
+
+**32-02 construye el unico endpoint HTTP nuevo de la Fase 32.**
+`backend/api/v2/config.py` (296 lineas) convierte el esquema declarativo de 32-01 en
+`GET/PUT /api/v2/config` + `POST /{section}/restore`, registrados en el lifespan de
+`main.py` junto a `detection_v2_module`. GET resuelve `origin`/`applies`/`secret` por
+campo sobre las 8 secciones fijas; ningun campo `secret=True` lleva la clave `value` en
+ningun origen y `camera_url` sale siempre enmascarada. PUT valida el lote completo en un
+solo pase (rango por campo primero, invariantes cruzados de `Settings` despues via
+`build_candidate_settings`, que reejecuta los `model_validator`) devolviendo TODOS los
+errores 422 juntos, nunca solo el primero — verificado empiricamente que
+`model_validator(mode="after")` con `raise ValueError(...)` produce `loc == ()`, asi que
+el campo del error cruzado en la respuesta es la seccion, no el nombre del campo
+concreto (aclaracion documentada en `32-02-SUMMARY.md`, no una desviacion: es el
+algoritmo literal que pedia el plan). Persistir-antes-de-propagar verificado con
+`attach_mock`: `ConfigRepo.set()` siempre antes que
+`CameraPipeline.set_detection_classes()`/`set_process_size()`, las unicas 3 rutas reales
+de aplicacion en caliente. `yolo_classes` reutiliza literalmente las 4 comprobaciones de
+`detection.py` de la Fase 27 (vacia, rango COCO, duplicados, clase 0 obligatoria) en vez
+de una redaccion paralela. `restore` borra solo filas `runtime` de una seccion — nunca
+escribe defaults encima — con `CONFIG_CHANGED(restored=True)` solo si hubo algo que
+borrar. 22 tests nuevos en `tests/test_config_api.py` (5 GET, 13 PUT, 3 restore, 1 de
+wiring en `main.py`), suite completa **711 passed, 2 skipped** (+22 sobre el cierre de
+32-01). SET-01..04 quedan cerrados; OPS-18, OPS-19 y OPS-20 avanzan pero no se cierran
+(exigen interfaz visible, que llega con 32-04..32-06 y se marca en la puerta de fase
+32-08). Ver `32-02-SUMMARY.md`.
+
+**32-01 cierra la base declarativa de toda la Fase 32.** `backend/api/v2/config_schema.py`
+(1008 líneas) describe los 112 parámetros reales de `Settings` — label en español llano,
+hint, tipo, rango, sección, aplicación en caliente y si es secreto — en las 8 secciones
+fijas del `32-UI-SPEC.md` (Cámara, Detección, Tracking, Reconocimiento, Zonas, Reglas,
+Alertas, Almacenamiento), con una subsección "Servidor" nueva dentro de Cámara para
+`host`/`port`/`cors_origins`/`ssl_*`/`dashboard_*` — discreción explícita del CONTEXT, ya
+que el UI-SPEC fija los 8 nombres de sección pero no las subsecciones. Verificado por test,
+no por inspección manual: `set(Settings.model_fields) == {f.key for f in all_fields()}` sin
+huecos ni duplicados. `resolve_origin()` resuelve la precedencia de tres vías
+(runtime/env/default, D-06) para escalares y para listas (`yolo_classes`, `schedule_days` —
+Pitfall 4 de 32-RESEARCH.md, cerrado con test parametrizado) y enmascara `camera_url` de
+forma obligatoria vía `mask_rtsp_url()` antes de que el valor salga de la función.
+`build_candidate_settings()` usa el constructor completo de `Settings` (no `model_copy`,
+que en pydantic 2.13.1 no revalida — Assumption A1 de 32-RESEARCH.md, confirmada) para
+re-ejecutar los `model_validator` cruzados (`identity_vote_window >= identity_min_votes`,
+`run_window_secs <= 12.0`, etc.) sin reimplementarlos en el futuro router de 32-02.
+`ConfigRepo.delete(key)` se añadió copiando el molde exacto de `RuleRepo.delete()`/
+`ZoneRepo.delete()`, desbloqueando OPS-20 ("Restaurar valores por defecto"). Doce campos
+quedan marcados `secret=True` (no nueve, como sugería el resumen del threat model de la
+propia PLAN.md): el detalle campo a campo de Task 2 marca también `rtsp_user`/`tapo_user`/
+`dashboard_user` como secretos, no solo sus contraseñas — documentado como decisión en el
+SUMMARY, sin desviación de comportamiento. Task 0 (verificación temprana de la Fase 31)
+encontró que `nav.js` ya existe con tres funciones exportadas
+(`registerAnalyticsBoot`/`activeView`/`initNav`) y que `frontend/index.html` ya tiene
+`role="tablist"` con las pestañas Operaciones/Analítica — el hallazgo de 32-RESEARCH.md
+("Fase 31 sin ejecutar") quedó obsoleto entre la investigación y la ejecución de este plan,
+sin impacto porque 32-01..32-06 no dependen de ese armazón. Suite completa: **689 passed, 2
+skipped** (+14 sobre el cierre de la Fase 31). Ver `32-01-SUMMARY.md`.
+
+**La Fase 31 está completa.** La vista de analítica añade un segundo tab junto a
+Operaciones: personas por hora/día con superposición del periodo anterior, ocupación
+por zona, heatmap acumulado con leyenda relativa, ranking de personas con tendencia y
+exportación CSV/JSON del rango visible. Las cuatro peticiones de cada tanda salen en
+paralelo con un único `AbortController` por tanda (D-09) y las agregaciones se
+calculan siempre en SQL — `TEST_analytics_no_client_aggregation` lo convierte en test
+permanente, no en promesa del plan. OPS-12..OPS-15 quedan marcados.
+
+**31-11 (puerta de fase) cerró las tres piezas.** `LOCKED_JS` incorpora los seis
+módulos de la vista (`nav.js` + cinco `views/analytics*.js`) y
+`TEST_analytics_no_client_aggregation` barre esos mismos ficheros buscando
+`.reduce(`/`.sort(`/`.filter(`/`Math.max(`/`Math.min(` — encontró y forzó la
+corrección de un incumplimiento real: el propio comentario de cabecera de
+`analytics-ranking.js` citaba esas expresiones al explicar que no las usaba. Criterio 4
+(presupuesto 500 ms @100k): `hourly` ~228-241 ms, `summary` ~346 ms, `occupancy` ~13-15
+ms, `persons_ranking` ~13-14 ms — los cuatro por debajo del presupuesto, con menos margen
+que lo estimado en 31-RESEARCH.md porque la medición compartió máquina con el servidor de
+desarrollo ya en marcha para el checkpoint. Criterio 3 (presupuesto 100 KB): 565 bytes
+(`/hourly` 30 días), 3210 bytes (`/hourly` 7 días), 1147 bytes (`/export json`). Migración
+v3→v4 verificada sobre el backup automático real que `run_migrations()` generó el mismo
+día antes de migrar `data/events.db` (1037 filas antes y después, `idx_events_analytics`
+aparece, `schema_version` pasa a 4) — no una base sintética de test. Suite completa:
+**675 passed, 2 skipped** (+68 sobre la Fase 30).
+
+El checkpoint visual de Task 3, verificado con servidor y navegador reales, encontró una
+**regresión real**: abrir `http://localhost:8000/#analitica` directamente (marcador,
+recarga, URL pegada) dejaba las dos gráficas ancladas al tamaño de reserva de Chart.js
+(300×150) para siempre — la trampa exacta que D-03 llevaba toda la fase advirtiendo,
+pero en el único camino de arranque (hash ya presente al cargar) que ningún plan anterior
+había ejercitado; activar la pestaña con un clic (el camino que sí se había probado)
+funcionaba bien. Causa: `initNav()` resuelve el hash y llama a `activate()` de forma
+síncrona dentro de `DOMContentLoaded`, y esa misma función crea las gráficas
+(`createCharts()`) en el mismo tick en que retira `hidden` del contenedor — antes de que
+el navegador confirme el recálculo de layout. Corregido en `nav.js`: la primera llamada a
+`_boot()` se difiere con `requestAnimationFrame`, que sí garantiza layout aplicado antes
+de medir el contenedor. Aplicado sin condicionar el origen de la activación (hash vs.
+clic) por ser idempotente e inofensivo en ambos casos. Único otro `new Chart(` del
+proyecto (`dashboard-events.js`) revisado y descartado: vive en la vista visible por
+defecto, nunca se construye dentro de un contenedor recién revelado. Checkpoint aprobado
+tras el fix; lo que exige actividad de cámara real (heatmap con datos genuinos, ranking
+con personas reconocidas) queda diferido como **12º checkpoint manual**, mismo criterio
+no bloqueante que los 11 anteriores. Ver `31-11-SUMMARY.md`.
+
+**31-10 cerro el orquestador: `analytics.js` y `analytics-export.js` cablean por
+primera vez el andamiaje de 31-03, las graficas de 31-07, el rango/ranking de 31-08
+y los siete endpoints de 31-05/06/09 en una vista que funciona.** `initAnalytics()`
+solo registra el arranque diferido en `nav.js` — quien no abre la pestana no paga
+ni una peticion. `load(range)` cancela la tanda anterior con un unico
+`AbortController` y dispara `summary`/`hourly`/`occupancy`/`persons` en paralelo
+(sin combinador que aborte las tres buenas por la cuarta mala) mas `loadHeatmap()`
+aparte; cada `loadPanel()` resuelve su propio estado y una respuesta rezagada de una
+tanda abortada no toca el DOM ni decrementa el contador de la tanda nueva — la mitad
+de D-09 que se olvida siempre. El panel del heatmap pregunta primero a
+`/heatmap/scale` porque un `<img>` no puede distinguir un 404 (sin actividad) de un
+503 (sin senal), pinta la leyenda relativa con el valor absoluto en el `title`, y
+difiere su recarga con `activeView()` cuando la pestana esta oculta. Los cuatro
+botones de exportacion validan la URL con `isSafeMediaUrl()` antes de
+`window.location.href`, sin serializar nada en cliente — el servidor de 31-09 genera
+el fichero. Import por namespace de `nav.js` (`import * as nav`) para que la unica
+cita literal de `registerAnalyticsBoot` sea la llamada real, exigido por un criterio
+de aceptacion de conteo exacto. `analytics.js` 211 lineas, `analytics-export.js` 47
+—la valvula de escape del heatmap a `analytics-charts.js` no hizo falta—. Suite
+dirigida verde (`tests/test_frontend_modules.py` 8 passed); plan solo de frontend,
+sin relanzar la suite completa. OPS-12/14/15 quedan funcionalmente completos por
+primera vez en la fase; OPS-13 avanza pero se cierra formalmente en la puerta de
+fase 31-11, mismo patron que Fases 27/28/29/30. Siguiente: 31-11 (puerta de fase:
+`LOCKED_JS` con los seis modulos y checkpoint visual con servidor real).
+
+**31-09 anadio la exportacion CSV/JSON del rango visible.** Precondicion:
+los cuerpos de `/hourly`, `/summary`, `/occupancy` y `/persons` se extrajeron
+a `_hourly_payload`/`_summary_payload`/`_occupancy_payload`/`_persons_payload`
+(funciones `async` de modulo), y los cuatro `@router.get` quedaron como
+envoltorios de una linea — sin tocar ni una linea de los tests de 31-05/31-06.
+`GET /api/v2/analytics/export` llama a esos MISMOS constructores: es la unica
+forma real de garantizar "lo que se descarga es lo que se ve", en vez de
+confiar en que dos implementaciones paralelas no diverjan. `format` y `panel`
+son `Literal[...]` de FastAPI (422 de Pydantic, sin `if` de cuerpo), el CSV
+lleva BOM UTF-8 (Excel en Windows rompe los acentos sin el) con cabecera en
+castellano por panel y `delta_pct=None` como celda vacia, y el nombre del
+fichero (`analitica-{panel}-{YYYYMMDD}_{YYYYMMDD}.csv` /
+`analitica-{YYYYMMDD}_{YYYYMMDD}.json`) lo compone el servidor solo con
+`panel` (tres valores fijos) y fechas ya validadas — ningun texto libre del
+cliente llega al `Content-Disposition` (T-31-30). 10 tests nuevos, incluida
+la equivalencia literal entre la seccion `hourly` del JSON y `GET /hourly`
+con los mismos parametros. Peso real del JSON con 30 dias sembrados: 1847
+bytes, muy por debajo del limite de 100 KB del criterio 3. Suite completa:
+674 passed, 2 skipped. OPS-15 queda cerrado. Siguiente: 31-10 (orquestador
+`analytics.js`, panel del heatmap y `analytics-export.js`).
+
+**31-08 escribio los dos modulos de los extremos de la vista: rango y ranking.**
+`frontend/js/views/analytics-range.js` (139 lineas, nuevo) expone
+`initRange`/`currentRange` con los cuatro presets (`today`/`7d`/`30d`/`custom`)
+resueltos con fechas locales inclusivas (nunca `toISOString()`, que da el dia
+equivocado por la noche al este de Greenwich), persistencia en `localStorage`
+con lista blanca de presets conocidos (T-31-28) y validacion del rango
+personalizado **solo** al pulsar "Aplicar rango" con las dos cadenas de error
+literales del 422 de `_resolve_range()` en 31-05 — la validacion de cliente es
+cortesia, la autoridad es el servidor (T-31-29). `initRange()` no dispara
+ninguna carga al arrancar: solo restaura el estado visual, para que 31-10 sea
+el unico que decide cuando pedir datos.
+`frontend/js/views/analytics-ranking.js` (123 lineas, nuevo) expone
+`renderCards`/`renderRanking`: las cuatro tarjetas de tendencia sin color de
+direccion (`#94a3b8` siempre, la flecha lo dice) y las filas del ranking con
+la plantilla de nodos vacios + `textContent` que ya usa `timeline-row.js`
+(D-15) — el nombre de una persona nunca se interpola en el marcado, a
+diferencia del agujero real de `personGallery.js:28` que este modulo no
+copia — y `isSafeMediaUrl()` (importada, no reimplementada) antes de asignar
+cualquier avatar a `img.src` (T-31-27). Sin periodo anterior comparable, la
+fila y la tarjeta dicen "sin comparación" en vez de inventar un porcentaje.
+Un bug de indexado propio se detecto y corrigio antes de comitear: el
+`querySelectorAll('span')` de la fila incluye el `.rank-initial` anidado
+dentro de `.rank-avatar`, lo que desplazaba los indices numericos previstos
+en el plan; se sustituyeron por selectores de clase (`.w-5`, `.truncate`,
+`.text-base`, `.text-slate-500`, `.text-slate-400`), mas robustos que contar
+posiciones en una plantilla con anidamiento. Suite dirigida verde
+(`tests/test_frontend_modules.py` 8 passed); no toca pipeline/API/config, asi
+que no se relanzo la suite completa. OPS-14 ya estaba cerrado por 31-04/31-05;
+OPS-13 avanza pero no se cierra todavia (los modulos existen y pasan sus
+criterios de aceptacion, pero nada los cablea al DOM hasta 31-10 y la puerta
+de fase 31-11 es quien lo marca, mismo patron que las Fases 27/30). Siguiente:
+31-09 (export CSV/JSON).
+
+**31-07 escribio las dos graficas de Chart.js de la vista.**
+`frontend/js/views/analytics-charts.js` (168 lineas, nuevo) expone
+`createCharts`/`renderHourly`/`renderOccupancy`/`setCompare`/`resizeCharts`:
+instancias creadas bajo demanda en la primera activacion de la pestana
+(D-03, aun sin cablear — eso es 31-10), tipo de grafica/pico/comparacion
+resueltos enteramente por el servidor de 31-05 (cero `.reduce()`/`.sort()`/
+`.filter()`/`Math.max()`/`Math.min()`, verificado por lectura literal
+incluidos los comentarios) y resumen accesible regenerado en cada carga
+sobre el `aria-label` de cada `<canvas>`. Suite dirigida verde
+(`tests/test_frontend_modules.py` 8 passed); no toca pipeline/API/config,
+asi que no se relanzo la suite completa. Siguiente: 31-08 (rango y ranking).
+
+**31-05 expone esas agregaciones por HTTP.** Nuevo router
+`backend/api/v2/analytics.py` con `GET /hourly`, `/summary`, `/occupancy` y
+`/persons`, montado desde el lifespan igual que el resto de routers v2. Los
+nombres de persona en `/persons` se resuelven con
+`asyncio.to_thread(recognizer.list_persons)` — nunca `ATTACH DATABASE` contra
+`persons.db` desde el event loop. Peso real medido para el criterio 3: 565
+bytes (`/hourly` 30 días, cubo diario) y 3210 bytes (`/hourly` 7 días, cubo
+horario) — muy por debajo del límite de 100 KB. Suite completa: 658 passed, 2
+skipped. Siguiente: 31-06 (heatmap v2, `/heatmap` y `/heatmap/scale`).
+
+**31-04 puso las cuatro agregaciones de la fase en SQL.** `AnalyticsRepo`
+(`backend/storage/repositories.py`) expone `hourly()`, `summary()`,
+`occupancy()`, `persons_ranking()` y `person_avatars()`, todas resueltas sobre
+`events` — nunca `detection_stats` — con parámetros siempre por diccionario,
+nunca f-strings con datos del cliente. `bucket_for()` decide cubo horario
+(≤7 días) o diario por encima, sobre `substr(ts,1,13)`/`substr(ts,1,10)` del
+TEXT ISO de ancho fijo (2,3x más rápido que `strftime`). `persons_ranking()`
+es la única consulta que necesita `INDEXED BY idx_events_analytics` —sin el
+hint SQLite hace skip-scan y sube de 26,7 ms a 212,6 ms @100k—, y
+`person_avatars()` resuelve el capture más reciente desde `captures`
+(vive en `events.db`, no en `persons.db`) sin `JOIN persons` ni
+`ATTACH DATABASE`. Las cuatro agregaciones quedan medidas por debajo del
+presupuesto de 500 ms del criterio 4 sobre 100.000 eventos con identidad y
+zona sembradas (`persons=60`, `zones=14`), con dos tests de regresión que
+impiden medir sobre datos vacíos y un `EXPLAIN QUERY PLAN` que fija el uso del
+índice del ranking. 20 tests nuevos, suite completa **637 passed, 2 skipped**.
+Sin desviaciones de código de producción — un ajuste de redacción de test
+donde el plan pedía un cubo con 0 eventos, irrealizable con `GROUP BY`. OPS-12
+y OPS-14 ya estaban cerrados por 31-01/31-02; OPS-13 avanza pero no se cierra
+todavía (el repositorio existe, pero nada "muestra" el ranking hasta el router
+de 31-05 y la UI de 31-08). Ver `31-04-SUMMARY.md`.
+
+**31-02 cerró el heatmap por el lado del pipeline.** `compose_heatmap` pasa de
+`cv2.COLORMAP_JET` a `cv2.COLORMAP_INFERNO` (D-13: rampa perceptualmente
+uniforme, se funde con un frame nocturno en vez de inventar fronteras de
+arcoiris) y `DetectionWorker.heatmap_scale()` expone `{"peak", "mean"}` de la
+máscara acumulada bajo `self._lock` — mismo molde que `get_object_boxes()` —,
+devolviendo `None` tanto sin máscara como con pico 0 para que 31-06 distinga
+404 de 503 al construir `GET /api/v2/analytics/heatmap/scale`. El endpoint v1
+`/api/heatmap` no se tocó y hereda INFERNO por compartir `compose_heatmap`. 4
+tests nuevos, suite de detección y arquitectura en verde. Ver `31-02-SUMMARY.md`.
 
 **La Fase 30 está completa.** El card plano de "Eventos recientes" ya no existe:
 en su sitio hay una línea temporal accionable de filas de 52 px con barra de
@@ -300,7 +673,7 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   uno a uno con comando `pytest -k` en `24-06-SUMMARY.md` (criterio 6:
   87.5% de reducción de inferencias faciales sobre un track no
   confirmado, umbral exigido ≥70%). FACE-07..FACE-11 cerrados.
-  Quedan **11 checkpoints con cámara real** sin ejecutar, ninguno
+  Quedan **12 checkpoints con cámara real** sin ejecutar, ninguno
   bloqueante para seguir programando: 19-01 Task 5 (migrar BD real),
   19-02 Task 5 (validación de reglas en vivo), 20-02 Task 4 (validación
   visual del pre-buffer), 21-01 Task 5 (coste de instrumentación y
@@ -323,13 +696,18 @@ Suite 534/534 (+2 skips). OPS-10/OPS-11 avanzados, no cerrados: los marca
   `UNKNOWN_PERSON` reciente con recorte y `track_id`, y el ciclo
   silenciar → atenuar → reactivar sobre un grupo con regla activa — el
   resto del checkpoint sí se verificó con navegador y servidor reales,
-  ver `30-12-SUMMARY.md`).
+  ver `30-12-SUMMARY.md`), y 31-11 Task 3 (lo que exige actividad de
+  cámara real en la vista de analítica: heatmap con datos genuinos,
+  ranking con personas reconocidas de verdad — el resto del checkpoint sí
+  se verificó con navegador y servidor reales, incluida una regresión
+  real de Chart.js encontrada y corregida en el propio checkpoint, ver
+  `31-11-SUMMARY.md`).
   **Fase 28 (Refactor del frontend a módulos ES) planificada** encima:
   9 planes en 5 waves, plan-checker verde — ver `## Siguiente paso` para
   el detalle. Ningún cambio de código todavía, solo planificación.
-Last activity: 2026-08-22 -- Phase 31 planning complete
+Last activity: 2026-08-23
 
-Progress v2.0: [██████░░░░] ~64% (14/22 fases completas)
+Progress v2.0: [███████░░░] ~68% (15/22 fases completas)
 Progress v1.2: [██████████] 100% (16/16 fases) — completado 2026-05-01
 
 ## Mediciones acumuladas del bloque A y Fase 23
@@ -347,35 +725,35 @@ Progress v1.2: [██████████] 100% (16/16 fases) — completad
 ## Siguiente paso
 
 ```
-/gsd:plan-phase 31
+/gsd:plan-phase 32
 ```
 
-La **Fase 30 (Event Timeline y centro de alertas) está completa**: 12/12 planes
-(`30-01`..`30-12`), OPS-07..OPS-11 cerrados, suite **607 passed, 2 skipped**. La
-línea temporal accionable sustituye al card plano de eventos, con filtros
-resueltos en servidor por cursor, scroll infinito, centro de alertas agrupado por
-regla con silenciado temporal y "Marcar como persona" con alcance retroactivo. Las
-decisiones no obvias de la fase: un **suscriptor único ordenado** del `EventBus`
-(`make_event_pipeline()`) como solución a la carrera de reglas de D-14 —evaluar,
-escribir `payload.rules`, `INSERT`, emitir por WS, y solo después diferir
-`run_actions()`—; el **silenciado persistido en `app_config`** (clave
-`alerts.muted_rules`, duraciones en lista blanca, sin "para siempre") y **solo de
-presentación**, de modo que la regla silenciada sigue grabando su clip y mandando
-su aviso; el `GET /api/v2/timeline` que planteaba SPEC_v2 se **descartó** en favor
-de extender `/api/v2/events`, que ya tenía consumidor; el **snapshot de evento**
-—`Event.snapshot_path` existía desde la Fase 19 y nadie lo escribía— se implementó
-en 30-04 para que la miniatura no cayera siempre al marcador; y `person_name` se
-**resuelve en el cliente** contra el `Map` de `/persons` en vez de denormalizarlo
-en cada fila de `events`.
+La **Fase 31 (Vista de analítica) está completa**: 11/11 planes (`31-01`..`31-11`),
+OPS-12..OPS-15 cerrados, suite **675 passed, 2 skipped**. La vista de analítica añade
+un segundo tab junto a Operaciones: personas por hora/día con superposición del
+periodo anterior, ocupación por zona, heatmap acumulado con leyenda relativa, ranking
+de personas con tendencia y export CSV/JSON del rango visible, con las cuatro
+peticiones de cada tanda en paralelo (D-08/D-09) y las agregaciones siempre resueltas
+en SQL —`TEST_analytics_no_client_aggregation` lo fija como test permanente, no como
+promesa del plan (D-07)—. El checkpoint visual de `31-11` Task 3 encontró y corrigió
+una regresión real: abrir `#analitica` directamente en la URL dejaba las gráficas
+ancladas al tamaño de reserva de Chart.js (300×150) porque `createCharts()` se
+ejecutaba en el mismo tick síncrono que revelar el contenedor, antes de que el
+navegador confirmara el layout; corregido diferiendo esa primera llamada con
+`requestAnimationFrame` en `nav.js`. Lo que exige actividad de cámara real (heatmap
+con datos genuinos, ranking con personas reconocidas) queda diferido como **12º
+checkpoint manual**, no bloqueante.
 
-La Fase 31 (Vista de analítica, OPS-12..OPS-15: personas por hora, ocupación por
-zona, heatmap, ranking, tendencias y export CSV/JSON, con las agregaciones en base
-de datos y no en el navegador) es la siguiente y **no está planificada todavía**.
+La Fase 32 (Vista de cámara y configuración visual, OPS-16..OPS-20 y SET-01..SET-04:
+operar y configurar el sistema sin tocar `.env`) es la siguiente y **no está
+planificada todavía** — ya cuenta con un borrador de `32-UI-SPEC.md` preparado en
+paralelo en la rama `feature/fase-31-32-design`, pendiente de planificación formal.
 
-Las Fases 28 (Refactor del frontend a módulos ES) y 29 (Vista de operaciones)
-están **completas en código** y aportan cada una un checkpoint manual pendiente
-—paridad funcional y carga en LAN la 28, verificación visual de los criterios
-1/4/5/6 la 29—, ninguno bloqueante.
+Las Fases 28 (Refactor del frontend a módulos ES), 29 (Vista de operaciones) y 30
+(Event Timeline y centro de alertas) están **completas en código** y aportan cada una
+un checkpoint manual pendiente —paridad funcional y carga en LAN la 28, verificación
+visual de los criterios 1/4/5/6 la 29, y los cuatro puntos que exigen cámara real de
+30-12 Task 2 la 30—, ninguno bloqueante.
 
 La Fase 27 (Multi-clase y contexto de escena) está **completa**: 11/11
 planes (`27-01`..`27-11`), BEH-06..BEH-09 cerrados, suite 519/519.
@@ -586,7 +964,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 28 — Frontend a módulos ES | C | ✓ Completa (código) | 2026-08-20 | ⧗ Checklist de paridad funcional + medición de carga en LAN (28-09) |
 | 29 — Vista de operaciones | C | ✓ Completa (código) | 2026-08-20 | ⧗ Checkpoint visual Task 3 de 29-03 (criterios éxito 1/4/5/6 del ROADMAP) |
 | 30 — Event Timeline y alertas | C | ✓ Completa (código) | 2026-08-21 | ⧗ Cuatro puntos del checkpoint visual 30-12 Task 2 que exigen cámara real (criterios 3, 4 y 5 del ROADMAP y el ciclo completo de silenciado) |
-| 31 — Vista de analítica | C | — Sin planificar | — | Depende de 30 |
+| 31 — Vista de analítica | C | ✓ Completa | 2026-08-23 | ⧗ Lo que exige actividad de cámara real (heatmap con datos genuinos, ranking con personas reconocidas) — 12º checkpoint manual |
 | 32 — Vista de cámara y config visual | C | — Sin planificar | — | Depende de 31 |
 | 33 — Editores visuales | C | — Sin planificar | — | Depende de 32 |
 | 34 — Tests E2E | C | — Sin planificar | — | Depende de 33 |
@@ -628,11 +1006,16 @@ se hizo con el bloque A y la Fase 23.
 
 ## Test Coverage
 
-Suite completa: **607 passed, 2 skipped** (última ejecución 2026-08-21 tras `30-12`,
-puerta de la Fase 30: +4 tests de rendimiento en `tests/test_repositories.py` que miden el
-criterio 3 con 10.000 eventos sembrados por `scripts/seed_events.py` — primera página,
-página 100 por cursor, filtro multi-tipo y existencia de `idx_events_ts_id` —, todos por
-debajo del presupuesto de 100 ms; `test_architecture.py`, `test_security_regression.py` y
+Suite completa: **675 passed, 2 skipped** (última ejecución 2026-08-23 tras `31-11`,
+puerta de la Fase 31: +68 sobre la Fase 30, entre ellos `TEST_analytics_no_client_aggregation`
+—barrido literal de `.reduce(`/`.sort(`/`.filter(`/`Math.max(`/`Math.min(` sobre los seis
+módulos de la vista de analítica, OPS-14/D-07— y `LOCKED_JS` ampliado con esos mismos seis
+módulos. `tests/test_frontend_modules.py` verificado de nuevo tras el fix de `nav.js` del
+checkpoint de Task 3 (9 passed, sin regresión). Cifra anterior **607 passed, 2 skipped**
+(tras `30-12`, puerta de la Fase 30: +4 tests de rendimiento en `tests/test_repositories.py`
+que miden el criterio 3 con 10.000 eventos sembrados por `scripts/seed_events.py` — primera
+página, página 100 por cursor, filtro multi-tipo y existencia de `idx_events_ts_id` —, todos
+por debajo del presupuesto de 100 ms; `test_architecture.py`, `test_security_regression.py` y
 `test_rule_engine.py` verdes, este último sin un solo commit en toda la fase. Cifra
 anterior **570/570** (tras `30-04`:
 +15 tests — 11 en `tests/test_snapshots.py` (recorte real en disco, `bbox=None`, deshabilitado,
@@ -768,6 +1151,10 @@ ver `pytest tests/ -v` para el desglose actual por fichero.
 - StreamingWorker/manager.py (Fase 27, 27-08): `object_boxes` es un `Callable[[], list[dict]] | None` inyectado en el constructor (via pull), nunca un setter tipo `set_zone_overlay` (patron muerto, sin llamadores, 27-PATTERNS.md § No Analog Found); `manager.py` pasa `self.get_object_boxes` (metodo bound de `CameraPipeline`) directamente, sin envolverlo en una lambda — un metodo bound resuelve `self.detection` en cada llamada, asi que sobrevive a un reinicio del `DetectionWorker` sin volver a pasar la referencia. Color magenta `(255, 0, 255)` BGR, deliberadamente distinto del naranja de zonas `(0, 200, 255)` — decision cerrada con el usuario en 27-RESEARCH.md Open Question #1
 - Puerta de fase (Fase 27, 27-11): no hizo falta ningún fix de código — la suite ya estaba verde (519/519) y BEH-07 ya estaba `[x]` desde `27-01`; `27-11` marca BEH-06/BEH-08/BEH-09 y traza los 6 criterios del ROADMAP a comandos `pytest -k`. Las decisiones clave de la fase quedan resumidas aquí: (1) `sv.ByteTrack` es class-agnostic (reproducido en `27-RESEARCH.md` Q4 y en `TEST_bytetrack_ids_do_not_migrate_between_classes`) — la partición por clase ANTES del tracker y un `ObjectTracker` dedicado son obligatorios, no una optimización, o un track de objeto puede transferir su id a una persona solapada y contaminar el `LineZone` de la Fase 4; (2) los objetos nunca entran en `TrackRegistry` — su estado vive en `self._object_boxes` bajo `self._lock`, mismo patrón que `_zone_states`; (3) `self.objects`/`self.object_tracker` (y el resto de estado de la fase) se construyen en `CameraPipeline.__init__` ANTES de `_make_detection`/`_make_recognition`, fuera de la factoría del `WorkerSupervisor` — cuarto precedente tras FSM (Fase 24), galería ReID (Fase 25) y `BehaviorAnalyzer` (Fase 26); (4) la BD (`app_config`) gana sobre `YOLO_CLASSES` al arrancar, y una fila `[]` persistida se trata como ausente para no dejar el sistema ciego en silencio; (5) `person` (clase 0) siempre viaja forzada/activa y bloqueada en el catálogo — ningún PUT puede desactivarla; (6) `OBJECT_LEFT` se mantiene en `Severity.WARNING` (decisión del usuario) y por tanto cruza `upload_min_severity="warning"` y sube clips a Drive desde el primer evento — exige calibrar `object_person_radius_px` con cámara real antes de operar desatendido (checkpoint diferido de este plan); (7) el nivel de actividad de BEH-09 se normaliza a tasa por minuto en baseline y "ahora" para no sesgar `"low"` al principio de cada hora, y cae a `"unknown"` con menos de `context_min_sample_days` de historial; (8) `yolo_model_path` por defecto corregido a `yolo26n.pt` (D-03), alineado con CLAUDE.md. El checkpoint de calibración de `object_person_radius_px` (150 px, 1,9× `loiter_radius_px`) y de la tasa de falsos positivos de `OBJECT_LEFT` se difiere explícitamente — 9º checkpoint manual pendiente, no bloquea avanzar a la Fase 28
 - Puerta de fase (Fase 26, 26-05): no hizo falta ningún fix de código — `tests/test_rule_engine.py` ganó 3 tests que recorren el camino real (YAML en `tmp_path` + `load_rules` + `evaluate`) para demostrar el criterio 5 sin tocar `backend/events/rules.py` ni `config/rules.yaml`, y BEH-01..BEH-05 ya estaban `[x]` desde planes anteriores. Las seis decisiones clave de la fase quedan resumidas aquí: (1) el historial de 120 s se disuelve con agregados incrementales O(1) en vez de ampliar `history_len` (584 B/track medidos frente a 141,8 KB si se hubiera ampliado a 1000, `tracking.py` intacto); (2) los CUATRO comportamientos llevan latch por episodio, no solo CROWD — sin él, una persona parada 10 min generaría miles de eventos IMMOBILE, y `debounce_secs` de `rules.yaml` no sustituye al latch porque actúa después de persistir y difundir; (3) `analyze()` devuelve `list[BehaviorFinding]`, no `list[Event]` (D-3, corrige SPEC §5.7) — `perception/` no conoce `camera_id` ni el reloj de pared; (4) semántica de zonas: LOITERING cae a escena implícita (`zone_id=None`) sin zonas configuradas salvo `loiter_require_zone=True` (D-02), LOITERING e IMMOBILE coexisten (D-03), y con zonas solapadas se emite un finding por zona (D-04); (5) la clave del payload es `duration_s` literal porque `rules.py:88-91` la lee así para `duration_gte` — cualquier otro nombre rompe el criterio 5 en silencio; (6) los 4 comportamientos se quedan en `Severity.INFO` por defecto (D-01, cambio cero) — subirlos a WARNING habría activado la subida automática de clips a Google Drive. El checkpoint de calibración de umbrales con cámara real (Task 3) se difiere explícitamente — 8º checkpoint manual pendiente, no bloquea avanzar a la Fase 27
+- [Phase 31]: seed_events(): orden de rng preservado byte a byte (type/severity antes que track_id/confidence) al anadir persons/zones — el borrador del plan invertia el orden y habria roto el determinismo de los tests de la Fase 30
+- [Phase 31]: Regla global [hidden] { display: none !important; } en base.css para restaurar la precedencia de hidden frente a las utilidades de display de Tailwind CDN — El checkpoint de 31-03 detecto con navegador real que Tailwind (cargado via CDN, origen autor) vence siempre al [hidden] del User-Agent; !important en base.css es el fix estandar y queda como base para cualquier futuro uso de hidden en el proyecto
+- [Phase 31]: El endpoint v1 /api/heatmap y backend/main.py no se tocan en 31-06: sigue sin cambios y hereda INFERNO por compartir compose_heatmap con el v2
+- [Phase 31]: unit va en el JSON de /heatmap/scale, no como constante fija del cliente: quien lea la respuesta cruda ve la unidad (frames de deteccion con presencia) junto al numero
 
 ### Pendiente manual (no es código)
 
@@ -787,8 +1174,8 @@ en producción.
 
 ## Session Continuity
 
-Last session: 2026-08-21
-Stopped at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10). El modal
+Last session: 2026-08-23T14:44:53.246Z
+Stopped at: Completada 31-06-PLAN.md
   "Marcar como persona" está completo: `markPerson.js` precarga el recorte del evento,
   muestra el aviso de alcance retroactivo con el N del servidor antes de confirmar,
   enrola contra `/api/enroll_face` (sin duplicar sus validaciones), aplica la identidad
@@ -797,7 +1184,7 @@ Stopped at: Ejecutado 30-11-PLAN.md (wave 9, depende de 30-03/05/08/10). El moda
   Suite completa en verde (603 passed, 2 skipped). Pendiente de comprobación manual,
   que firma 30-12: recorte real en el modal, N razonable en el aviso y filas del track
   cambiando en sitio. Siguiente: 30-12 (puerta de fase)
-Resume file: ninguno — continuar con `.planning/phases/30-event-timeline-y-centro-de-alertas/30-12-PLAN.md`
+Resume file: None
 
 ---
 

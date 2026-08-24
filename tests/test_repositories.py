@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime
+import re
+import sqlite3
 import time
 
 import pytest
@@ -14,11 +16,13 @@ from sqlalchemy.orm import sessionmaker
 from backend.events.types import Event, EventType, Severity
 from backend.storage import models
 from backend.storage.repositories import (
+    AnalyticsRepo,
     ConfigRepo,
     DetectionStatRepo,
     EventRepo,
     RecordingRepo,
     UploadState,
+    bucket_for,
 )
 from scripts.seed_events import seed_events
 
@@ -526,6 +530,26 @@ async def TEST_config_repo_roundtrip_list(db):
     assert await repo.get("does_not_exist", default=[0]) == [0]
 
 
+async def TEST_config_repo_delete_removes_existing_key(db):
+    _, sf = db
+    repo = ConfigRepo(sf)
+    await repo.set("yolo_confidence", 0.9)
+
+    removed = await repo.delete("yolo_confidence")
+
+    assert removed is True
+    assert await repo.get("yolo_confidence", default=0.45) == 0.45
+
+
+async def TEST_config_repo_delete_missing_key_returns_false(db):
+    _, sf = db
+    repo = ConfigRepo(sf)
+
+    removed = await repo.delete("never_written_key")
+
+    assert removed is False
+
+
 async def TEST_count_since_and_hourly_counts(db):
     _, sf = db
     repo = EventRepo(sf)
@@ -690,3 +714,511 @@ async def TEST_timeline_index_exists_after_init_10k(db):
         names = {row[0] for row in result.all()}
 
     assert "idx_events_ts_id" in names
+
+
+# --- Fase 31 (OPS-12/OPS-14): siembra de identidad y zona en seed_events ----------
+
+
+def TEST_seed_events_populates_persons_and_zones(tmp_path):
+    """Con persons/zones pedidos, la siembra reparte identidad y zona en las
+    proporciones del banco de pruebas del research (35% / 60%), necesarias para
+    que los tests de ranking y ocupacion de 31-04 midan sobre datos reales."""
+    db_path = tmp_path / "seed_persons_zones.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    models.Base.metadata.create_all(engine)
+    engine.dispose()
+
+    seed_events(str(db_path), n=5_000, days=30, camera_id="cam1", persons=60, zones=14)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        with_person = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE person_id IS NOT NULL").fetchone()[0]
+        with_zone = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE zone_id IS NOT NULL").fetchone()[0]
+        distinct_persons = conn.execute(
+            "SELECT COUNT(DISTINCT person_id) FROM events").fetchone()[0]
+        zone_values = [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT zone_id FROM events WHERE zone_id IS NOT NULL")
+        ]
+    finally:
+        conn.close()
+
+    assert total == 5_000
+    person_ratio = with_person / total
+    zone_ratio = with_zone / total
+    assert 0.30 <= person_ratio <= 0.40, person_ratio
+    assert 0.55 <= zone_ratio <= 0.65, zone_ratio
+    assert distinct_persons <= 60
+    assert all(re.fullmatch(r"zona-\d+", z) for z in zone_values)
+
+
+def TEST_seed_events_defaults_leave_person_and_zone_null(tmp_path):
+    """Guarda de compatibilidad con la Fase 30: sin persons/zones, la siembra
+    sigue dejando person_id/zone_id a NULL en el 100% de las filas."""
+    db_path = tmp_path / "seed_defaults.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    models.Base.metadata.create_all(engine)
+    engine.dispose()
+
+    seed_events(str(db_path), n=500, days=30, camera_id="cam1")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        with_person = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE person_id IS NOT NULL").fetchone()[0]
+        with_zone = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE zone_id IS NOT NULL").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert with_person == 0
+    assert with_zone == 0
+
+
+# --- Fase 31 (OPS-12/OPS-14): guarda del formato de almacenamiento de DateTime ----
+
+
+async def TEST_datetime_storage_format_is_fixed_width_iso(db):
+    """Precondicion de AnalyticsRepo._bucket_expr() (31-04): las agregaciones usan
+    substr(ts,1,13)/substr(ts,1,10) en vez de strftime(...) porque es 2,3x mas
+    rapido (51,8 ms vs 120,8 ms @100k, 31-RESEARCH.md). Eso convierte una funcion
+    semantica en una sintactica: si SQLAlchemy dejara de serializar Event.ts como
+    TEXT ISO de ancho fijo, el GROUP BY agruparia mal SIN lanzar ningun error y las
+    graficas saldrian con cubos raros sin que nadie supiera por que. Si este test
+    cae, hay que volver a strftime (120 ms, sigue dentro de los 500 ms del criterio
+    4 del ROADMAP) de forma explicita, no por descuido.
+    """
+    db_file, sf = db
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Event(
+                id="evt-with-micros", camera_id="cam1", type="LINE_CROSSED",
+                ts=datetime.datetime(2026, 8, 22, 9, 5, 3, 123456), severity="info",
+                payload={},
+            ))
+            session.add(models.Event(
+                id="evt-zero-micros", camera_id="cam1", type="LINE_CROSSED",
+                ts=datetime.datetime(2026, 8, 22, 9, 5, 3, 0), severity="info",
+                payload={},
+            ))
+
+    conn = sqlite3.connect(db_file)
+    try:
+        rows = conn.execute(
+            "SELECT typeof(ts), ts, substr(ts,1,13), substr(ts,1,10) "
+            "FROM events ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(rows) == 2
+    for typeof_ts, raw_ts, substr13, substr10 in rows:
+        assert typeof_ts == "text"
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}", raw_ts), raw_ts
+        assert substr13 == "2026-08-22 09"
+        assert substr10 == "2026-08-22"
+
+
+# --- Fase 31-04 (OPS-12/OPS-13/OPS-14): AnalyticsRepo -------------------------------
+
+
+def TEST_analytics_bucket_for_switches_at_seven_days():
+    base = datetime.datetime(2026, 1, 1)
+    assert bucket_for(base, base + datetime.timedelta(days=1)) == "hour"
+    assert bucket_for(base, base + datetime.timedelta(days=7)) == "hour"
+    assert bucket_for(base, base + datetime.timedelta(days=8)) == "day"
+    assert bucket_for(base, base + datetime.timedelta(days=30)) == "day"
+
+
+async def TEST_analytics_hourly_splits_current_and_previous(db):
+    """Dos ventanas contiguas sembradas a mano: una sola consulta cubre las dos y
+    cada fila devuelve (actual, anterior) en su bucket, nunca ambos a la vez —
+    los dos periodos caen en horas distintas por construccion."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    for _ in range(2):
+        await events.insert(make_event(
+            type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 15)))
+    for _ in range(3):
+        await events.insert(make_event(
+            type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 1, 10, 15)))
+
+    rows = await repo.hourly("cam1", cur_from, cur_to, "hour")
+    by_bucket = {b: (cur, prev) for b, cur, prev in rows}
+
+    assert by_bucket["2026-01-02 10"] == (2, 0)
+    assert by_bucket["2026-01-01 10"] == (0, 3)
+
+
+async def TEST_analytics_hourly_ignores_other_event_types(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    await events.insert(make_event(
+        type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 15)))
+    await events.insert(make_event(
+        type=EventType.INTRUSION, ts=datetime.datetime(2026, 1, 2, 10, 20)))
+
+    rows = await repo.hourly("cam1", cur_from, cur_to, "hour")
+    by_bucket = {b: (cur, prev) for b, cur, prev in rows}
+
+    assert by_bucket["2026-01-02 10"] == (1, 0)
+
+
+async def TEST_analytics_summary_returns_peak_and_min(db):
+    """GROUP BY solo devuelve cubos con >=1 evento: un cubo con 0 eventos no puede
+    aparecer en 'WITH b AS (SELECT ... GROUP BY bucket)'. El relleno a cero de
+    cubos vacios para el eje completo es responsabilidad del router (31-05), no de
+    summary() — por eso este test usa dos cubos reales, 5 y 34, que ya suman el
+    total esperado."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    for _ in range(5):
+        await events.insert(make_event(
+            type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 4, 0)))
+    for _ in range(34):
+        await events.insert(make_event(
+            type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 18, 0)))
+
+    result = await repo.summary("cam1", cur_from, cur_to, "hour")
+
+    assert result["total"] == 39
+    assert result["peak_bucket"] == "2026-01-02 18"
+    assert result["peak_value"] == 34
+    assert result["min_bucket"] == "2026-01-02 04"
+    assert result["min_value"] == 5
+
+
+async def TEST_analytics_summary_known_unknown_counts_distinct_people(db):
+    """known/unknown cuentan personas DISTINTAS, no eventos: 3 eventos de
+    person_id=1 y 2 de person_id=2 -> known==2 (dos personas), no 5 (cinco
+    eventos); 4 eventos sin identidad con dos track_id distintos -> unknown==2."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    for _ in range(3):
+        await events.insert(make_event(type=EventType.PERSON_RECOGNIZED, ts=ts, person_id=1))
+    for _ in range(2):
+        await events.insert(make_event(type=EventType.PERSON_RECOGNIZED, ts=ts, person_id=2))
+    for _ in range(2):
+        await events.insert(make_event(type=EventType.UNKNOWN_PERSON, ts=ts, track_id=101))
+    for _ in range(2):
+        await events.insert(make_event(type=EventType.UNKNOWN_PERSON, ts=ts, track_id=102))
+
+    result = await repo.summary("cam1", cur_from, cur_to, "hour")
+
+    assert result["known"] == 2
+    assert result["unknown"] == 2
+
+
+async def TEST_analytics_summary_previous_total_zero_is_not_an_error(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    await events.insert(make_event(
+        type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 0)))
+
+    result = await repo.summary("cam1", cur_from, cur_to, "hour")
+
+    assert result["total"] == 1
+    assert result["previous_total"] == 0
+    assert "percent" not in result
+    assert "change_pct" not in result
+
+
+async def TEST_analytics_occupancy_orders_desc_and_truncates(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    for i in range(1, 13):
+        for _ in range(i):
+            await events.insert(make_event(
+                type=EventType.ZONE_ENTERED, ts=ts, zone_id=f"zona-{i}"))
+
+    zones, total_zones = await repo.occupancy("cam1", cur_from, cur_to)
+
+    assert total_zones == 12
+    assert len(zones) == 10
+    values = [z["value"] for z in zones]
+    assert values == sorted(values, reverse=True)
+    assert zones[0] == {"zone_id": "zona-12", "name": "zona-12", "value": 12}
+
+
+async def TEST_analytics_occupancy_only_counts_zone_entered(db):
+    """Una intrusion ya esta contada como entrada: sumarla tambien duplicaria
+    la ocupacion de la zona."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    await events.insert(make_event(type=EventType.ZONE_ENTERED, ts=ts, zone_id="zona-1"))
+    await events.insert(make_event(type=EventType.INTRUSION, ts=ts, zone_id="zona-1"))
+
+    zones, total_zones = await repo.occupancy("cam1", cur_from, cur_to)
+
+    assert total_zones == 1
+    assert zones == [{"zone_id": "zona-1", "name": "zona-1", "value": 1}]
+
+
+async def TEST_analytics_occupancy_falls_back_to_zone_id_when_zone_deleted(db):
+    """Sin fila en `zones` (zona borrada, o nunca dada de alta), el COALESCE
+    devuelve el zone_id crudo -- nunca None ni la cadena 'null'."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    await events.insert(make_event(type=EventType.ZONE_ENTERED, ts=ts, zone_id="zona-borrada"))
+
+    zones, _ = await repo.occupancy("cam1", cur_from, cur_to)
+
+    assert zones == [{"zone_id": "zona-borrada", "name": "zona-borrada", "value": 1}]
+
+
+async def TEST_analytics_ranking_orders_desc_and_limits(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    for person_id in range(1, 13):
+        for _ in range(person_id):
+            await events.insert(make_event(
+                type=EventType.PERSON_RECOGNIZED, ts=ts, person_id=person_id))
+
+    ranking = await repo.persons_ranking("cam1", cur_from, cur_to)
+
+    assert len(ranking) == 10
+    cur_values = [cur for _, cur, _ in ranking]
+    assert cur_values == sorted(cur_values, reverse=True)
+    assert ranking[0] == (12, 12, 0)
+
+
+async def TEST_analytics_ranking_excludes_null_person_id(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    ts = datetime.datetime(2026, 1, 2, 10, 0)
+    await events.insert(make_event(type=EventType.PERSON_RECOGNIZED, ts=ts, person_id=1))
+    await events.insert(make_event(type=EventType.UNKNOWN_PERSON, ts=ts, track_id=99))
+
+    ranking = await repo.persons_ranking("cam1", cur_from, cur_to)
+
+    assert ranking == [(1, 1, 0)]
+
+
+async def TEST_analytics_ranking_returns_previous_window_counts(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    for _ in range(3):
+        await events.insert(make_event(
+            type=EventType.PERSON_RECOGNIZED, ts=datetime.datetime(2026, 1, 2, 10, 0), person_id=7))
+    for _ in range(5):
+        await events.insert(make_event(
+            type=EventType.PERSON_RECOGNIZED, ts=datetime.datetime(2026, 1, 1, 10, 0), person_id=7))
+
+    ranking = await repo.persons_ranking("cam1", cur_from, cur_to)
+
+    assert ranking == [(7, 3, 5)]
+
+
+async def TEST_analytics_person_avatars_returns_latest_capture(db):
+    """`captures` vive en events.db pero NO en storage.models (Base distinta en
+    backend/database.py): se crea a mano aqui, igual que el resto de tests de
+    este fichero crean estado con sqlite3 directo cuando hace falta."""
+    db_file, sf = db
+    repo = AnalyticsRepo(sf)
+
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS captures ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, person_id INTEGER NOT NULL, "
+            "timestamp DATETIME NOT NULL, image_path VARCHAR(255))"
+        )
+        conn.executemany(
+            "INSERT INTO captures (person_id, timestamp, image_path) VALUES (?, ?, ?)",
+            [
+                (1, "2026-01-01 09:00:00.000000", "/data/gallery/1/old.jpg"),
+                (1, "2026-01-02 09:00:00.000000", "/data/gallery/1/new.jpg"),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    avatars = await repo.person_avatars([1])
+
+    assert avatars == {1: "/gallery/1/new.jpg"}
+
+
+# --- Criterio 4 de la Fase 31: las cuatro agregaciones @100k con identidad/zona ----
+#
+# 0,5s es el presupuesto literal del ROADMAP. Medido en 31-RESEARCH.md: 14-78 ms con
+# idx_events_analytics presente (6x-35x de margen), 535-618 ms si el indice desaparece
+# -- suficiente margen para no ser flaky y suficiente sensibilidad para detectar la
+# regresion real.
+_ANALYTICS_BUDGET_SECS = 0.5
+
+
+def _analytics_repo(db_file) -> tuple:
+    """Motor propio sobre la base ya sembrada, para no medir el fixture (mismo
+    patron que _perf_repo)."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+    sf = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, AnalyticsRepo(sf)
+
+
+async def TEST_analytics_budget_hourly_100k(db):
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        start = time.perf_counter()
+        await repo.hourly("cam1", cur_from, cur_to, "hour")
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert elapsed < _ANALYTICS_BUDGET_SECS, (
+        f"hourly tardo {elapsed:.3f}s, presupuesto {_ANALYTICS_BUDGET_SECS}s")
+
+
+async def TEST_analytics_budget_summary_100k(db):
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        start = time.perf_counter()
+        await repo.summary("cam1", cur_from, cur_to, "hour")
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert elapsed < _ANALYTICS_BUDGET_SECS, (
+        f"summary tardo {elapsed:.3f}s, presupuesto {_ANALYTICS_BUDGET_SECS}s")
+
+
+async def TEST_analytics_budget_occupancy_100k(db):
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        start = time.perf_counter()
+        await repo.occupancy("cam1", cur_from, cur_to)
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert elapsed < _ANALYTICS_BUDGET_SECS, (
+        f"occupancy tardo {elapsed:.3f}s, presupuesto {_ANALYTICS_BUDGET_SECS}s")
+
+
+async def TEST_analytics_budget_persons_ranking_100k(db):
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        start = time.perf_counter()
+        await repo.persons_ranking("cam1", cur_from, cur_to)
+        elapsed = time.perf_counter() - start
+    finally:
+        await engine.dispose()
+
+    assert elapsed < _ANALYTICS_BUDGET_SECS, (
+        f"persons_ranking tardo {elapsed:.3f}s, presupuesto {_ANALYTICS_BUDGET_SECS}s")
+
+
+async def TEST_analytics_budget_ranking_sees_seeded_persons(db):
+    """Sin esto, si seed_events volviera a dejar person_id a NULL, el test de
+    presupuesto mediria sobre datos vacios y pasaria por accidente."""
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        ranking = await repo.persons_ranking("cam1", cur_from, cur_to)
+    finally:
+        await engine.dispose()
+
+    assert len(ranking) == 10
+    assert sum(cur for _, cur, _ in ranking) > 0
+
+
+async def TEST_analytics_budget_occupancy_sees_seeded_zones(db):
+    """Misma guarda que la anterior, para ocupacion: sin zone_id sembrado, el
+    presupuesto mediria sobre una lista vacia y pasaria por accidente."""
+    db_file, _ = db
+    seed_events(db_file, n=100_000, days=30, camera_id="cam1", persons=60, zones=14)
+    engine, repo = _analytics_repo(db_file)
+    try:
+        cur_to = datetime.datetime.now()
+        cur_from = cur_to - datetime.timedelta(days=7)
+        zones, total_zones = await repo.occupancy("cam1", cur_from, cur_to)
+    finally:
+        await engine.dispose()
+
+    assert len(zones) == 10
+    assert total_zones == 14
+
+
+async def TEST_analytics_budget_ranking_uses_analytics_index(db):
+    """Guarda temprana del hint: si SQLite deja de usar idx_events_analytics en el
+    ranking, este test lo detecta antes que un presupuesto @100k que se
+    degradaria de forma silenciosa (26,7 ms -> 212,6 ms, sigue bajo los 500 ms
+    del criterio 4 -- no habria fallado el test de presupuesto)."""
+    db_file, _ = db
+    sql = (
+        "EXPLAIN QUERY PLAN "
+        "SELECT person_id, "
+        "SUM(CASE WHEN ts >= '2026-01-08 00:00:00' THEN 1 ELSE 0 END) AS cur, "
+        "SUM(CASE WHEN ts <  '2026-01-08 00:00:00' THEN 1 ELSE 0 END) AS prev "
+        "FROM events INDEXED BY idx_events_analytics "
+        "WHERE camera_id = 'cam1' AND ts >= '2026-01-01 00:00:00' AND ts < '2026-01-15 00:00:00' "
+        "AND person_id IS NOT NULL "
+        "GROUP BY person_id HAVING cur > 0 ORDER BY cur DESC LIMIT 10"
+    )
+    conn = sqlite3.connect(db_file)
+    try:
+        plan = " ".join(str(row) for row in conn.execute(sql))
+    finally:
+        conn.close()
+
+    assert "idx_events_analytics" in plan, plan

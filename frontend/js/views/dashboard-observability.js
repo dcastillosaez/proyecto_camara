@@ -18,6 +18,11 @@ export async function loadHealth() {
     document.getElementById('health-fps').textContent    = `${d.fps}`;
     document.getElementById('health-uptime').textContent = _fmtUptime(d.uptime_secs);
     document.getElementById('health-updated').textContent = new Date().toLocaleTimeString();
+
+    // Fase 32 (OPS-16): mismas cifras de CPU/RAM, segundo set de ids para las teselas
+    // de la vista Camara -- sin fetch nuevo, mismo tick de 5s.
+    document.getElementById('cam-cpu')?.replaceChildren(document.createTextNode(d.cpu_percent >= 0 ? `${d.cpu_percent.toFixed(1)} %` : '–'));
+    document.getElementById('cam-ram')?.replaceChildren(document.createTextNode(d.ram_percent >= 0 ? `${d.ram_percent.toFixed(1)} %` : '–'));
   } catch {}
 }
 
@@ -61,5 +66,12 @@ export async function loadObservability() {
       : '–';
 
     document.getElementById('obs-updated').textContent = new Date().toLocaleTimeString();
+
+    // Fase 32 (OPS-16): mismos valores ya resueltos arriba, segundo set de ids para
+    // las teselas de la vista Camara -- sin fetch nuevo, mismo tick de 5s.
+    document.getElementById('cam-capture-fps')?.replaceChildren(document.createTextNode(cam != null ? `${cam.toFixed(1)} FPS` : '–'));
+    document.getElementById('cam-detection-fps')?.replaceChildren(document.createTextNode(det != null ? `${det.toFixed(1)} FPS` : '–'));
+    document.getElementById('cam-dropped')?.replaceChildren(document.createTextNode(dropped != null ? `${dropped}` : '–'));
+    document.getElementById('cam-latency')?.replaceChildren(document.createTextNode(pct ? `${Math.round(pct.p50 * 1000)}/${Math.round(pct.p95 * 1000)} ms` : '–'));
   } catch {}
 }

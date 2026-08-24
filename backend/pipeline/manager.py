@@ -377,6 +377,14 @@ class CameraPipeline:
             return None
         return self.detection.compose_heatmap(frame)
 
+    def get_heatmap_scale(self) -> dict[str, float] | None:
+        """Pico y media de la mascara acumulada, para la leyenda del panel de analitica.
+
+        None cuando no hay detector o no hay actividad — el endpoint lo traduce a 404,
+        y la ausencia de frame (503) la comprueba antes por su cuenta.
+        """
+        return self.detection.heatmap_scale() if self.detection else None
+
     def get_native_resolution(self) -> tuple[int, int]:
         return self.capture.health.native_resolution or (0, 0)
 

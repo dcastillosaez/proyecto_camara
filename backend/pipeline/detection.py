@@ -177,12 +177,37 @@ class DetectionWorker:
             mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
         temp = np.clip(mask / peak * 255.0, 0, 255).astype(np.uint8)
         temp = cv2.blur(temp, (25, 25))
-        colored = cv2.applyColorMap(temp, cv2.COLORMAP_JET)
+        # D-13: INFERNO es monotona en luminosidad, se ordena bien en escala de
+        # grises y su extremo bajo se funde con el frame; JET es arcoiris, no
+        # perceptualmente uniforme, y su extremo azul oscuro desaparece sobre
+        # un frame nocturno.
+        colored = cv2.applyColorMap(temp, cv2.COLORMAP_INFERNO)
         blended = cv2.addWeighted(frame, 0.5, colored, 0.5, 0)
         active = temp > 0
         out = frame.copy()
         out[active] = blended[active]
         return out
+
+    def heatmap_scale(self) -> dict[str, float] | None:
+        """Pico y media de la mascara acumulada, para la leyenda numerica del panel de analitica.
+
+        La escala es SIEMPRE relativa (D-12/D-13): compose_heatmap normaliza dividiendo
+        por el pico, asi que el extremo de la rampa es el 100 % de esta mascara, no una
+        cifra de personas. La unidad de estos numeros es "frames de deteccion con
+        presencia" (disco de 40 px por track y frame), no visitantes.
+
+        Devuelve None cuando no hay mascara o su pico es 0 - mismo criterio que
+        compose_heatmap, para que el endpoint pueda distinguir 404 (sin actividad)
+        de 503 (sin frame).
+        """
+        with self._lock:
+            mask = None if self._heat_mask is None else self._heat_mask.copy()
+        if mask is None:
+            return None
+        peak = float(mask.max())
+        if peak <= 0:
+            return None
+        return {"peak": peak, "mean": float(mask.mean())}
 
     # ------------------------------------------------------------------
     # Internal

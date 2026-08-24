@@ -284,7 +284,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 - [ ] **Phase 28: Refactor del frontend a módulos ES** — index.html deja de contener lógica
 - [x] **Phase 29: Vista de operaciones** — Centro de operaciones que responde en 3 segundos (completed 2026-08-20; checkpoint visual de Task 3 de 29-03-PLAN.md — criterios de éxito 1/4/5/6 — pendiente de verificación en persona)
 - [x] **Phase 30: Event Timeline y centro de alertas** — Línea temporal accionable con miniaturas (completed 2026-08-21; checkpoint visual de Task 2 de 30-12-PLAN.md — criterios de éxito 3/4/5 del ROADMAP y el ciclo completo de silenciado — diferido por falta de cámara real)
-- [ ] **Phase 31: Vista de analítica** — Ocupación, heatmap, ranking de personas, tendencias
+- [x] **Phase 31: Vista de analítica** — Ocupación, heatmap, ranking de personas, tendencias (completed 2026-08-23; checkpoint visual de Task 3 de 31-11-PLAN.md aprobado tras corregir una regresión real de Chart.js en carga directa de `#analitica`; lo que exige actividad de cámara real en heatmap/ranking queda diferido como 12º checkpoint manual)
 - [ ] **Phase 32: Vista de cámara y configuración visual** — Operar y configurar sin tocar .env
 - [ ] **Phase 33: Editores visuales de zonas, líneas y reglas** — Dibujar sobre el vídeo, componer reglas por formulario
 - [ ] **Phase 34: Tests E2E e integración del pipeline** — Playwright + pipeline completo con fuente sintética
@@ -594,20 +594,20 @@ Plans:
   4. Las consultas sobre 100.000 eventos responden en menos de 500 ms
   5. Exportación CSV/JSON del rango visible
 **Spec**: SPEC_v2.md Phase 31
-**Plans:** 11 plans en 7 olas — `.planning/phases/31-vista-de-anal-tica/`
+**Plans:** 11/11 plans complete
 
 Plans:
-- [ ] 31-01-PLAN.md — Índice `idx_events_analytics`, migración v3→v4 y siembra con identidad/zona (OPS-12, OPS-14)
-- [ ] 31-02-PLAN.md — Heatmap a INFERNO y `DetectionWorker.heatmap_scale()` (OPS-12)
-- [ ] 31-03-PLAN.md — Andamiaje de la segunda vista: tablist, retícula, marcado de analítica y `nav.js` (OPS-12, OPS-13, OPS-15)
-- [ ] 31-04-PLAN.md — `AnalyticsRepo`: serie, resumen, ocupación y ranking resueltos en SQL y medidos @100k (OPS-12..14)
-- [ ] 31-05-PLAN.md — Router `/api/v2/analytics`: summary, hourly, occupancy, persons y criterio 3 (OPS-12..14)
-- [ ] 31-06-PLAN.md — Heatmap v2: `/heatmap` y `/heatmap/scale`, con 404 y 503 distintos (OPS-12)
-- [ ] 31-07-PLAN.md — `analytics-charts.js`: las dos gráficas, activación diferida y resumen accesible (OPS-12, OPS-14)
-- [ ] 31-08-PLAN.md — `analytics-range.js` y `analytics-ranking.js`: rango, tarjetas de tendencia y ranking (OPS-13, OPS-14)
-- [ ] 31-09-PLAN.md — `/api/v2/analytics/export`: CSV por panel y JSON del rango visible (OPS-15)
-- [ ] 31-10-PLAN.md — Orquestador `analytics.js`, panel del heatmap, `analytics-export.js` y arranque (OPS-12..15)
-- [ ] 31-11-PLAN.md — Puerta de fase: `LOCKED_JS`, test anti-agregación, criterios 3 y 4 medidos y checkpoint visual (OPS-12..15)
+- [x] 31-01-PLAN.md — Índice `idx_events_analytics`, migración v3→v4 y siembra con identidad/zona (OPS-12, OPS-14)
+- [x] 31-02-PLAN.md — Heatmap a INFERNO y `DetectionWorker.heatmap_scale()` (OPS-12)
+- [x] 31-03-PLAN.md — Andamiaje de la segunda vista: tablist, retícula, marcado de analítica y `nav.js` (OPS-12, OPS-13, OPS-15)
+- [x] 31-04-PLAN.md — `AnalyticsRepo`: serie, resumen, ocupación y ranking resueltos en SQL y medidos @100k (OPS-12..14)
+- [x] 31-05-PLAN.md — Router `/api/v2/analytics`: summary, hourly, occupancy, persons y criterio 3 (OPS-12..14)
+- [x] 31-06-PLAN.md — Heatmap v2: `/heatmap` y `/heatmap/scale`, con 404 y 503 distintos (OPS-12)
+- [x] 31-07-PLAN.md — `analytics-charts.js`: las dos gráficas, activación diferida y resumen accesible (OPS-12, OPS-14)
+- [x] 31-08-PLAN.md — `analytics-range.js` y `analytics-ranking.js`: rango, tarjetas de tendencia y ranking (OPS-13, OPS-14)
+- [x] 31-09-PLAN.md — `/api/v2/analytics/export`: CSV por panel y JSON del rango visible (OPS-15)
+- [x] 31-10-PLAN.md — Orquestador `analytics.js`, panel del heatmap, `analytics-export.js` y arranque (OPS-12..15)
+- [x] 31-11-PLAN.md — Puerta de fase: `LOCKED_JS`, test anti-agregación, criterios 3 y 4 medidos y checkpoint visual (OPS-12..15)
 
 ### Phase 32: Vista de cámara y configuración visual
 **Goal**: Operar y configurar el sistema sin tocar .env
@@ -622,6 +622,17 @@ Plans:
   6. Cada cambio genera un evento CONFIG_CHANGED con el diff
   7. La precedencia app_config > .env > default está documentada y testeada
 **Spec**: SPEC_v2.md Phase 32
+**Plans:** 6/8 plans complete (8 plans en 7 olas) — `.planning/phases/32-vista-de-c-mara-y-configuraci-n-visual/`
+
+Plans:
+- [x] 32-01-PLAN.md — Esquema declarativo de 112 campos (config_schema.py) + ConfigRepo.delete()
+- [x] 32-02-PLAN.md — Router GET/PUT/restore /api/v2/config: origen, validación por lote, hot-apply, CONFIG_CHANGED
+- [x] 32-03-PLAN.md — Clases CSS .metric-tile/.rtsp-card/.cfg-* + área de pulsación 44x44 de .cam-toggle
+- [x] 32-04-PLAN.md — Vista Cámara: camera.js + camera-quick.js (4 ajustes rápidos)
+- [x] 32-05-PLAN.md — settings-field.js (control por tipo) + settings-save.js (diff/PUT/restaurar)
+- [x] 32-06-PLAN.md — settings.js (árbol/deep-link) + settings-section.js (fieldsets por grupo)
+- [x] 32-07-PLAN.md — Integración de navegación: nav.js (+2 pestañas), armazón HTML, wiring en app.js
+- [ ] 32-08-PLAN.md — Puerta de fase: trazabilidad de los 7 criterios + checkpoint visual
 
 ### Phase 33: Editores visuales de zonas, líneas y reglas
 **Goal**: Dibujar zonas y componer reglas sin escribir YAML ni fracciones de coordenadas

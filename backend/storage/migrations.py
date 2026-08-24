@@ -21,7 +21,7 @@ from backend.storage import models
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _table_exists(conn: Connection, name: str) -> bool:
@@ -176,9 +176,25 @@ def _migrate_v2_to_v3(conn: Connection) -> None:
     _record_version(conn, 3)
 
 
+def _migrate_v3_to_v4(conn: Connection) -> None:
+    """Indice compuesto de analitica (Fase 31, OPS-12/OPS-14).
+
+    Medido @100k: ocupacion por zona 551 -> 28 ms, conocidas/desconocidas
+    535 -> 14 ms, personas distintas por hora 618 -> 78 ms. Las tres estaban
+    por encima del presupuesto de 500 ms del criterio 4. create_all() no crea
+    indices sobre tablas que ya existen, por eso va explicito. CREATE INDEX
+    sobre 102.000 filas tarda 196 ms. No toca filas ni columnas.
+    """
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS idx_events_analytics "
+        "ON events (camera_id, ts, person_id, zone_id, track_id)"))
+    _record_version(conn, 4)
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[Connection], None]]] = [
     (2, "esquema v2 completo", _migrate_v1_to_v2),
     (3, "indice compuesto de la linea temporal", _migrate_v2_to_v3),
+    (4, "indice compuesto de analitica", _migrate_v3_to_v4),
 ]
 
 

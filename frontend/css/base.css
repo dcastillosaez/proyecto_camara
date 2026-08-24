@@ -1,5 +1,12 @@
 *, *::before, *::after { box-sizing: border-box; }
 
+/* Tailwind (CDN) inyecta utilidades de display (.grid/.flex/.block) como
+   reglas de origen autor sin !important; el atributo nativo [hidden] es del
+   User-Agent y pierde el cascade pase lo que pase con el orden de carga.
+   Sin esta regla, cualquier elemento con hidden + una utilidad de display de
+   Tailwind se sigue viendo (p. ej. #view-operaciones/#view-analitica). */
+[hidden] { display: none !important; }
+
 body {
   font-family: 'Inter', system-ui, sans-serif;
   background: #020617;
