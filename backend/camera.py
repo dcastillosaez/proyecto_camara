@@ -3,7 +3,6 @@
 import asyncio
 from typing import Any
 
-import supervision as sv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -172,27 +171,14 @@ async def get_resolutions():
 
 @router.post("/resolution")
 async def set_resolution(req: ResolutionRequest):
-    """Change the processing resolution and recalculate the virtual line."""
+    """Change the processing resolution. Las lineas de conteo se recalculan solas
+    en el siguiente frame procesado (gate `_line_frame_size != (fw, fh)` de
+    DetectionWorker._update_lines, Plan 33-05) — igual que ya ocurria con las
+    zonas, este endpoint no necesita tocar el tracker."""
     if _stream_ref is None or _tracker_ref is None:
         raise HTTPException(status_code=503, detail="Stream not ready")
 
-    s = get_settings()
-    target_w = req.width if req.width > 0 else None
-    target_h = req.height if req.height > 0 else None
-
-    # Determine effective frame dimensions for line calculation
-    if target_w and target_h:
-        frame_w, frame_h = target_w, target_h
-    else:
-        nw, nh = _stream_ref.get_native_resolution()
-        frame_w, frame_h = (nw or 1280), (nh or 720)
-
-    # Scale line from fractions to pixels
-    new_start = sv.Point(int(s.line_start_x_frac * frame_w), int(s.line_start_y_frac * frame_h))
-    new_end   = sv.Point(int(s.line_end_x_frac   * frame_w), int(s.line_end_y_frac   * frame_h))
-
-    _tracker_ref.reconfigure_line(new_start, new_end)
     _stream_ref.set_process_size(req.width, req.height)
 
     label = f"{req.width}×{req.height}" if req.width > 0 else "Nativa"
-    return {"resolution": label, "line_start": [new_start.x, new_start.y], "line_end": [new_end.x, new_end.y]}
+    return {"resolution": label}
