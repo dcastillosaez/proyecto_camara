@@ -9,7 +9,6 @@ en vez del contador fijo detect_every (SPEC_v2.md §5.3, 18-CONTEXT.md).
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import threading
 import time
@@ -19,6 +18,7 @@ import cv2
 import numpy as np
 import supervision as sv
 
+from backend.events.rules import is_schedule_active
 from backend.observability.metrics import metrics as _metrics
 from backend.perception.objects import ObjectObservation, PersonObservation
 from backend.pipeline.rate import AdaptiveRate
@@ -95,6 +95,9 @@ class DetectionWorker:
         self._zones_dirty = True
         self._zone_states: list[dict] = []
         self._zone_frame_size: tuple[int, int] = (0, 0)
+        self._lines: list[dict] = []
+        self._lines_dirty: bool = True
+        self._line_frame_size: tuple[int, int] = (0, 0)
         self._heat_mask: np.ndarray | None = None
         self._object_boxes: list[dict] = []      # ultima foto de objetos trackeados;
                                                  # writer: hilo de deteccion,
@@ -137,6 +140,12 @@ class DetectionWorker:
         with self._lock:
             self._zones = list(zones)
             self._zones_dirty = True
+
+    def set_lines(self, lines: list[dict]) -> None:
+        """Replace the active counting lines list. Thread-safe."""
+        with self._lock:
+            self._lines = list(lines)
+            self._lines_dirty = True
 
     def get_zone_stats(self) -> list[dict]:
         with self._lock:
@@ -254,6 +263,7 @@ class DetectionWorker:
             now = time.monotonic()  # "processed_at" for OBS-03 — right after inference, before event emission
             _metrics.active_tracks.labels(camera=self._camera_id).set(len(tracked))
             self._registry.update_from_detections(tracked, now)
+            self._update_lines(frame.image.shape)
             self._update_zones_and_heat(tracked, frame.image.shape, frame.captured_at, now)
             self._analyze_behavior(tracked, frame.captured_at, now)      # NUEVO (Fase 26)
             self._analyze_objects(obj_tracked, tracked, frame.captured_at, now)  # NUEVO (Fase 27)
@@ -477,6 +487,29 @@ class DetectionWorker:
                 {**c, "is_intrusion": is_intrusion}, captured_at, processed_at
             )
 
+    def _update_lines(self, shape: tuple) -> None:
+        """Recalcula las lineas de conteo en pixeles cuando cambian o cambia la resolucion
+        del frame — mismo patron dirty-flag que _update_zones_and_heat/_rebuild_zone_states."""
+        fh, fw = shape[:2]
+        with self._lock:
+            dirty = self._lines_dirty
+            self._lines_dirty = False
+            lines_snap = list(self._lines)
+        if not (dirty or self._line_frame_size != (fw, fh)):
+            return
+        self._line_frame_size = (fw, fh)
+        pixel_lines = [
+            {
+                "id": ln["id"],
+                "name": ln["name"],
+                "start": sv.Point(int(ln["start_x_frac"] * fw), int(ln["start_y_frac"] * fh)),
+                "end": sv.Point(int(ln["end_x_frac"] * fw), int(ln["end_y_frac"] * fh)),
+            }
+            for ln in lines_snap
+            if ln.get("enabled", True)
+        ]
+        self._tracker.reconfigure_lines(pixel_lines)
+
     def _update_zones_and_heat(
         self, tracked: Any, shape: tuple, captured_at: float = 0.0, processed_at: float = 0.0
     ) -> None:
@@ -492,6 +525,8 @@ class DetectionWorker:
 
         ids = tracked.tracker_id
         for st in self._zone_states:
+            if not is_schedule_active(st.get("schedule")):
+                continue
             mask = st["zone"].trigger(tracked)
             inside = (
                 {int(ids[i]) for i in np.flatnonzero(mask)}
@@ -524,7 +559,7 @@ class DetectionWorker:
                 continue
             try:
                 pts = np.array(
-                    [[int(p[0] * fw), int(p[1] * fh)] for p in json.loads(z["polygon_json"])],
+                    [[int(p[0] * fw), int(p[1] * fh)] for p in z["polygon"]],
                     dtype=np.int64,
                 )
                 if len(pts) < 3:
@@ -533,6 +568,7 @@ class DetectionWorker:
                     "id": z["id"],
                     "name": z["name"],
                     "kind": z.get("kind"),
+                    "schedule": z.get("schedule"),
                     "polygon": pts,
                     "zone": sv.PolygonZone(polygon=pts),
                     "inside": set(),
@@ -540,6 +576,6 @@ class DetectionWorker:
                     "current": 0,
                 })
             except Exception:
-                logger.warning("DetectionWorker: zone %s invalid polygon_json, skipped", z.get("id"))
+                logger.warning("DetectionWorker: zone %s invalid polygon, skipped", z.get("id"))
         with self._lock:
             self._zone_states = states
