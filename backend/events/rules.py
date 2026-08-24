@@ -102,6 +102,24 @@ def _matches(when: When, event: Event) -> bool:
     return True
 
 
+def is_schedule_active(schedule: dict[str, Any] | None, now: datetime.datetime | None = None) -> bool:
+    """Horario propio de zona (OPS-23). None = sin restriccion, siempre activa.
+    Reutiliza _parse_time_range/_time_in_range (mismo modulo, misma logica que When.time_range/When.days) —
+    no reimplementar el parseo de rango horario."""
+    if not schedule:
+        return True
+    now = now or datetime.datetime.now()
+    days = schedule.get("days")
+    if days is not None and now.weekday() not in days:
+        return False
+    time_range = schedule.get("time_range")
+    if time_range:
+        start, end = _parse_time_range(time_range)
+        if not _time_in_range(now.time(), start, end):
+            return False
+    return True
+
+
 def load_rules(path: str) -> tuple[list[Rule], list[tuple[str, str]]]:
     """Load and validate rules.yaml. Never raises on a bad rule — collects errors instead."""
     with open(path, encoding="utf-8") as f:
@@ -186,6 +204,12 @@ class RuleEngine:
             self._last_fired[self._debounce_key(rule, event)] = event.ts
             fired.append(rule.name)
         return fired
+
+    def would_match(self, when: When, event: Event) -> bool:
+        """Envoltorio publico y sin efectos de _matches() — para POST /rules/{id}/test
+        (RULE-05). A diferencia de match(), NO purga ni actualiza self._last_fired: probar
+        una regla contra el historico nunca debe alterar su debounce en produccion."""
+        return _matches(when, event)
 
     async def run_actions(self, event: Event, fired: list[str]) -> None:
         """Ejecuta las acciones de las reglas ya casadas por match(). Lento: Telegram,
