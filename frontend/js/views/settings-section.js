@@ -1,8 +1,10 @@
 // frontend/js/views/settings-section.js
 // Fase 32 (OPS-18/19/20, SET-03/SET-04): pinta el panel de UNA seccion completa -- un
 // <fieldset> por grupo (nunca un panel por subseccion, D-03), delegando cada fila a
-// renderField() de settings-field.js (32-05). Resuelve bajo demanda las dos subsecciones
-// de solo lectura (zonas_definidas, reglas_cargadas) que no vienen del esquema de Settings.
+// renderField() de settings-field.js (32-05). Resuelve bajo demanda las tres subsecciones
+// de solo lectura (zonas_definidas/lineas_definidas/reglas_cargadas, la tercera anadida
+// por el Plan 33-13) que no vienen del esquema de Settings -- enlazan al editor real en
+// la pestana Camara (D-03 de la Fase 33), no duplican formularios completos aqui.
 //
 // Contrato de marcado documentado en la cabecera de settings-save.js (32-05), que este
 // modulo respeta para que saveSection/restoreSection localicen el panel solo con el
