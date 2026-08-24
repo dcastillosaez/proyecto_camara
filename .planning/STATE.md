@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 33 en ejecucion (ola 4/6 cerrada, 12/14 planes) en rama feature/fase-33, sin /gsd:execute-phase interactivo. Fase 32 sigue abierta aparte (7/8 planes, falta 32-08). Siguiente paso: ola 5 de la Fase 33 (33-13, integracion frontend final -- ultimo plan autonomo antes del checkpoint manual 33-14)
-last_updated: "2026-08-24T20:00:00.000Z"
-last_activity: 2026-08-24 -- Fase 33 ola 4 ejecutada (33-08 integracion backend: main.py arranca zonas/lineas/reglas 100% desde ZoneRepo/LineRepo/RuleRepo, retirada de /api/zones v1 suelto y GET /api/v2/rules suelto, config_schema.py retira campos de linea unica). Dos deviations Rule 1 documentadas: fix de migrations.py que dependia de Settings.line_*_frac ya retirados, retirada de PersonTracker.reconfigure_line() sin llamador. Suite completa: 767 passed, 2 skipped. Fase 32 no se toco: sigue abierta en 32-08.
+stopped_at: Fase 33 con las 5 olas autonomas cerradas (13/14 planes) en rama feature/fase-33. Solo falta 33-14 (ola 6, puerta de fase, checkpoint manual autonomous:false -- verificacion visual con servidor real, NO ejecutable en modo autonomo). Fase 32 sigue abierta aparte (7/8 planes, falta 32-08).
+last_updated: "2026-08-24T20:30:00.000Z"
+last_activity: 2026-08-24 -- Fase 33 ola 5 ejecutada (33-13: armazon HTML de zonas/lineas/reglas montado dentro de la vista Camara segun D-03, camera.js cablea initZoneEditor/initLineEditor/initRulesEditor con mutex de modo de edicion, retirada de bindZoneForm/loadZones legacy que 33-10 habia dejado roto a proposito para que este plan lo cerrara, settings-section.js actualizado a 3 subsecciones de solo lectura). Suite completa: 767 passed, 2 skipped, sin regresiones. Fase 32 no se toco: sigue abierta en 32-08. Fase 33 lista para el checkpoint manual 33-14.
 progress:
   total_phases: 32
   completed_phases: 16
   total_plans: 104
-  completed_plans: 97
-  percent: 93
+  completed_plans: 98
+  percent: 94
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08). Phase 33 — Editores visuales de zonas, líneas y reglas (EN EJECUCIÓN, ola 4/6 cerrada, 12/14 planes)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08). Phase 33 — Editores visuales de zonas, líneas y reglas (5/6 olas cerradas, 13/14 planes, solo falta el checkpoint manual 33-14)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes, sin cerrar)
-Phase: 33 (Editores visuales de zonas, líneas y reglas) — EN EJECUCIÓN (ola 4/6 cerrada, 12/14 planes), rama `feature/fase-33`
-Plan: 32 en 7 of 8 — 32-07 cerrado. 33 con olas 1-4 cerradas (33-01/02/03/04/09/12/05/06/10/11/07/08), ola 5 siguiente (33-13)
-Status: Phase 32 sigue abierta en 32-08 — no se tocó en esta sesión. Phase 33: solo queda 33-13 (integración frontend final, autónomo) antes del checkpoint manual 33-14 (ola 6, `autonomous: false`, requiere verificación visual con servidor real)
+Phase: 33 (Editores visuales de zonas, líneas y reglas) — 13/14 planes, rama `feature/fase-33`
+Plan: 32 en 7 of 8 — 32-07 cerrado. 33 con olas 1-5 cerradas (todos los planes autónomos); solo queda 33-14
+Status: Phase 32 sigue abierta en 32-08 — no se tocó en esta sesión. Phase 33: todo el trabajo autónomo terminado (backend v2 completo, frontend con los 3 editores montados en Cámara, suite 767 passed/2 skipped); 33-14 es un checkpoint manual (`autonomous: false`) que requiere que el usuario (o Claude con servidor real arrancado y navegador) verifique visualmente dibujar zonas/líneas y probar reglas — no se ejecuta en modo autónomo
 
 **32-07 cierra la fase conectando las cinco waves anteriores a la navegación real — el único plan que toca `nav.js`.**
 `frontend/js/nav.js` extiende `VIEWS` de 2 a 4 (`operaciones`/`analitica`/`camara`/`ajustes`)

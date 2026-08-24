@@ -648,7 +648,7 @@ Plans:
   7. Zonas dibujadas a 720p siguen siendo correctas al cambiar a 1080p
 **Spec**: SPEC_v2.md §6.4
 
-**Plans:** 12/14 plans complete (olas 1-3 + ola 4: 33-08 integración backend, retirada v1 — suite completa 767 passed, 2 skipped) — `.planning/phases/33-editores-visuales-de-zonas-l-neas-y-reglas/`
+**Plans:** 13/14 plans complete (olas 1-5 — suite completa 767 passed, 2 skipped). Solo falta 33-14 (ola 6, puerta de fase, checkpoint manual `autonomous: false`, verificación visual con servidor real) — `.planning/phases/33-editores-visuales-de-zonas-l-neas-y-reglas/`
 
 Plans:
 - [ ] 33-01-PLAN.md — LineRepo + RuleRepo.get() + RuleEngine.would_match() + is_schedule_active()
