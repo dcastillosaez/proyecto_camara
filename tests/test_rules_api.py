@@ -216,3 +216,11 @@ async def TEST_test_rule_counts_matches_without_mutating_debounce():
     assert body1 == {"would_fire": 2, "total_checked": 3}
     # Repetir /test no altera el resultado (would_match no muta el estado de debounce).
     assert resp2.json() == body1
+
+
+# --- Wiring en main.py -----------------------------------------------------
+def TEST_main_imports_with_rules_router_registered():
+    import backend.main as main_module
+    paths = {getattr(r, "path", None) for r in main_module.app.routes}
+    assert "/api/v2/rules" in paths
+    assert "/api/v2/rules/{rule_id}" in paths

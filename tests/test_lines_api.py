@@ -154,3 +154,11 @@ async def TEST_delete_line_existing_pushes_hot_reload_and_returns_remaining():
     assert resp.status_code == 200
     assert resp.json() == {"lines": [{"id": "l2", "camera_id": "cam1"}]}
     pipeline.set_lines.assert_called_once_with([{"id": "l2", "camera_id": "cam1"}])
+
+
+# --- Wiring en main.py -----------------------------------------------------
+def TEST_main_imports_with_lines_router_registered():
+    import backend.main as main_module
+    paths = {getattr(r, "path", None) for r in main_module.app.routes}
+    assert "/api/v2/lines" in paths
+    assert "/api/v2/lines/{line_id}" in paths

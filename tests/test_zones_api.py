@@ -199,3 +199,11 @@ async def TEST_delete_zone_existing_pushes_hot_reload_and_returns_remaining():
     assert resp.status_code == 200
     assert resp.json() == {"zones": [{"id": "z2", "camera_id": "cam1"}]}
     pipeline.set_zones.assert_called_once_with([{"id": "z2", "camera_id": "cam1"}])
+
+
+# --- Wiring en main.py -----------------------------------------------------
+def TEST_main_imports_with_zones_router_registered():
+    import backend.main as main_module
+    paths = {getattr(r, "path", None) for r in main_module.app.routes}
+    assert "/api/v2/zones" in paths
+    assert "/api/v2/zones/{zone_id}" in paths
