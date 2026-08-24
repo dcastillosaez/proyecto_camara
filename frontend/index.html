@@ -626,50 +626,6 @@
         </div>
       </div>
 
-      <!-- INTEREST ZONES -->
-      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col">
-        <div class="flex items-center justify-between mb-3">
-          <div class="flex items-center gap-2">
-            <svg class="w-4 h-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <polygon points="3 11 22 2 13 21 11 13 3 11"/>
-            </svg>
-            <h2 class="text-sm font-semibold text-slate-200">Zonas de interés</h2>
-          </div>
-          <button id="btn-add-zone" class="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer" aria-label="Añadir zona">+ Añadir</button>
-        </div>
-        <!-- Add zone form (hidden) -->
-        <div id="add-zone-panel" class="hidden mb-3 p-3 bg-slate-800/60 border border-slate-700 rounded-xl flex flex-col gap-2">
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <label class="text-xs text-slate-500 mb-1 block">ID (slug)</label>
-              <input id="zone-id-input" type="text" placeholder="entrada" maxlength="50"
-                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors">
-            </div>
-            <div>
-              <label class="text-xs text-slate-500 mb-1 block">Nombre</label>
-              <input id="zone-name-input" type="text" placeholder="Entrada" maxlength="100"
-                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors">
-            </div>
-          </div>
-          <div>
-            <label class="text-xs text-slate-500 mb-1 block">Puntos (fracciones 0–1, mín. 3 puntos)</label>
-            <textarea id="zone-points-input" rows="2" placeholder='[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]]'
-              class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 font-mono focus:outline-none focus:border-blue-500 transition-colors resize-none"></textarea>
-            <p class="text-xs text-slate-600 mt-0.5">Esquinas como [x, y] donde 0=izquierda/arriba, 1=derecha/abajo</p>
-          </div>
-          <div class="flex gap-2 justify-end">
-            <button id="zone-cancel-btn" class="text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors cursor-pointer">Cancelar</button>
-            <button id="zone-save-btn" class="text-xs px-3 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-600 text-white font-semibold transition-colors cursor-pointer">Guardar</button>
-          </div>
-          <p id="zone-msg" class="text-xs text-center hidden"></p>
-        </div>
-        <div id="zones-list" class="flex flex-col gap-1.5 overflow-y-auto" style="max-height:140px">
-          <div id="zones-empty" class="flex flex-col items-center justify-center py-5 text-center">
-            <p class="text-slate-600 text-xs">Sin zonas configuradas</p>
-          </div>
-        </div>
-      </div>
-
       <!-- ACTIVE DETECTION CLASSES -->
       <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col">
         <div class="flex items-center justify-between mb-3">
@@ -859,6 +815,8 @@
           alt="Stream en tiempo real de la cámara Tapo C212"
           style="width:100%; aspect-ratio:16/9; max-height:560px; object-fit:cover; display:block; background:#000"
         >
+        <canvas id="zone-line-canvas" aria-hidden="true"
+          style="position:absolute; inset:0; width:100%; height:100%;"></canvas>
         <div id="camera-offline" style="display:none" class="w-full bg-slate-950 flex-col items-center justify-center gap-3 py-20">
           <svg class="w-14 h-14 text-slate-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
             <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
@@ -926,6 +884,80 @@
         </div>
 
         <a href="#ajustes" class="text-xs text-blue-400 hover:text-blue-300 ml-auto">Ver todos los ajustes</a>
+      </div>
+
+      <!-- Editor de zonas y lineas sobre el video en vivo (D-03, OPS-21/OPS-22) -->
+      <div class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-semibold text-slate-200">Zonas y líneas de conteo</h2>
+          <div class="flex items-center gap-2">
+            <button id="zone-mode-toggle" type="button" aria-pressed="false"
+              class="filter-chip" aria-label="Activar modo edición de zonas">Editar zonas</button>
+            <button id="line-mode-toggle" type="button" aria-pressed="false"
+              class="filter-chip" aria-label="Activar modo edición de líneas">Editar líneas</button>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Zonas -->
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs font-semibold text-slate-400">Zonas</h3>
+              <button id="zone-new-btn" type="button" class="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer">+ Nueva zona</button>
+            </div>
+            <div id="zone-list" class="flex flex-col gap-1.5 overflow-y-auto" style="max-height:140px"></div>
+            <div class="flex flex-col gap-2 p-2.5 bg-slate-800/60 border border-slate-700 rounded-xl">
+              <div class="flex items-center gap-2 flex-wrap">
+                <label for="zone-form-kind" class="text-xs text-slate-500">Tipo</label>
+                <select id="zone-form-kind" class="text-xs bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-slate-300 cursor-pointer"></select>
+                <span id="zone-kind-locked-label" class="text-xs text-slate-500"></span>
+              </div>
+              <div id="zone-form-days" class="flex flex-wrap gap-1"></div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <label for="zone-form-time-start" class="text-xs text-slate-500">Desde</label>
+                <input id="zone-form-time-start" type="time" class="text-xs bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-slate-300">
+                <label for="zone-form-time-end" class="text-xs text-slate-500">Hasta</label>
+                <input id="zone-form-time-end" type="time" class="text-xs bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-slate-300">
+              </div>
+              <p id="zone-error" class="text-xs text-red-400 hidden"></p>
+              <div class="flex gap-2 justify-end">
+                <button id="zone-cancel-btn" type="button" class="text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors cursor-pointer">Cancelar</button>
+                <button id="zone-save-btn" type="button" class="text-xs px-3 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-600 text-white font-semibold transition-colors cursor-pointer">Guardar</button>
+              </div>
+            </div>
+          </div>
+          <!-- Lineas -->
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs font-semibold text-slate-400">Líneas de conteo</h3>
+              <button id="line-new-btn" type="button" class="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer">+ Nueva línea</button>
+            </div>
+            <div id="line-list" class="flex flex-col gap-1.5 overflow-y-auto" style="max-height:140px"></div>
+            <div class="flex flex-col gap-2 p-2.5 bg-slate-800/60 border border-slate-700 rounded-xl">
+              <label for="line-form-name" class="text-xs text-slate-500">Nombre</label>
+              <input id="line-form-name" type="text" maxlength="100" placeholder="Entrada principal"
+                class="text-xs bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors">
+              <p id="line-error" class="text-xs text-red-400 hidden"></p>
+              <div class="flex gap-2 justify-end">
+                <button id="line-cancel-btn" type="button" class="text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors cursor-pointer">Cancelar</button>
+                <button id="line-save-btn" type="button" class="text-xs px-3 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-600 text-white font-semibold transition-colors cursor-pointer">Guardar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Editor de reglas (OPS-24/RULE-05) -->
+      <div id="rules-panel" class="card bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-semibold text-slate-200">Reglas</h2>
+          <button id="rule-new-btn" type="button" class="text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer">+ Nueva regla</button>
+        </div>
+        <div id="rules-list" class="flex flex-col gap-1.5"></div>
+        <div id="rule-form" class="flex-col gap-2 p-3 bg-slate-800/60 border border-slate-700 rounded-xl"></div>
+        <div class="flex items-center gap-2">
+          <button id="rule-test-btn" type="button" class="text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors cursor-pointer">Probar regla</button>
+          <span id="rule-test-result" class="text-xs text-slate-400"></span>
+        </div>
       </div>
     </section>
 
