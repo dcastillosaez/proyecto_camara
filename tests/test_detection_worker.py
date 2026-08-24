@@ -279,12 +279,10 @@ def _tracked_cls(boxes, tids, class_ids, names=None) -> sv.Detections:
 
 # ─── PolygonZone cuenta presencia y entradas acumuladas por zona ────────────
 def test_polygon_zone_counts_presence_and_entries():
-    import json
-
     worker = _worker_for_zones()
     worker.set_zones([{
         "id": "z1", "name": "Puerta", "enabled": True,
-        "polygon_json": json.dumps([[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]]),
+        "polygon": [[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]],
     }])
 
     shape = (720, 1280, 3)
@@ -431,14 +429,12 @@ def TEST_behavior_failure_does_not_kill_thread():
 
 
 def TEST_behavior_zone_membership_snapshot_reuses_zone_states():
-    import json
-
     worker = _worker_for_zones()
     worker.set_zones([
         {"id": "z1", "name": "Z1", "enabled": True,
-         "polygon_json": json.dumps([[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]])},
+         "polygon": [[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]]},
         {"id": "z2", "name": "Z2", "enabled": True,
-         "polygon_json": json.dumps([[0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [0.5, 1.0]])},
+         "polygon": [[0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [0.5, 1.0]]},
     ])
     shape = (720, 1280, 3)
 
@@ -753,8 +749,6 @@ def TEST_object_prune_findings_are_emitted():
 
 
 def TEST_excluded_zone_suppresses_object_candidate():
-    import json
-
     worker = _worker_for_zones()
     event_engine = MagicMock()
     worker._event_engine = event_engine
@@ -764,7 +758,7 @@ def TEST_excluded_zone_suppresses_object_candidate():
     worker._objects = objects
     worker.set_zones([{
         "id": "zex", "name": "Exclusion", "kind": "exclude_objects", "enabled": True,
-        "polygon_json": json.dumps([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+        "polygon": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     }])
     worker._update_zones_and_heat(sv.Detections.empty(), (360, 640, 3))
     obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
