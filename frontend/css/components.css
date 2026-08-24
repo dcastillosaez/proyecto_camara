@@ -235,3 +235,8 @@
    popover quedaria visible por defecto en cuanto 32-07 monta su marcado. */
 #restore-config-popover { display: none; position: fixed; z-index: 55; inset: 0; margin: auto; height: fit-content; }
 #restore-config-popover.open { display: flex; }
+
+/* ── Fase 33: editores de zonas/lineas (canvas sobre #camera-feed) ──── */
+/* Tailwind no ofrece cursor de precision para dibujo ni bloqueo de scroll
+   tactil como utilidad de una palabra sin arbitrary values. */
+.zone-editor-canvas { cursor: crosshair; touch-action: none; }
