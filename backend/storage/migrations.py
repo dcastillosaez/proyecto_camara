@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from pydantic_settings import BaseSettings
 from sqlalchemy import Connection, Engine, text
 
 from backend.storage import models
@@ -191,6 +192,29 @@ def _migrate_v3_to_v4(conn: Connection) -> None:
     _record_version(conn, 4)
 
 
+def _legacy_line_frac_settings() -> tuple[float, float, float, float]:
+    """Lee LINE_START_X_FRAC/LINE_START_Y_FRAC/LINE_END_X_FRAC/LINE_END_Y_FRAC
+    (env/.env) fuera del modelo `Settings` principal — esos 4 campos se
+    retiraron de `Settings` en el Plan 33-08 (ya no los consume nada en
+    produccion) pero esta migracion sigue necesitando leerlos UNA VEZ para
+    sembrar la linea de compatibilidad de instalaciones que actualizan desde
+    antes de la Fase 33. Modelo efimero con el mismo `model_config`
+    (env_file + case-insensible) que `Settings`, para no reimplementar el
+    parseo de `.env` a mano ni resucitar los campos en el modelo principal.
+    """
+    from backend.config import Settings as _Settings
+
+    class _LegacyLineFracs(BaseSettings):
+        line_start_x_frac: float = 0.0
+        line_start_y_frac: float = 0.5
+        line_end_x_frac: float = 1.0
+        line_end_y_frac: float = 0.5
+        model_config = _Settings.model_config
+
+    v = _LegacyLineFracs()
+    return v.line_start_x_frac, v.line_start_y_frac, v.line_end_x_frac, v.line_end_y_frac
+
+
 def _migrate_v4_to_v5(conn: Connection) -> None:
     """Unifica el modelo de Zone (D-02, 33-CONTEXT.md) y siembra la linea de conteo
     unica existente como primera fila real de `lines` (D-01) — sin esto, una
@@ -215,20 +239,16 @@ def _migrate_v4_to_v5(conn: Connection) -> None:
             text("SELECT COUNT(*) FROM lines WHERE camera_id = 'cam1'")
         ).scalar()
         if not existing:
-            from backend.config import get_settings
-            s = get_settings()
+            sx, sy, ex, ey = _legacy_line_frac_settings()
             conn.execute(
                 text(
                     "INSERT INTO lines (id, camera_id, name, start_x_frac, "
                     "start_y_frac, end_x_frac, end_y_frac, enabled) VALUES "
                     "('linea-1', 'cam1', 'Linea de conteo', :sx, :sy, :ex, :ey, 1)"
                 ),
-                {
-                    "sx": s.line_start_x_frac, "sy": s.line_start_y_frac,
-                    "ex": s.line_end_x_frac, "ey": s.line_end_y_frac,
-                },
+                {"sx": sx, "sy": sy, "ex": ex, "ey": ey},
             )
-            logger.info("Sembrada linea de conteo por defecto desde Settings (D-01)")
+            logger.info("Sembrada linea de conteo por defecto desde .env legacy (D-01)")
     _record_version(conn, 5)
 
 

@@ -338,35 +338,11 @@ def TEST_088_annotate_empty_detections_no_crash(tracker, blank_frame):
 
 
 # ---------------------------------------------------------------------------
-# reconfigure_line() / reconfigure_lines()
+# reconfigure_lines()
 # ---------------------------------------------------------------------------
-
-# ─── Reconfiguración en caliente sin excepción ───────────────────────────────
-# reconfigure_line() permite al usuario mover la línea de conteo desde el
-# dashboard sin reiniciar el servidor. Debe aceptar nuevas coordenadas
-# y reemplazar el LineZone interno sin lanzar ninguna excepción. Wrapper de
-# compatibilidad sobre reconfigure_lines() hasta que el Plan 33-05 lo retire.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_089_reconfigure_line_does_not_raise(tracker):
-    """reconfigure_line() can be called without crashing."""
-    tracker.reconfigure_line(sv.Point(0, 100), sv.Point(1280, 100))
-
-
-# ─── El tracker sigue operativo tras reconfigurar ────────────────────────────
-# Tras reemplazar el LineZone, el pipeline completo update() debe seguir
-# funcionando. Si reconfigure_line dejara el tracker en estado inconsistente,
-# la siguiente llamada a update() lanzaría AttributeError.
-# ─────────────────────────────────────────────────────────────────────────────
-def TEST_090_reconfigure_line_tracker_still_works_after(tracker):
-    """update() succeeds after reconfigure_line()."""
-    tracker.reconfigure_line(sv.Point(0, 100), sv.Point(1280, 100))
-    det = _make_tracked(1, [42])
-    with (
-        patch.object(tracker._byte_tracker, "update_with_detections", return_value=det),
-        patch.object(tracker._lines[0]["zone"], "trigger", return_value=(np.array([False]), np.array([False]))),
-    ):
-        tracked, crossings = tracker.update(sv.Detections.empty())
-    assert crossings == []
+# reconfigure_line() (wrapper de compatibilidad singular sobre esta funcion)
+# se retiro en el Plan 33-08: su unica llamada real (backend/camera.py:194)
+# ya habia migrado a reconfigure_lines()/LineRepo en el Plan 33-05.
 
 
 # ─── reconfigure_lines sustituye la lista completa ───────────────────────────

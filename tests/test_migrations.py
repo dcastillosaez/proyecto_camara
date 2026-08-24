@@ -438,8 +438,9 @@ def TEST_migration_v5_does_not_overwrite_existing_polygon(tmp_path):
 
 
 def TEST_migration_v5_seeds_default_line_when_lines_empty(tmp_path):
-    from backend.config import get_settings
-
+    # line_start_x_frac/etc se retiraron de Settings en el Plan 33-08 (D-01/D-02):
+    # la migracion los lee ahora directamente de env/.env (_legacy_line_frac_settings),
+    # no del modelo principal — comparamos contra los mismos defaults hardcodeados.
     db_path = tmp_path / "v4.db"
     make_v4_db_with_legacy_zone(db_path)
     engine = create_engine(f"sqlite:///{db_path}")
@@ -454,11 +455,8 @@ def TEST_migration_v5_seeds_default_line_when_lines_empty(tmp_path):
             )
         ).fetchall()
 
-    s = get_settings()
     assert len(rows) == 1
-    assert rows[0] == (
-        "cam1", s.line_start_x_frac, s.line_start_y_frac, s.line_end_x_frac, s.line_end_y_frac,
-    )
+    assert rows[0] == ("cam1", 0.0, 0.5, 1.0, 0.5)
 
 
 def TEST_migration_v5_does_not_duplicate_existing_line(tmp_path):

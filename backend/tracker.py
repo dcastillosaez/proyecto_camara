@@ -195,14 +195,6 @@ class PersonTracker:
                     new_lines.append(self._build_line(line))
             self._lines = new_lines
 
-    def reconfigure_line(self, start: sv.Point, end: sv.Point) -> None:
-        """Wrapper de compatibilidad — la única llamada real sigue siendo
-        posicional (backend/camera.py:194, endpoint /resolution). El Plan
-        33-05 migra ese caller a reconfigure_lines/LineRepo y retira este
-        wrapper; hasta entonces sustituye la lista completa por una única
-        línea "_legacy"."""
-        self.reconfigure_lines([{"id": "_legacy", "name": "Linea", "start": start, "end": end}])
-
 
 class ObjectTracker:
     """ByteTrack dedicado a las clases de objeto (Fase 27, BEH-06/BEH-07).
