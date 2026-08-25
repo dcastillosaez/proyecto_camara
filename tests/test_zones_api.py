@@ -204,6 +204,7 @@ async def TEST_delete_zone_existing_pushes_hot_reload_and_returns_remaining():
 # --- Wiring en main.py -----------------------------------------------------
 def TEST_main_imports_with_zones_router_registered():
     import backend.main as main_module
-    paths = {getattr(r, "path", None) for r in main_module.app.routes}
+    from tests.route_utils import iter_app_routes
+    paths = {getattr(r, "path", None) for r in iter_app_routes(main_module.app)}
     assert "/api/v2/zones" in paths
     assert "/api/v2/zones/{zone_id}" in paths
