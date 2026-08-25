@@ -234,6 +234,7 @@ def bench_frame() -> np.ndarray:
     return cv2.resize(img, (1280, 720))
 
 
+@pytest.mark.perf
 def TEST_multiclass_latency_under_15_percent(real_detector, bench_frame):
     """Criterio 6: activar las 6 clases del ROADMAP no puede subir la latencia de
     inferencia mas de un 15 %. Se mide el p50, no un maximo ni una sola llamada: el
