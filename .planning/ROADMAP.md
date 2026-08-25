@@ -287,7 +287,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 - [x] **Phase 31: Vista de analítica** — Ocupación, heatmap, ranking de personas, tendencias (completed 2026-08-23; checkpoint visual de Task 3 de 31-11-PLAN.md aprobado tras corregir una regresión real de Chart.js en carga directa de `#analitica`; lo que exige actividad de cámara real en heatmap/ranking queda diferido como 12º checkpoint manual)
 - [ ] **Phase 32: Vista de cámara y configuración visual** — Operar y configurar sin tocar .env
 - [x] **Phase 33: Editores visuales de zonas, líneas y reglas** — Dibujar sobre el vídeo, componer reglas por formulario
-- [ ] **Phase 34: Tests E2E e integración del pipeline** — Playwright + pipeline completo con fuente sintética
+- [x] **Phase 34: Tests E2E e integración del pipeline** — Playwright + pipeline completo con fuente sintética (completed 2026-08-25; planificada y ejecutada a mano sin `gsd-sdk`, ver `.planning/phases/34-tests-e2e-integracion-pipeline/PLAN.md`; el job de CI `e2e` queda sin verificar en una ejecución real de GitHub Actions, pendiente del primer PR)
 
 ### Bloque D — Escalabilidad
 

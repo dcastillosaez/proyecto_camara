@@ -274,11 +274,11 @@
 
 ### Testing v2 (TEST)
 
-- [ ] **TEST-01**: Existe un test de integración del pipeline completo con fuente RTSP sintética, ejecutable en CI sin cámara real
-- [ ] **TEST-02**: Playwright cubre los escenarios críticos de frontend: vídeo, cámara offline, reconexión WS, evento nuevo, filtros, clips, modales, PTZ, alertas y editor de zonas
-- [ ] **TEST-03**: La suite completa se ejecuta en menos de 5 minutos
-- [ ] **TEST-04**: CI ejecuta unit e integración en cada push y E2E en cada pull request
-- [ ] **TEST-05**: La cobertura de los paquetes `events`, `pipeline` y `perception` supera el 80%
+- [x] **TEST-01**: Existe un test de integración del pipeline completo con fuente RTSP sintética, ejecutable en CI sin cámara real
+- [x] **TEST-02**: Playwright cubre los escenarios críticos de frontend: vídeo, cámara offline, reconexión WS, evento nuevo, filtros, clips, modales, PTZ, alertas y editor de zonas
+- [x] **TEST-03**: La suite completa se ejecuta en menos de 5 minutos
+- [x] **TEST-04**: CI ejecuta unit e integración en cada push y E2E en cada pull request
+- [x] **TEST-05**: La cobertura de los paquetes `events`, `pipeline` y `perception` supera el 80%
 
 ### Escalabilidad (SCALE)
 

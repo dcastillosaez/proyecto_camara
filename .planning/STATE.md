@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 33 COMPLETA (14/14 planes, checkpoint 33-14 APROBADO con servidor real) en rama feature/fase-33. OPS-21..OPS-24/RULE-05 cerrados en REQUIREMENTS.md. Fase 32 sigue abierta aparte (7/8 planes, falta 32-08) -- no forma parte de esta rama de trabajo.
-last_updated: "2026-08-24T21:15:00.000Z"
-last_activity: 2026-08-24 -- Fase 33 cerrada con checkpoint 33-14: trazabilidad de los 7 criterios de exito (Task 1, suite completa 767 passed/2 skipped/0 failed) + checkpoint visual con servidor real (Task 2, APROBADO) -- zona (kind=restricted, horario 08:00-18:00), 2 lineas coexistiendo (D-01), regla LINE_CROSSED+log probada contra 500 eventos reales (would_fire=1), tarjeta legacy de Operaciones retirada, subsecciones de Ajustes con datos reales, hot-reload confirmado sin restart en logs del servidor. Datos de prueba limpiados tras verificar (DELETE 200 en zona/linea/regla). Bug 500 preexistente de /api/v2/cameras/cam1/health confirmado no relacionado con esta fase (Fase 30). Fase 32 no se toco: sigue abierta en 32-08.
+stopped_at: Fase 34 COMPLETA (8/8 sub-tareas, puerta 34-08 con trazabilidad de los 6 criterios) en main, planificada y ejecutada a mano (sin gsd-sdk, no disponible en esta sesion -- ver .planning/phases/34-tests-e2e-integracion-pipeline/PLAN.md). TEST-01..05 cerrados en REQUIREMENTS.md. Fase 32 sigue abierta aparte (7/8 planes, falta 32-08) -- no se toco en esta sesion.
+last_updated: "2026-08-25T16:09:15.000Z"
+last_activity: 2026-08-25 -- Fase 34 (Tests E2E e integracion del pipeline) completada de extremo a extremo en una sesion sin gsd-sdk (agente gsd-planner/gsd-executor disponibles como subagentes, pero el orquestador /gsd:plan-phase//gsd:execute-phase no se pudo invocar -- gsd-sdk no esta en el PATH). Plan y bitacora unica en .planning/phases/34-tests-e2e-integracion-pipeline/PLAN.md (8 sub-tareas, no el formato estandar de PLAN.md por-plan de otras fases). 34-01: tests/integration/test_pipeline_e2e.py (FakeRTSP->detector mock->PersonTracker real->EventEngine->EventBus->make_event_pipeline real->RuleEngine->SQLite->broadcast). 34-02: pytest-cov + .coveragerc (events 90.8%, pipeline 89.7%, perception 94.3%, los tres >80% sin tocar produccion) + marker `perf` para excluir tests de latencia de la cobertura (coverage.py infla el tiempo de rutas con mucho glue Python de YOLO y colaba una regresion falsa). 34-03: quitado `continue-on-error: true` de tests.yml (enmascaraba cualquier fallo real). 34-04/34-05: Playwright completo, tests/e2e/ con los 10 escenarios de TEST-02 (11 tests, modales tiene 2) -- encontro y corrigio un bug real de produccion (el cierre del modal de clip al hacer click en el fondo nunca funcionaba: el listener vivia envuelto en un DOMContentLoaded que con type="module" ya habia disparado antes de registrarse, frontend/js/components/eventCard.js). 34-06: job `e2e` en tests.yml gateado a pull_request -- SIN VERIFICAR en una ejecucion real de GitHub Actions (requeriria git push, fuera de esta sesion sin permiso explicito), riesgo documentado: yolo26n.pt no esta en git y el webServer de Playwright construye un PersonDetector real al arrancar, primera vez que un job de CI de este repo lo hace de verdad. 34-07: 6 endpoints /api/* v1 marcados deprecated=True (GET/DELETE /api/events, GET /api/zones/stats, GET /api/heatmap, /api/alerts/config|test|status) tras confirmar por grep contra frontend/js/ que ninguno tiene consumidor real hoy -- deliberadamente NO se tocaron /api/events/export, /api/enroll_face y otros "v1" que la UI si usa activamente. Suite completa final: 769 passed, 2 skipped, 3m44s (pytest) + 11 passed, 22.4s (Playwright). NOTA para una sesion futura con gsd-sdk disponible: el bloque `progress` de abajo (total_plans/completed_plans/percent) NO se recalculo a mano tras esta fase porque no sigue el formato de PLAN.md por-plan que ese conteo asume -- solo se actualizo completed_phases; reconciliar con gsd-sdk cuando este disponible.
 progress:
   total_phases: 32
-  completed_phases: 17
+  completed_phases: 18
   total_plans: 104
   completed_plans: 99
   percent: 95
@@ -21,15 +21,60 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08, rama distinta). Phase 33 — Editores visuales de zonas, líneas y reglas — **COMPLETA** (14/14 planes, checkpoint 33-14 aprobado)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08, rama distinta). Phase 34 — Tests E2E e integración del pipeline — **COMPLETA** (8/8 sub-tareas, puerta 34-08 aprobada)
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes, sin cerrar, rama distinta)
-Phase: 33 (Editores visuales de zonas, líneas y reglas) — **COMPLETA** (14/14 planes), rama `feature/fase-33`
-Plan: 32 en 7 of 8 — 32-07 cerrado. 33: las 14 planes cerrados, checkpoint 33-14 aprobado
-Status: Phase 32 sigue abierta en 32-08 — no se tocó en esta sesión (rama distinta). Phase 33 cerrada de extremo a extremo: backend v2 (zonas/líneas/reglas con hot-reload), frontend con los 3 editores montados en Cámara, suite 767 passed/2 skipped, checkpoint visual con servidor real aprobado, OPS-21..OPS-24/RULE-05 marcados en REQUIREMENTS.md. Siguiente paso natural: revisar/mergear `feature/fase-33` a `main`, o continuar con Fase 34 (Tests E2E e integración del pipeline) cuando el usuario lo decida
+Phase: 34 (Tests E2E e integración del pipeline) — **COMPLETA** (8/8 sub-tareas), en `main`
+Plan: 32 en 7 of 8 — 32-07 cerrado. 34: las 8 sub-tareas cerradas, puerta 34-08 con trazabilidad de los 6 criterios
+Status: Phase 32 sigue abierta en 32-08 — no se tocó en esta sesión (rama distinta). Phase 34 cerrada de extremo a extremo sin `gsd-sdk` (planificada y ejecutada a mano, ver nota en `stopped_at`): test de integración del pipeline completo (FakeRTSP→...→WebSocket), cobertura >80% en events/pipeline/perception, los 10 escenarios de Playwright (11 tests), CI con unit+integración en cada push y un job E2E nuevo gateado a pull_request (**sin verificar en una ejecución real de GitHub Actions**, pendiente del primer PR), y 6 endpoints `/api/*` v1 formalmente deprecados. TEST-01..05 marcados en REQUIREMENTS.md. Un bug real de producción encontrado y corregido de paso: el cierre del modal de clip al hacer click en el fondo nunca funcionaba (listener registrado dentro de un `DOMContentLoaded` que con `type="module"` ya había disparado). Siguiente paso natural: abrir un PR para verificar el job `e2e` en CI de verdad, o continuar con Fase 35 (CameraManager y `camera_id` transversal) cuando el usuario lo decida. Fase 32 sigue pendiente aparte, en su propia rama.
+
+**La Fase 34 está completa.** Red de seguridad del pipeline completo, planificada y
+ejecutada a mano en una sola sesión sin `gsd-sdk` (no disponible; ver nota en
+`stopped_at` y `.planning/phases/34-tests-e2e-integracion-pipeline/PLAN.md`, que hace
+de plan y bitácora únicos — no el formato estándar de `PLAN.md`/`SUMMARY.md` por
+sub-tarea de otras fases). Ocho sub-tareas: (1) `tests/integration/test_pipeline_e2e.py`
+— FakeRTSP (fixture `mock_video_capture` ya existente) → detector mock → `PersonTracker`
+real → `EventEngine` → `EventBus` → `make_event_pipeline()` real → `RuleEngine` → INSERT
+SQLite → broadcast, sin YOLO ni cámara; (2) cobertura con `pytest-cov`/`.coveragerc`
+(events 90.8%, pipeline 89.7%, perception 94.3%, los tres por encima del 80% sin tocar
+código de producción) y un marker `perf` nuevo para excluir de la medición el único test
+de latencia que rompía bajo instrumentación (coverage.py infla las rutas con mucho glue
+Python de YOLO); (3) retirado `continue-on-error: true` de `tests.yml`, que enmascaraba
+cualquier fallo real; (4)-(5) Playwright completo — `package.json`, `playwright.config.js`
+con `webServer` propio (puerto 8011, `data/e2e-events.db` aislada de la del
+desarrollador) y los 10 escenarios de TEST-02 en `tests/e2e/` (11 tests: vídeo, cámara
+offline, reconexión WS, evento nuevo, filtros, clips, modales ×2, PTZ, alertas, editor de
+zonas); (6) job `e2e` nuevo en `tests.yml`, gateado a `pull_request`; (7) seis endpoints
+`/api/*` v1 marcados `deprecated=True` tras confirmar por grep contra `frontend/js/` que
+ninguno tiene consumidor real hoy (`GET`/`DELETE /api/events`, `GET /api/zones/stats`,
+`GET /api/heatmap`, `/api/alerts/config|test|status`) — deliberadamente sin tocar
+`/api/events/export`, `/api/enroll_face` y el resto de endpoints "v1" que la UI sigue
+usando de verdad; (8) puerta de fase con trazabilidad de los 6 criterios de éxito.
+
+De paso, escribir los tests de Playwright encontró y corrigió un bug real de producción,
+no solo lo documentó: el listener que cierra `#clip-modal` al hacer click en el fondo
+vivía envuelto en `document.addEventListener('DOMContentLoaded', ...)` dentro de
+`frontend/js/components/eventCard.js` — con `type="module"` ese evento ya ha disparado
+para cuando el módulo se ejecuta, así que el listener nunca llegaba a registrarse y el
+click en el fondo no cerraba nada en producción real (solo `Escape` funcionaba).
+Confirmado con un probe manual antes de tocar el código, arreglado quitando el
+envoltorio.
+
+**Riesgo documentado y sin verificar**: el job `e2e` de CI no se ha ejecutado nunca en
+GitHub Actions real (requeriría `git push`, fuera de esta sesión sin permiso explícito
+del usuario) — `yolo26n.pt` no está trackeado en git y el `webServer` de Playwright
+construye un `PersonDetector` real al arrancar el backend, el primer camino de CI de
+este repo que lo hace de verdad (el `real_detector` de `tests/test_detector.py` siempre
+se salta en el runner Linux existente). Debería auto-descargarse vía Ultralytics
+(documentado en `STACK.md`), pero queda pendiente de confirmación en el primer PR real.
+
+Suite completa final: **769 passed, 2 skipped, 3m44s** (pytest, sin regresiones tras
+34-07) + **11 passed, 22.4s** (Playwright, verificado dos veces seguidas sin resetear la
+base de e2e entre medias). TEST-01..05 cerrados en `REQUIREMENTS.md` (el criterio 6 no
+tiene id `TEST-0N` propio, solo aparece en `ROADMAP.md`).
 
 **32-07 cierra la fase conectando las cinco waves anteriores a la navegación real — el único plan que toca `nav.js`.**
 `frontend/js/nav.js` extiende `VIEWS` de 2 a 4 (`operaciones`/`analitica`/`camara`/`ajustes`)
