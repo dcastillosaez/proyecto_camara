@@ -28,12 +28,15 @@ jobs:
       - name: Install Python deps
         run: pip install -q -r requirements.txt
 
+      # TEST-04: unit + integración en cada push. tests/ incluye tests/integration/
+      # (Fase 34) sin flag aparte -- pytest recorre el arbol completo. Antes llevaba
+      # continue-on-error: true, que enmascaraba cualquier fallo (el job quedaba en
+      # verde pasara lo que pasara); un push que rompe algo real debe romper el build.
       - name: Run tests
         run: |
           pytest tests/ -q --tb=short \
             --html=report/index.html \
             --self-contained-html
-        continue-on-error: true
 
       - name: Upload HTML report
         uses: actions/upload-artifact@v7
@@ -41,4 +44,62 @@ jobs:
         with:
           name: test-report-${{ github.run_number }}
           path: report/index.html
+          retention-days: 30
+
+      # TEST-05: backend/events, backend/pipeline y backend/perception por encima
+      # del 80% (umbral en .coveragerc). -m "not perf" excluye los tests de
+      # latencia con margenes estrechos: el trazado linea a linea de coverage.py
+      # infla el tiempo de las rutas con mucho glue Python (YOLO) y cuela
+      # regresiones falsas -- ver tests/test_detector.py:TEST_multiclass_latency_under_15_percent.
+      - name: Coverage gate (events/pipeline/perception)
+        run: pytest tests/ -q -m "not perf" --cov --cov-report=term-missing
+
+  # TEST-04 (mitad "PR"): E2E solo en pull_request, no en cada push -- Playwright
+  # levanta el backend real completo (YOLO26n incluido) y es bastante mas caro que
+  # el job de arriba. CAMERA_URL se deja en su valor por defecto: los 10 escenarios
+  # de tests/e2e/ estan pensados para una camara inalcanzable (ver comentarios en
+  # cada spec), asi que no hace falta credencial ni camara real tampoco aqui.
+  e2e:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system deps (dlib / face_recognition)
+        run: sudo apt-get install -y -qq cmake libopenblas-dev liblapack-dev
+
+      - name: Install Python deps
+        run: pip install -q -r requirements.txt
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node deps
+        run: npm ci
+
+      # Solo Chromium (unico proyecto en playwright.config.js): mismo criterio de
+      # CPU/dependencias moderadas que el resto del proyecto (CLAUDE.md).
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-${{ github.run_number }}
+          path: playwright-report/
           retention-days: 30
