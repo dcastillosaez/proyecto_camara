@@ -165,18 +165,20 @@ export function bindEventCardControls() {
     openClipModal(btn.dataset.src);
   });
 
-  // clip-modal se declara en el marcado despues de donde vivia este script,
-  // por eso el listener original esperaba a DOMContentLoaded; se conserva
-  // igual aunque type="module" ya difiere la ejecucion (mas seguro no
-  // quitarlo sin verificar — 28-PATTERNS.md).
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('clip-modal').addEventListener('click', e => {
-      if (e.target === e.currentTarget || e.target.id === 'clip-modal-close') {
-        const vid = document.getElementById('clip-video');
-        vid.pause(); vid.src = '';
-        document.getElementById('clip-modal').classList.remove('open');
-      }
-    });
+  // El listener de cierre del backdrop vivia envuelto en un DOMContentLoaded
+  // "por si acaso" (comentario historico: "el marcado va despues de donde vivia
+  // este script"). Con type="module" ese evento ya ha disparado para cuando este
+  // codigo se ejecuta -- el listener nunca llegaba a registrarse y el click en
+  // el fondo del modal no cerraba nada (bug real, detectado por
+  // tests/e2e/modal-dialog.spec.js). El listener de #recordings-list de arriba
+  // (linea 162) ya prueba que el DOM esta completo en este punto: mismo
+  // patron, sin envoltorio.
+  document.getElementById('clip-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget || e.target.id === 'clip-modal-close') {
+      const vid = document.getElementById('clip-video');
+      vid.pause(); vid.src = '';
+      document.getElementById('clip-modal').classList.remove('open');
+    }
   });
 
   document.addEventListener('keydown', e => {

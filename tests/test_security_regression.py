@@ -126,8 +126,9 @@ def TEST_vuln_07_sensitive_endpoints_rate_limited():
 
 
 def TEST_all_v2_endpoints_rate_limited():
+    from tests.route_utils import iter_app_routes
     offenders = []
-    for route in main_module.app.routes:
+    for route in iter_app_routes(main_module.app):
         path = getattr(route, "path", None)
         if path is None or not (path.startswith("/api/v2") or path == "/metrics"):
             continue

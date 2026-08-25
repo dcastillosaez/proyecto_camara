@@ -1,6 +1,15 @@
 # Node
 node_modules/
 
+# Playwright (Fase 34)
+/test-results/
+/playwright-report/
+/blob-report/
+
+# Coverage (Fase 34)
+.coverage
+htmlcov/
+
 # Claude worktrees
 .claude/worktrees/
 

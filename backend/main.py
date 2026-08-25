@@ -933,7 +933,7 @@ async def api_health():
     }
 
 
-@app.get("/api/events")
+@app.get("/api/events", deprecated=True)
 async def api_events(
     limit: int = Query(default=50, ge=1, le=500),
     direction: str | None = Query(default=None),
@@ -942,7 +942,12 @@ async def api_events(
     from_dt: datetime.datetime | None = Query(default=None),
     to_dt: datetime.datetime | None = Query(default=None),
 ):
-    """Most recent crossing events, with optional filters."""
+    """Most recent crossing events, with optional filters.
+
+    Deprecado (Fase 34, criterio 6): superado por GET /api/v2/events (Fase 30),
+    que la linea temporal actual usa en su lugar. Sin consumidores en el
+    frontend vigente; se conserva sin retirar por compatibilidad hacia atras.
+    """
     any_filter = any(v is not None for v in (direction, person_name, is_intrusion, from_dt, to_dt))
     if any_filter:
         events = await get_events_filtered(
@@ -989,9 +994,15 @@ async def api_events_export(
     )
 
 
-@app.delete("/api/events")
+@app.delete("/api/events", deprecated=True)
 async def api_delete_events(from_dt: datetime.datetime, to_dt: datetime.datetime):
-    """Delete crossing events in [from_dt, to_dt]. Returns deleted count."""
+    """Delete crossing events in [from_dt, to_dt]. Returns deleted count.
+
+    Deprecado (Fase 34, criterio 6): opera sobre la tabla v1 crossing_events,
+    sin consumidores en el frontend vigente. Sin reemplazo v2 directo (el
+    borrado por rango no forma parte del contrato de /api/v2/events); se
+    conserva sin retirar por compatibilidad hacia atras.
+    """
     if to_dt < from_dt:
         raise HTTPException(status_code=400, detail="to_dt must be >= from_dt")
     deleted = await delete_events_range(from_dt, to_dt)
@@ -1131,17 +1142,27 @@ async def api_delete_recordings(from_dt: datetime.datetime, to_dt: datetime.date
 # darle un consumidor.
 # ---------------------------------------------------------------------------
 
-@app.get("/api/zones/stats")
+@app.get("/api/zones/stats", deprecated=True)
 async def api_zone_stats():
-    """Live per-zone presence: current occupants and cumulative entries."""
+    """Live per-zone presence: current occupants and cumulative entries.
+
+    Deprecado (Fase 34, criterio 6): superado por GET /api/v2/analytics/occupancy
+    (Fase 31). Sin consumidores en el frontend vigente; se conserva sin retirar
+    por compatibilidad hacia atras.
+    """
     if rtsp_stream is None:
         return {"zones": []}
     return {"zones": rtsp_stream.get_zone_stats()}
 
 
-@app.get("/api/heatmap")
+@app.get("/api/heatmap", deprecated=True)
 async def api_heatmap():
-    """Accumulated activity heat map composed over the latest frame (JPEG)."""
+    """Accumulated activity heat map composed over the latest frame (JPEG).
+
+    Deprecado (Fase 34, criterio 6): superado por GET /api/v2/analytics/heatmap
+    y /heatmap/scale (Fase 31). Sin consumidores en el frontend vigente; se
+    conserva sin retirar por compatibilidad hacia atras.
+    """
     if rtsp_stream is None:
         raise HTTPException(status_code=503, detail="Stream not running")
     img = await asyncio.to_thread(rtsp_stream.get_heatmap)
@@ -1195,9 +1216,16 @@ async def api_v2_camera_health(request: Request, camera_id: str):
 # Phase 13: Gallery captures
 # ---------------------------------------------------------------------------
 
-@app.get("/api/alerts/config")
+@app.get("/api/alerts/config", deprecated=True)
 async def api_alerts_config():
-    """Return current alert configuration (tokens masked)."""
+    """Return current alert configuration (tokens masked).
+
+    Deprecado (Fase 34, criterio 6): refleja el notifier global de la Fase <18
+    (alert_webhook_url/alert_on_*), superado por las acciones por-regla del
+    RuleEngine (Fase 30, GET/POST /api/v2/rules — tipos "webhook"/"telegram"/
+    "notify" en backend/events/actions.py). Sin consumidores en el frontend
+    vigente; se conserva sin retirar por compatibilidad hacia atras.
+    """
     s = get_settings()
     return {
         "webhook_url": s.alert_webhook_url,
@@ -1211,18 +1239,30 @@ async def api_alerts_config():
     }
 
 
-@app.post("/api/alerts/test")
+@app.post("/api/alerts/test", deprecated=True)
 async def api_alerts_test():
-    """Send a test alert to every configured channel."""
+    """Send a test alert to every configured channel.
+
+    Deprecado (Fase 34, criterio 6): mismo notifier global legacy que
+    /api/alerts/config, superado por las acciones por-regla del RuleEngine
+    (Fase 30). Sin consumidores en el frontend vigente; se conserva sin
+    retirar por compatibilidad hacia atras.
+    """
     if not notifier:
         raise HTTPException(status_code=503, detail="notifier not initialised")
     results = await notifier.test()
     return {"results": results}
 
 
-@app.get("/api/alerts/status")
+@app.get("/api/alerts/status", deprecated=True)
 async def api_alerts_status():
-    """Return notifier channels and loaded rules (decision logic now lives in rules.yaml)."""
+    """Return notifier channels and loaded rules (decision logic now lives in rules.yaml).
+
+    Deprecado (Fase 34, criterio 6): superado por GET /api/v2/alerts (Fase 30),
+    que agrega por regla y severidad en vez de listar canales/reglas en bruto.
+    Sin consumidores en el frontend vigente; se conserva sin retirar por
+    compatibilidad hacia atras.
+    """
     if not notifier:
         raise HTTPException(status_code=503, detail="notifier not initialised")
     return {

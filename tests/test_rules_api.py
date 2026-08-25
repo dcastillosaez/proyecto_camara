@@ -221,6 +221,7 @@ async def TEST_test_rule_counts_matches_without_mutating_debounce():
 # --- Wiring en main.py -----------------------------------------------------
 def TEST_main_imports_with_rules_router_registered():
     import backend.main as main_module
-    paths = {getattr(r, "path", None) for r in main_module.app.routes}
+    from tests.route_utils import iter_app_routes
+    paths = {getattr(r, "path", None) for r in iter_app_routes(main_module.app)}
     assert "/api/v2/rules" in paths
     assert "/api/v2/rules/{rule_id}" in paths
