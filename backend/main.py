@@ -11,11 +11,11 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import supervision as sv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -34,13 +34,10 @@ from backend.database import (
     get_recent_recordings,
     get_session_factory,
     get_stats_today,
-    get_zones,
     init_db,
     insert_capture,
     purge_old_events,
     purge_old_recordings,
-    upsert_zone,
-    delete_zone,
 )
 from backend.detector import PersonDetector
 from backend.events import actions as event_actions
@@ -55,7 +52,15 @@ from backend.observability.sampler import MetricsSampler
 from backend.notifier import Notifier
 from backend.pipeline import CameraManager, CameraPipeline
 from backend.recognizer import PersonRecognizer
-from backend.storage.repositories import ConfigRepo, DetectionStatRepo, EventRepo, RecordingRepo
+from backend.storage.repositories import (
+    ConfigRepo,
+    DetectionStatRepo,
+    EventRepo,
+    LineRepo,
+    RecordingRepo,
+    RuleRepo,
+    ZoneRepo,
+)
 from backend.tracker import PersonTracker
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -423,14 +428,35 @@ async def lifespan(app: FastAPI):
     from backend.api.v2 import metrics as metrics_v2_module
     metrics_v2_module.configure(latency_tracker)
 
-    rules_path = Path("config/rules.yaml")
-    if rules_path.exists():
-        loaded_rules, rule_errors = load_rules(str(rules_path))
-        for name, reason in rule_errors:
-            logger.error("Regla invalida %r: %s", name, reason)
-    else:
+    # Fuente de verdad: tabla `rules` (v2, Plan 33-06). El fallback a
+    # config/rules.yaml es SOLO de arranque unico — se usa unicamente cuando la
+    # tabla esta vacia (instalacion nueva o recien migrada). En cuanto el
+    # operador crea su primera regla via /api/v2/rules deja de leerse el YAML
+    # en los arranques siguientes (no es una ruta de sincronizacion continua).
+    rule_repo = RuleRepo(get_session_factory())
+    rule_rows = await rule_repo.list()
+    if rule_rows:
+        from backend.api.v2.rules import rule_from_db_dict
         loaded_rules, rule_errors = [], []
-        logger.warning("%s no existe — arrancando sin reglas (ver scripts/generate_initial_rules.py)", rules_path)
+        for row in rule_rows:
+            try:
+                loaded_rules.append(rule_from_db_dict(row))
+            except ValidationError as exc:
+                reason = "; ".join(
+                    f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
+                )
+                name = row.get("name") or row.get("id") or "<sin nombre>"
+                rule_errors.append((name, reason))
+                logger.error("Regla invalida %r: %s", name, reason)
+    else:
+        rules_path = Path("config/rules.yaml")
+        if rules_path.exists():
+            loaded_rules, rule_errors = load_rules(str(rules_path))
+            for name, reason in rule_errors:
+                logger.error("Regla invalida %r: %s", name, reason)
+        else:
+            loaded_rules, rule_errors = [], []
+            logger.warning("%s no existe — arrancando sin reglas (ver scripts/generate_initial_rules.py)", rules_path)
     rule_engine = RuleEngine(loaded_rules, registry=event_actions.ACTIONS, invalid=rule_errors)
 
     event_repo = EventRepo(get_session_factory())
@@ -457,17 +483,10 @@ async def lifespan(app: FastAPI):
         label=settings.detection_label,
         imgsz=settings.yolo_imgsz,
     )
-    tracker = PersonTracker(
-        start=sv.Point(
-            int(settings.line_start_x_frac * settings.process_width),
-            int(settings.line_start_y_frac * settings.process_height),
-        ),
-        end=sv.Point(
-            int(settings.line_end_x_frac * settings.process_width),
-            int(settings.line_end_y_frac * settings.process_height),
-        ),
-        frame_rate=settings.tracker_frame_rate,
-    )
+    # Sin lineas iniciales: las lineas reales (N, persistidas) se cargan desde
+    # LineRepo justo despues de pipeline.start(), mismo punto/patron que las
+    # zonas (ver mas abajo, pipeline.set_lines()).
+    tracker = PersonTracker(frame_rate=settings.tracker_frame_rate)
     recognizer = PersonRecognizer(
         db_path=settings.db_path.replace("events.db", "persons.db"),
         match_threshold=settings.face_match_threshold,
@@ -598,6 +617,15 @@ async def lifespan(app: FastAPI):
     from backend.api.v2 import alerts as alerts_v2_module
     alerts_v2_module.configure(event_engine)
 
+    from backend.api.v2 import zones as zones_v2_module
+    zones_v2_module.configure(camera_manager)
+
+    from backend.api.v2 import lines as lines_v2_module
+    lines_v2_module.configure(camera_manager)
+
+    from backend.api.v2 import rules as rules_v2_module
+    rules_v2_module.configure(rule_engine)
+
     pipeline = camera_manager.add(
         "cam1",
         build_rtsp_url(settings),
@@ -667,8 +695,10 @@ async def lifespan(app: FastAPI):
         mask_rtsp_url(build_rtsp_url(settings)), settings.detection_target_fps,
     )
 
-    # Load persisted zones into the detection worker
-    pipeline.set_zones(await get_zones())
+    # Load persisted zones/lines into the detection worker — fuente unica v2
+    # (ZoneRepo/LineRepo), D-02.
+    pipeline.set_zones(await ZoneRepo(get_session_factory()).list(camera_id="cam1"))
+    pipeline.set_lines(await LineRepo(get_session_factory()).list(camera_id="cam1"))
 
     metrics_sampler = None
     if settings.metrics_enabled:
@@ -779,6 +809,15 @@ app.include_router(events_v2_router)
 
 from backend.api.v2.alerts import router as alerts_v2_router
 app.include_router(alerts_v2_router)
+
+from backend.api.v2.zones import router as zones_v2_router
+app.include_router(zones_v2_router)
+
+from backend.api.v2.lines import router as lines_v2_router
+app.include_router(lines_v2_router)
+
+from backend.api.v2.rules import router as rules_v2_router
+app.include_router(rules_v2_router)
 
 from backend.api.v2.analytics import router as analytics_v2_router
 app.include_router(analytics_v2_router)
@@ -993,18 +1032,8 @@ async def websocket_endpoint(ws: WebSocket, token: str | None = Query(default=No
 
 # GET /api/v2/events vive desde la Fase 30 en backend/api/v2/events.py (router
 # events_v2_router, registrado mas arriba): mismo envelope mas `total` y `media`.
-
-
-@app.get("/api/v2/rules")
-@v2_limiter.limit(V2_RATE_LIMIT)
-async def api_v2_rules(request: Request):
-    """Loaded rules plus any that failed validation, with their reason."""
-    if rule_engine is None:
-        raise HTTPException(status_code=503, detail="rule engine not initialised")
-    return {
-        "rules": [json.loads(r.model_dump_json()) for r in rule_engine.rules],
-        "invalid": [{"name": name, "reason": reason} for name, reason in rule_engine.invalid_rules],
-    }
+# GET /api/v2/rules vive desde la Fase 33 en backend/api/v2/rules.py (router
+# rules_v2_router, registrado mas arriba, Plan 33-06/33-08).
 
 
 @app.websocket("/api/v2/ws")
@@ -1091,56 +1120,16 @@ async def api_delete_recordings(from_dt: datetime.datetime, to_dt: datetime.date
 
 
 # ---------------------------------------------------------------------------
-# Phase 13: Zones
+# Zonas (Fase 13, retirado v1 en Plan 33-08): GET/POST/DELETE /api/zones se
+# sustituyen por /api/v2/zones (router zones_v2_router, registrado mas
+# arriba). /api/zones/stats se conserva TAL CUAL: es el unico endpoint de
+# ocupacion en vivo por zona (rtsp_stream.get_zone_stats()) y no tiene
+# equivalente v2 en esta fase — recrearlo en backend/api/v2/zones.py excede
+# el alcance del Plan 33-08 (ese router ya cerro en Wave 1). Consumidor real
+# verificado con grep (frontend/js/**, tests/**): ninguno lo usa hoy: unico
+# resto v1 activo, candidato a su propio plan de gap-closure si se decide
+# darle un consumidor.
 # ---------------------------------------------------------------------------
-
-@app.get("/api/zones")
-async def api_get_zones():
-    """Return all configured interest zones."""
-    return {"zones": await get_zones()}
-
-
-class ZoneBody(dict):
-    pass
-
-
-@app.post("/api/zones")
-async def api_upsert_zone(request: Request):
-    """Create or update a zone. Body: {id, name, polygon_json, enabled?}."""
-    body = await request.json()
-    zone_id = str(body.get("id", "")).strip()
-    name = str(body.get("name", "")).strip()
-    polygon_json = body.get("polygon_json", "[]")
-    enabled = bool(body.get("enabled", True))
-    if not zone_id or not name:
-        raise HTTPException(status_code=400, detail="id and name are required")
-    if len(zone_id) > 50 or len(name) > 100:
-        raise HTTPException(status_code=400, detail="id/name too long")
-    import json as _json
-    try:
-        pts = _json.loads(polygon_json) if isinstance(polygon_json, str) else polygon_json
-        if not isinstance(pts, list) or len(pts) < 3:
-            raise ValueError
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="polygon_json must be a JSON array with ≥3 points")
-    await upsert_zone(zone_id, name, _json.dumps(pts), enabled)
-    zones = await get_zones()
-    if rtsp_stream is not None:
-        rtsp_stream.set_zones(zones)
-    return {"zones": zones}
-
-
-@app.delete("/api/zones/{zone_id}")
-async def api_delete_zone(zone_id: str):
-    """Delete a zone by id."""
-    deleted = await delete_zone(zone_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Zone not found")
-    zones = await get_zones()
-    if rtsp_stream is not None:
-        rtsp_stream.set_zones(zones)
-    return {"zones": zones}
-
 
 @app.get("/api/zones/stats")
 async def api_zone_stats():

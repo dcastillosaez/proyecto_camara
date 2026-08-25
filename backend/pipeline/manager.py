@@ -323,6 +323,10 @@ class CameraPipeline:
         if self.detection:
             self.detection.set_zones(zones)
 
+    def set_lines(self, lines: list[dict]) -> None:
+        if self.detection:
+            self.detection.set_lines(lines)
+
     def get_zone_stats(self) -> list[dict]:
         return self.detection.get_zone_stats() if self.detection else []
 

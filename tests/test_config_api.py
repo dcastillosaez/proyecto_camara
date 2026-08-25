@@ -127,8 +127,12 @@ async def TEST_get_config_external_source_groups_have_no_fields():
     body = resp.json()
     zonas = next(s for s in body["sections"] if s["key"] == "zonas")
     zonas_definidas = next(g for g in zonas["groups"] if g["key"] == "zonas_definidas")
-    assert zonas_definidas["external_source"] == "/api/zones"
+    assert zonas_definidas["external_source"] == "/api/v2/zones"
     assert zonas_definidas["fields"] == []
+
+    lineas_definidas = next(g for g in zonas["groups"] if g["key"] == "lineas_definidas")
+    assert lineas_definidas["external_source"] == "/api/v2/lines"
+    assert lineas_definidas["fields"] == []
 
     reglas = next(s for s in body["sections"] if s["key"] == "reglas")
     reglas_cargadas = next(g for g in reglas["groups"] if g["key"] == "reglas_cargadas")

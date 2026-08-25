@@ -73,7 +73,7 @@ const STATE_COLOR = {
   TEMPORARILY_LOST: '#ef4444',
 };
 
-function syncCanvasToImage(canvas, img) {
+export function syncCanvasToImage(canvas, img) {
   const rect = img.getBoundingClientRect();
   canvas.width = rect.width;
   canvas.height = rect.height;
@@ -98,6 +98,19 @@ function normalizedBoxToCanvasRect(box, img, canvas) {
     w: (x2 - x1) * iw * scale,
     h: (y2 - y1) * ih * scale,
   };
+}
+
+// Inversa de normalizedBoxToCanvasRect — click en canvas (px mostrados) -> fraccion
+// del frame fuente. Compartida por zoneEditor.js/lineEditor.js (Fase 33): NO
+// reimplementar esta formula en ningun editor, D-06/Anti-patron de 33-RESEARCH.md.
+export function canvasClickToFrac(clickX, clickY, img, canvas) {
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const cw = canvas.width, ch = canvas.height;
+  if (!iw || !ih || !cw || !ch) return null;
+  const scale = Math.max(cw / iw, ch / ih);
+  const drawW = iw * scale, drawH = ih * scale;
+  const offsetX = (cw - drawW) / 2, offsetY = (ch - drawH) / 2;
+  return { x_frac: (clickX - offsetX) / drawW, y_frac: (clickY - offsetY) / drawH };
 }
 
 // D-07/Pitfall 5: redibuja SOLO cuando se le llama (mensaje 'tracks' a 2Hz) —

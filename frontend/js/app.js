@@ -5,7 +5,6 @@ import { bindPtzControls } from './views/dashboard-ptz.js';
 import { bindEventExport } from './views/dashboard-events.js';
 import { loadHealth, loadObservability } from './views/dashboard-observability.js';
 import { loadResolutions, initTracksOverlay } from './components/videoCanvas.js';
-import { loadZones, bindZoneForm } from './components/zoneEditor.js';
 import { loadRecordings, bindEventCardControls } from './components/eventCard.js';
 import { loadDetectionClasses } from './components/detectionClasses.js';
 import { loadPersons, bindPersonGallery } from './components/personGallery.js';
@@ -23,7 +22,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // solo addEventListener). bindPtzControls() ya invoca loadPresets() internamente
   // (28-03), igual que el script original lo hacia en linea con el resto del bloque PTZ.
   bindPtzControls();
-  bindZoneForm();
   bindEventCardControls();
   bindPersonGallery();
   bindEventExport();
@@ -54,7 +52,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Map<person_id, name>, que se refresca al mismo ritmo que la galeria (Hallazgo 5).
   setInterval(refreshPersonNames, 30000);
 
-  loadZones();
   loadDetectionClasses();
 
   loadHealth();

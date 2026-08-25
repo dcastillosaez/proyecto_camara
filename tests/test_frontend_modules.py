@@ -65,6 +65,10 @@ LOCKED_JS = [
     "views/settings-section.js",
     "views/settings-field.js",
     "views/settings-save.js",
+    # Fase 33: editores visuales de zonas/lineas/reglas
+    "components/lineEditor.js",
+    "views/rules-form.js",
+    "views/rules-editor.js",
 ]
 
 

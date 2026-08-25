@@ -755,6 +755,11 @@ class RuleRepo:
     def __init__(self, session_factory) -> None:
         self._sf = session_factory
 
+    async def get(self, rule_id: str) -> dict[str, Any] | None:
+        async with self._sf() as session:
+            r = await session.get(models.Rule, rule_id)
+            return self._to_dict(r) if r is not None else None
+
     async def list(self) -> list[dict[str, Any]]:
         async with self._sf() as session:
             result = await session.execute(select(models.Rule))
@@ -790,6 +795,60 @@ class RuleRepo:
         return {
             "id": r.id, "name": r.name, "enabled": bool(r.enabled),
             "definition": r.definition, "updated_at": r.updated_at.isoformat(),
+        }
+
+
+class LineRepo:
+    def __init__(self, session_factory) -> None:
+        self._sf = session_factory
+
+    async def list(self, camera_id: str | None = None) -> list[dict[str, Any]]:
+        q = select(models.Line)
+        if camera_id is not None:
+            q = q.where(models.Line.camera_id == camera_id)
+        async with self._sf() as session:
+            result = await session.execute(q)
+            return [self._to_dict(line) for line in result.scalars().all()]
+
+    async def upsert(
+        self, line_id: str, camera_id: str, name: str,
+        start_x_frac: float, start_y_frac: float, end_x_frac: float, end_y_frac: float,
+        enabled: bool = True,
+    ) -> None:
+        async with self._sf() as session:
+            async with session.begin():
+                existing = await session.get(models.Line, line_id)
+                if existing:
+                    existing.camera_id = camera_id
+                    existing.name = name
+                    existing.start_x_frac = start_x_frac
+                    existing.start_y_frac = start_y_frac
+                    existing.end_x_frac = end_x_frac
+                    existing.end_y_frac = end_y_frac
+                    existing.enabled = enabled
+                else:
+                    session.add(models.Line(
+                        id=line_id, camera_id=camera_id, name=name,
+                        start_x_frac=start_x_frac, start_y_frac=start_y_frac,
+                        end_x_frac=end_x_frac, end_y_frac=end_y_frac, enabled=enabled,
+                    ))
+
+    async def delete(self, line_id: str) -> bool:
+        async with self._sf() as session:
+            async with session.begin():
+                line = await session.get(models.Line, line_id)
+                if line:
+                    await session.delete(line)
+                    return True
+        return False
+
+    @staticmethod
+    def _to_dict(line: models.Line) -> dict[str, Any]:
+        return {
+            "id": line.id, "camera_id": line.camera_id, "name": line.name,
+            "start_x_frac": line.start_x_frac, "start_y_frac": line.start_y_frac,
+            "end_x_frac": line.end_x_frac, "end_y_frac": line.end_y_frac,
+            "enabled": bool(line.enabled),
         }
 
 

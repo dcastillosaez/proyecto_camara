@@ -34,7 +34,7 @@ def _fake_detections(tracker_ids: list[int]) -> sv.Detections:
 
 @pytest.fixture
 def tracker():
-    return PersonTracker(start=sv.Point(0, 360), end=sv.Point(1280, 360))
+    return PersonTracker(lines=[{"id": "l1", "name": "Linea 1", "start": sv.Point(0, 360), "end": sv.Point(1280, 360)}])
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ def TEST_054_crossing_in_includes_tracker_id(tracker):
     det = _fake_detections([7])
     with (
         patch.object(tracker._byte_tracker, "update_with_detections", return_value=det),
-        patch.object(tracker._line_zone, "trigger", return_value=(np.array([True]), np.array([False]))),
+        patch.object(tracker._lines[0]["zone"], "trigger", return_value=(np.array([True]), np.array([False]))),
     ):
         _, crossings = tracker.update(sv.Detections.empty())
 
@@ -70,7 +70,7 @@ def TEST_055_crossing_out_includes_tracker_id(tracker):
     det = _fake_detections([42])
     with (
         patch.object(tracker._byte_tracker, "update_with_detections", return_value=det),
-        patch.object(tracker._line_zone, "trigger", return_value=(np.array([False]), np.array([True]))),
+        patch.object(tracker._lines[0]["zone"], "trigger", return_value=(np.array([False]), np.array([True]))),
     ):
         _, crossings = tracker.update(sv.Detections.empty())
 
@@ -89,7 +89,7 @@ def TEST_056_no_crossing_produces_no_events(tracker):
     det = _fake_detections([1, 2])
     with (
         patch.object(tracker._byte_tracker, "update_with_detections", return_value=det),
-        patch.object(tracker._line_zone, "trigger", return_value=(np.array([False, False]), np.array([False, False]))),
+        patch.object(tracker._lines[0]["zone"], "trigger", return_value=(np.array([False, False]), np.array([False, False]))),
     ):
         _, crossings = tracker.update(sv.Detections.empty())
 
@@ -123,7 +123,7 @@ def TEST_057_same_crossing_not_counted_twice(tracker):
         events += crossings
 
     assert len(events) == 1
-    counts = tracker.get_counts()
+    counts = tracker.get_counts()["l1"]
     assert counts["in"] + counts["out"] == 1
     assert counts["total"] == 1
 

@@ -286,7 +286,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 - [x] **Phase 30: Event Timeline y centro de alertas** — Línea temporal accionable con miniaturas (completed 2026-08-21; checkpoint visual de Task 2 de 30-12-PLAN.md — criterios de éxito 3/4/5 del ROADMAP y el ciclo completo de silenciado — diferido por falta de cámara real)
 - [x] **Phase 31: Vista de analítica** — Ocupación, heatmap, ranking de personas, tendencias (completed 2026-08-23; checkpoint visual de Task 3 de 31-11-PLAN.md aprobado tras corregir una regresión real de Chart.js en carga directa de `#analitica`; lo que exige actividad de cámara real en heatmap/ranking queda diferido como 12º checkpoint manual)
 - [ ] **Phase 32: Vista de cámara y configuración visual** — Operar y configurar sin tocar .env
-- [ ] **Phase 33: Editores visuales de zonas, líneas y reglas** — Dibujar sobre el vídeo, componer reglas por formulario
+- [x] **Phase 33: Editores visuales de zonas, líneas y reglas** — Dibujar sobre el vídeo, componer reglas por formulario
 - [ ] **Phase 34: Tests E2E e integración del pipeline** — Playwright + pipeline completo con fuente sintética
 
 ### Bloque D — Escalabilidad
@@ -647,6 +647,24 @@ Plans:
   6. Cambiar una zona recarga el pipeline en menos de 1 s sin reiniciar
   7. Zonas dibujadas a 720p siguen siendo correctas al cambiar a 1080p
 **Spec**: SPEC_v2.md §6.4
+
+**Plans:** 14/14 plans complete — **FASE COMPLETA**. Checkpoint 33-14 APROBADO con servidor real (zona/línea/regla creadas y verificadas end-to-end, luego limpiadas). Suite completa 767 passed, 2 skipped. OPS-21..OPS-24/RULE-05 cerrados — `.planning/phases/33-editores-visuales-de-zonas-l-neas-y-reglas/`
+
+Plans:
+- [ ] 33-01-PLAN.md — LineRepo + RuleRepo.get() + RuleEngine.would_match() + is_schedule_active()
+- [ ] 33-02-PLAN.md — Migración v4→v5: backfill zones.polygon + seed de línea por defecto
+- [ ] 33-03-PLAN.md — Router /api/v2/zones: CRUD, validación, hot-reload
+- [ ] 33-04-PLAN.md — PersonTracker: refactor a N líneas de conteo independientes
+- [ ] 33-05-PLAN.md — DetectionWorker: hot-reload de líneas + horario de zona + limpieza de camera.py
+- [ ] 33-06-PLAN.md — Router /api/v2/rules: CRUD validado + POST /{id}/test
+- [ ] 33-07-PLAN.md — Router /api/v2/lines: CRUD, validación, hot-reload
+- [ ] 33-08-PLAN.md — Integración backend: wiring de routers v2, arranque desde v2, retirada de v1
+- [ ] 33-09-PLAN.md — Canvas math compartido (videoCanvas.js) + CSS mínima
+- [ ] 33-10-PLAN.md — Editor visual de zonas (canvas + CRUD + tipo/horario)
+- [ ] 33-11-PLAN.md — Editor visual de líneas de conteo (canvas + CRUD + dirección)
+- [ ] 33-12-PLAN.md — Editor de reglas por formularios + Probar regla
+- [ ] 33-13-PLAN.md — Integración frontend: montaje en Cámara, retirada de UI legacy
+- [ ] 33-14-PLAN.md — Puerta de fase: trazabilidad de criterios + checkpoint visual
 
 ### Phase 34: Tests E2E e integración del pipeline
 **Goal**: Una red de seguridad que cubra el camino completo, no solo unidades aisladas

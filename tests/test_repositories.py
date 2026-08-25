@@ -20,7 +20,9 @@ from backend.storage.repositories import (
     ConfigRepo,
     DetectionStatRepo,
     EventRepo,
+    LineRepo,
     RecordingRepo,
+    RuleRepo,
     UploadState,
     bucket_for,
 )
@@ -1222,3 +1224,76 @@ async def TEST_analytics_budget_ranking_uses_analytics_index(db):
         conn.close()
 
     assert "idx_events_analytics" in plan, plan
+
+
+# --- Fase 33 (OPS-22/OPS-23/RULE-05): LineRepo + RuleRepo.get() -------------------
+
+
+async def TEST_LineRepo_list_empty_db_returns_empty_list(db):
+    _, sf = db
+    repo = LineRepo(sf)
+
+    assert await repo.list() == []
+
+
+async def TEST_LineRepo_upsert_creates_then_updates_existing(db):
+    _, sf = db
+    repo = LineRepo(sf)
+
+    await repo.upsert("l1", "cam1", "Entrada", 0.1, 0.2, 0.9, 0.8, enabled=True)
+    lines = await repo.list()
+    assert lines == [{
+        "id": "l1", "camera_id": "cam1", "name": "Entrada",
+        "start_x_frac": 0.1, "start_y_frac": 0.2,
+        "end_x_frac": 0.9, "end_y_frac": 0.8, "enabled": True,
+    }]
+
+    await repo.upsert("l1", "cam1", "Salida", 0.0, 0.0, 1.0, 1.0, enabled=False)
+    lines = await repo.list()
+    assert len(lines) == 1
+    assert lines[0]["name"] == "Salida"
+    assert lines[0]["enabled"] is False
+
+
+async def TEST_LineRepo_list_filters_by_camera_id(db):
+    _, sf = db
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam2", name="Cam 2", enabled=True))
+    repo = LineRepo(sf)
+    await repo.upsert("l1", "cam1", "L1", 0.0, 0.0, 1.0, 1.0)
+    await repo.upsert("l2", "cam2", "L2", 0.0, 0.0, 1.0, 1.0)
+
+    lines = await repo.list(camera_id="cam1")
+
+    assert [l["id"] for l in lines] == ["l1"]
+
+
+async def TEST_LineRepo_delete_returns_true_then_false(db):
+    _, sf = db
+    repo = LineRepo(sf)
+    await repo.upsert("l1", "cam1", "L1", 0.0, 0.0, 1.0, 1.0)
+
+    assert await repo.delete("l1") is True
+    assert await repo.delete("l1") is False
+    assert await repo.list() == []
+
+
+async def TEST_rule_get_hit_returns_dict(db):
+    _, sf = db
+    repo = RuleRepo(sf)
+    await repo.upsert("r1", "Regla 1", True, {"when": {"event": "INTRUSION"}, "actions": []})
+
+    rule = await repo.get("r1")
+
+    assert rule["id"] == "r1"
+    assert rule["name"] == "Regla 1"
+    assert rule["enabled"] is True
+    assert rule["definition"] == {"when": {"event": "INTRUSION"}, "actions": []}
+
+
+async def TEST_rule_get_miss_returns_none(db):
+    _, sf = db
+    repo = RuleRepo(sf)
+
+    assert await repo.get("does-not-exist") is None

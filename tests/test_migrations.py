@@ -323,7 +323,10 @@ def TEST_migration_v4_creates_analytics_index(tmp_path):
     run_migrations(engine)
 
     assert _index_names(engine, "idx_events_analytics") == ["idx_events_analytics"]
-    assert _schema_version(engine) == 4
+    # run_migrations() siempre encadena hasta SCHEMA_VERSION, no se detiene en el
+    # escalon v4 (Fase 33 subio SCHEMA_VERSION a 5) — mismo patron dinamico que
+    # TEST_migration_v3_creates_timeline_index.
+    assert _schema_version(engine) == SCHEMA_VERSION
 
 
 def TEST_migration_v4_is_idempotent(tmp_path):
@@ -335,7 +338,7 @@ def TEST_migration_v4_is_idempotent(tmp_path):
     run_migrations(engine)  # must not raise
 
     assert _index_names(engine, "idx_events_analytics") == ["idx_events_analytics"]
-    assert _schema_version(engine) == 4
+    assert _schema_version(engine) == SCHEMA_VERSION
 
 
 def TEST_fresh_db_has_analytics_index(tmp_path):
@@ -345,3 +348,148 @@ def TEST_fresh_db_has_analytics_index(tmp_path):
     models.Base.metadata.create_all(engine)
 
     assert _index_names(engine, "idx_events_analytics") == ["idx_events_analytics"]
+
+
+# ─── v4 -> v5: backfill zones.polygon + siembra de linea de conteo (Fase 33) ──
+
+
+def make_v4_db_with_legacy_zone(path, seed_line=False, prepopulated_zone_polygon=None):
+    """Clona make_v3_db pero deja la BD en estado v4 (indice de analitica ya
+    presente via create_all) y anade una zona v1 legacy (`polygon_json` poblado,
+    `polygon` NULL) para probar el backfill de la migracion v4->v5.
+
+    `prepopulated_zone_polygon`: si se pasa, inserta ADEMAS una segunda zona con
+    `polygon` ya poblado (editada por el editor v2 nuevo) para probar que la
+    migracion no la pisa. `seed_line`: si True, inserta una fila en `lines` para
+    'cam1' de antemano, para probar que la migracion no duplica el seed.
+    """
+    engine = create_engine(f"sqlite:///{path}")
+    models.Base.metadata.create_all(engine)
+    now = datetime.datetime(2026, 4, 16, 18, 30, 0)
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM app_config WHERE key='schema_version'"))
+        conn.execute(
+            text("INSERT INTO app_config (key, value, updated_at) VALUES ('schema_version', '4', :now)"),
+            {"now": now.isoformat(sep=" ")},
+        )
+        # create_all() solo produce la forma v2 pura — polygon_json es la columna
+        # legacy que _migrate_v1_to_v2 anade via _ensure_columns() a una BD que SI
+        # vino de un v1 real; una BD v4 sintetica real siempre la tiene ya (arrastrada
+        # desde v1), asi que se simula aqui explicitamente.
+        conn.execute(text("ALTER TABLE zones ADD COLUMN polygon_json TEXT"))
+        conn.execute(text("ALTER TABLE zones ADD COLUMN created_at DATETIME"))
+        conn.execute(
+            text(
+                "INSERT INTO zones (id, camera_id, name, polygon_json, polygon, "
+                "enabled, kind, created_at) VALUES "
+                "('z-legacy', 'cam1', 'Legacy zone', :pj, NULL, 1, NULL, :now)"
+            ),
+            {"pj": json.dumps([[0, 0], [1, 0], [1, 1]]), "now": now.isoformat(sep=" ")},
+        )
+        if prepopulated_zone_polygon is not None:
+            conn.execute(
+                text(
+                    "INSERT INTO zones (id, camera_id, name, polygon_json, polygon, "
+                    "enabled, kind, created_at) VALUES "
+                    "('z-v2', 'cam1', 'Zona v2', NULL, :p, 1, NULL, :now)"
+                ),
+                {"p": json.dumps(prepopulated_zone_polygon), "now": now.isoformat(sep=" ")},
+            )
+        if seed_line:
+            conn.execute(
+                text(
+                    "INSERT INTO lines (id, camera_id, name, start_x_frac, "
+                    "start_y_frac, end_x_frac, end_y_frac, enabled) VALUES "
+                    "('linea-existente', 'cam1', 'Ya configurada', 0.1, 0.2, 0.9, 0.8, 1)"
+                )
+            )
+    engine.dispose()
+
+
+def TEST_migration_v5_backfills_polygon_from_polygon_json(tmp_path):
+    db_path = tmp_path / "v4.db"
+    make_v4_db_with_legacy_zone(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+
+    with engine.connect() as conn:
+        polygon = conn.execute(
+            text("SELECT polygon FROM zones WHERE id='z-legacy'")
+        ).scalar()
+
+    assert json.loads(polygon) == [[0, 0], [1, 0], [1, 1]]
+    assert _schema_version(engine) == SCHEMA_VERSION
+
+
+def TEST_migration_v5_does_not_overwrite_existing_polygon(tmp_path):
+    db_path = tmp_path / "v4.db"
+    make_v4_db_with_legacy_zone(db_path, prepopulated_zone_polygon=[[9, 9], [8, 8]])
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+
+    with engine.connect() as conn:
+        polygon = conn.execute(
+            text("SELECT polygon FROM zones WHERE id='z-v2'")
+        ).scalar()
+
+    assert json.loads(polygon) == [[9, 9], [8, 8]]
+
+
+def TEST_migration_v5_seeds_default_line_when_lines_empty(tmp_path):
+    # line_start_x_frac/etc se retiraron de Settings en el Plan 33-08 (D-01/D-02):
+    # la migracion los lee ahora directamente de env/.env (_legacy_line_frac_settings),
+    # no del modelo principal — comparamos contra los mismos defaults hardcodeados.
+    db_path = tmp_path / "v4.db"
+    make_v4_db_with_legacy_zone(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT camera_id, start_x_frac, start_y_frac, end_x_frac, end_y_frac "
+                "FROM lines WHERE camera_id='cam1'"
+            )
+        ).fetchall()
+
+    assert len(rows) == 1
+    assert rows[0] == ("cam1", 0.0, 0.5, 1.0, 0.5)
+
+
+def TEST_migration_v5_does_not_duplicate_existing_line(tmp_path):
+    db_path = tmp_path / "v4.db"
+    make_v4_db_with_legacy_zone(db_path, seed_line=True)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+
+    with engine.connect() as conn:
+        count = conn.execute(
+            text("SELECT COUNT(*) FROM lines WHERE camera_id='cam1'")
+        ).scalar()
+
+    assert count == 1
+
+
+def TEST_migration_v5_is_idempotent(tmp_path):
+    db_path = tmp_path / "v4.db"
+    make_v4_db_with_legacy_zone(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+    run_migrations(engine)  # must not raise
+
+    with engine.connect() as conn:
+        line_count = conn.execute(
+            text("SELECT COUNT(*) FROM lines WHERE camera_id='cam1'")
+        ).scalar()
+        polygon = conn.execute(
+            text("SELECT polygon FROM zones WHERE id='z-legacy'")
+        ).scalar()
+
+    assert line_count == 1
+    assert json.loads(polygon) == [[0, 0], [1, 0], [1, 1]]
+    assert _schema_version(engine) == SCHEMA_VERSION

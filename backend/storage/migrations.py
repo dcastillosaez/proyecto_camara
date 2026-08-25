@@ -15,13 +15,14 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from pydantic_settings import BaseSettings
 from sqlalchemy import Connection, Engine, text
 
 from backend.storage import models
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _table_exists(conn: Connection, name: str) -> bool:
@@ -191,10 +192,71 @@ def _migrate_v3_to_v4(conn: Connection) -> None:
     _record_version(conn, 4)
 
 
+def _legacy_line_frac_settings() -> tuple[float, float, float, float]:
+    """Lee LINE_START_X_FRAC/LINE_START_Y_FRAC/LINE_END_X_FRAC/LINE_END_Y_FRAC
+    (env/.env) fuera del modelo `Settings` principal — esos 4 campos se
+    retiraron de `Settings` en el Plan 33-08 (ya no los consume nada en
+    produccion) pero esta migracion sigue necesitando leerlos UNA VEZ para
+    sembrar la linea de compatibilidad de instalaciones que actualizan desde
+    antes de la Fase 33. Modelo efimero con el mismo `model_config`
+    (env_file + case-insensible) que `Settings`, para no reimplementar el
+    parseo de `.env` a mano ni resucitar los campos en el modelo principal.
+    """
+    from backend.config import Settings as _Settings
+
+    class _LegacyLineFracs(BaseSettings):
+        line_start_x_frac: float = 0.0
+        line_start_y_frac: float = 0.5
+        line_end_x_frac: float = 1.0
+        line_end_y_frac: float = 0.5
+        model_config = _Settings.model_config
+
+    v = _LegacyLineFracs()
+    return v.line_start_x_frac, v.line_start_y_frac, v.line_end_x_frac, v.line_end_y_frac
+
+
+def _migrate_v4_to_v5(conn: Connection) -> None:
+    """Unifica el modelo de Zone (D-02, 33-CONTEXT.md) y siembra la linea de conteo
+    unica existente como primera fila real de `lines` (D-01) — sin esto, una
+    instalacion que actualiza a esta fase pierde su linea configurada por .env en
+    cuanto el pipeline empiece a leer solo de LineRepo (Plan 33-08).
+
+    Backfill de zones.polygon: solo rellena filas donde polygon es NULL (v1 puro,
+    nunca escritas por ZoneRepo) — nunca pisa un polygon ya editado por el nuevo
+    editor v2, ni siquiera si polygon_json tambien cambio despues (no deberia, D-02
+    deja polygon_json de solo lectura de compatibilidad).
+    """
+    if _table_exists(conn, "zones") and "polygon_json" in _column_names(conn, "zones"):
+        # polygon_json solo existe en tablas que vinieron de un v1 real (anadida por
+        # _ensure_columns en _migrate_v1_to_v2) — un create_all() puro (BD ya v2+)
+        # nunca la tiene, y no hay nada que hacer sobre ella entonces.
+        conn.execute(text(
+            "UPDATE zones SET polygon = polygon_json "
+            "WHERE polygon IS NULL AND polygon_json IS NOT NULL"
+        ))
+    if _table_exists(conn, "lines"):
+        existing = conn.execute(
+            text("SELECT COUNT(*) FROM lines WHERE camera_id = 'cam1'")
+        ).scalar()
+        if not existing:
+            sx, sy, ex, ey = _legacy_line_frac_settings()
+            conn.execute(
+                text(
+                    "INSERT INTO lines (id, camera_id, name, start_x_frac, "
+                    "start_y_frac, end_x_frac, end_y_frac, enabled) VALUES "
+                    "('linea-1', 'cam1', 'Linea de conteo', :sx, :sy, :ex, :ey, 1)"
+                ),
+                {"sx": sx, "sy": sy, "ex": ex, "ey": ey},
+            )
+            logger.info("Sembrada linea de conteo por defecto desde .env legacy (D-01)")
+    _record_version(conn, 5)
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[Connection], None]]] = [
     (2, "esquema v2 completo", _migrate_v1_to_v2),
     (3, "indice compuesto de la linea temporal", _migrate_v2_to_v3),
     (4, "indice compuesto de analitica", _migrate_v3_to_v4),
+    (5, "unificacion de zonas + siembra de linea de conteo", _migrate_v4_to_v5),
 ]
 
 

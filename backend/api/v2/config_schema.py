@@ -50,7 +50,7 @@ class Group:
     fields: tuple[FieldDef, ...] = ()
     # Grupos de solo lectura no respaldados por Settings (zonas definidas, reglas
     # cargadas) usan fields=() y se marcan con external_source:
-    external_source: str | None = None   # "/api/zones" | "/api/v2/rules" | None
+    external_source: str | None = None   # "/api/v2/zones" | "/api/v2/lines" | "/api/v2/rules" | None
 
 
 @dataclass(frozen=True)
@@ -570,47 +570,14 @@ ALL_SECTIONS: tuple[Section, ...] = (
         label="Zonas",
         groups=(
             Group(
-                key="linea",
-                label="Línea de conteo",
-                fields=(
-                    FieldDef(
-                        key="line_start_x_frac", env="LINE_START_X_FRAC",
-                        label="Inicio de línea — X",
-                        hint="Fracción (0.0-1.0) de la posición X del punto de inicio de la "
-                             "línea de conteo.",
-                        type="float", default=0.0, min=0.0, max=1.0, step=0.01,
-                        applies="restart_camera",
-                    ),
-                    FieldDef(
-                        key="line_start_y_frac", env="LINE_START_Y_FRAC",
-                        label="Inicio de línea — Y",
-                        hint="Fracción (0.0-1.0) de la posición Y del punto de inicio de la "
-                             "línea de conteo.",
-                        type="float", default=0.5, min=0.0, max=1.0, step=0.01,
-                        applies="restart_camera",
-                    ),
-                    FieldDef(
-                        key="line_end_x_frac", env="LINE_END_X_FRAC",
-                        label="Fin de línea — X",
-                        hint="Fracción (0.0-1.0) de la posición X del punto de fin de la "
-                             "línea de conteo.",
-                        type="float", default=1.0, min=0.0, max=1.0, step=0.01,
-                        applies="restart_camera",
-                    ),
-                    FieldDef(
-                        key="line_end_y_frac", env="LINE_END_Y_FRAC",
-                        label="Fin de línea — Y",
-                        hint="Fracción (0.0-1.0) de la posición Y del punto de fin de la "
-                             "línea de conteo.",
-                        type="float", default=0.5, min=0.0, max=1.0, step=0.01,
-                        applies="restart_camera",
-                    ),
-                ),
+                key="lineas_definidas",
+                label="Líneas definidas",
+                external_source="/api/v2/lines",
             ),
             Group(
                 key="zonas_definidas",
                 label="Zonas definidas",
-                external_source="/api/zones",
+                external_source="/api/v2/zones",
             ),
         ),
     ),

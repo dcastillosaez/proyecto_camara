@@ -171,7 +171,7 @@
 - [x] **RULE-02**: Las acciones soportadas son grabar, capturar, notificar, telegram, webhook, log, subir a Drive y marcar flag
 - [x] **RULE-03**: Cada regla tiene debounce configurable por `(regla, cámara, identidad)`
 - [x] **RULE-04**: Una regla inválida se desactiva con un error legible sin impedir el arranque del sistema
-- [ ] **RULE-05**: Una regla puede probarse contra el histórico reciente antes de activarse *(fuera de alcance del bloque A — no cubierto por 19-01/19-02)*
+- [x] **RULE-05**: Una regla puede probarse contra el histórico reciente antes de activarse *(cerrado en Fase 33, checkpoint 33-14: `POST /api/v2/rules/{id}/test` verificado con servidor real)*
 
 ### Persistencia v2 (DB, continúa v1)
 
@@ -260,10 +260,10 @@
 - [ ] **OPS-18**: La configuración se edita desde la interfaz mediante un árbol de secciones
 - [ ] **OPS-19**: Los parámetros que requieren reinicio están claramente señalizados frente a los que se aplican en caliente
 - [ ] **OPS-20**: Cada sección de configuración permite restaurar los valores por defecto
-- [ ] **OPS-21**: Las zonas se dibujan, editan y borran directamente sobre el vídeo con coordenadas independientes de la resolución
-- [ ] **OPS-22**: Las líneas de conteo se dibujan sobre el vídeo con indicación visual de dirección
-- [ ] **OPS-23**: Las zonas tienen tipo (conteo, restringida, exclusión) y horario propio
-- [ ] **OPS-24**: Las reglas se componen desde formularios en la interfaz, sin editar YAML
+- [x] **OPS-21**: Las zonas se dibujan, editan y borran directamente sobre el vídeo con coordenadas independientes de la resolución *(cerrado en Fase 33, checkpoint 33-14)*
+- [x] **OPS-22**: Las líneas de conteo se dibujan sobre el vídeo con indicación visual de dirección *(cerrado en Fase 33, checkpoint 33-14)*
+- [x] **OPS-23**: Las zonas tienen tipo (conteo, restringida, exclusión) y horario propio *(cerrado en Fase 33, checkpoint 33-14)*
+- [x] **OPS-24**: Las reglas se componen desde formularios en la interfaz, sin editar YAML *(cerrado en Fase 33, checkpoint 33-14)*
 
 ### Configuración runtime (SET)
 
@@ -316,7 +316,7 @@
 - Requisitos v2 totales: **107**
 - Mapeados a fases: **107**
 - Sin mapear: **0**
-- Completados: **44/107** (bloque A completo salvo RULE-05; FACE-01..06 de la Fase 23 completos en código, verificación con datos reales pendiente — checkpoint 23-02 Task 4)
+- Completados: **49/107** (bloque A completo incluido RULE-05, cerrado en Fase 33; OPS-21..OPS-24 cerrados en Fase 33; FACE-01..06 de la Fase 23 completos en código, verificación con datos reales pendiente — checkpoint 23-02 Task 4)
 
 ---
 *Requisitos v2 definidos: 2026-08-07*

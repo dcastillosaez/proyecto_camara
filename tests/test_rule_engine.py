@@ -7,7 +7,7 @@ import textwrap
 
 import pytest
 
-from backend.events.rules import Rule, RuleEngine, load_rules
+from backend.events.rules import Rule, RuleEngine, is_schedule_active, load_rules
 from backend.events.types import Event, EventType
 
 SPEC_RULES_YAML = textwrap.dedent("""
@@ -289,3 +289,67 @@ async def TEST_behavior_zone_filter_uses_first_class_zone_id(tmp_path):
 
     assert fired_in_zone == ["merodeo_zona"]
     assert fired_no_zone == []
+
+
+# --- Fase 33 (RULE-05): would_match() publico y sin efectos secundarios -----------
+
+
+async def TEST_would_match_agrees_with_match_result():
+    rule = Rule.model_validate(make_rule(zone="jardin"))
+    engine = RuleEngine([rule], registry={})
+
+    event_in_zone = make_event(zone_id="jardin")
+    event_out_zone = make_event(zone_id="otra")
+
+    assert engine.would_match(rule.when, event_in_zone) is True
+    assert engine.would_match(rule.when, event_out_zone) is False
+
+
+async def TEST_would_match_does_not_affect_debounce_state():
+    """would_match() no debe alterar self._last_fired: probar una regla con
+    debounce activo no debe consumir su ventana de debounce en produccion."""
+    rule = Rule.model_validate({**make_rule(), "debounce_secs": 60})
+    engine = RuleEngine([rule], registry={})
+    base = datetime.datetime(2026, 4, 16, 18, 30, 0)
+    event = make_event(ts=base, track_id=1)
+
+    fired = await engine.evaluate(event)
+    assert fired == ["r1"]
+
+    # Sin would_match(), un segundo evento inmediato quedaria debounced.
+    for _ in range(5):
+        assert engine.would_match(rule.when, event) is True
+
+    second_event = make_event(ts=base + datetime.timedelta(seconds=1), track_id=1)
+    fired_second = await engine.evaluate(second_event)
+    assert fired_second == [], "would_match() no debe haber consumido el debounce"
+
+
+# --- Fase 33 (OPS-23): is_schedule_active() — horario propio de zona --------------
+
+
+def TEST_is_schedule_active_none_is_always_true():
+    assert is_schedule_active(None) is True
+    assert is_schedule_active({}) is True
+
+
+def TEST_is_schedule_active_respects_days_filter():
+    tuesday = datetime.datetime(2026, 4, 14, 10, 0)
+    assert tuesday.weekday() == 1
+    assert is_schedule_active({"days": [0]}, now=tuesday) is False
+    assert is_schedule_active({"days": [1]}, now=tuesday) is True
+
+
+def TEST_is_schedule_active_time_range_crosses_midnight():
+    schedule = {"time_range": "23:00-06:00"}
+    inside = datetime.datetime(2026, 4, 17, 0, 30)
+    outside = datetime.datetime(2026, 4, 17, 12, 0)
+    assert is_schedule_active(schedule, now=inside) is True
+    assert is_schedule_active(schedule, now=outside) is False
+
+
+def TEST_is_schedule_active_combines_days_and_time_range():
+    schedule = {"time_range": "09:00-17:00", "days": [0, 1, 2, 3, 4]}
+    saturday_morning = datetime.datetime(2026, 4, 18, 10, 0)
+    assert saturday_morning.weekday() == 5
+    assert is_schedule_active(schedule, now=saturday_morning) is False

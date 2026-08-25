@@ -1,8 +1,10 @@
 // frontend/js/views/settings-section.js
 // Fase 32 (OPS-18/19/20, SET-03/SET-04): pinta el panel de UNA seccion completa -- un
 // <fieldset> por grupo (nunca un panel por subseccion, D-03), delegando cada fila a
-// renderField() de settings-field.js (32-05). Resuelve bajo demanda las dos subsecciones
-// de solo lectura (zonas_definidas, reglas_cargadas) que no vienen del esquema de Settings.
+// renderField() de settings-field.js (32-05). Resuelve bajo demanda las tres subsecciones
+// de solo lectura (zonas_definidas/lineas_definidas/reglas_cargadas, la tercera anadida
+// por el Plan 33-13) que no vienen del esquema de Settings -- enlazan al editor real en
+// la pestana Camara (D-03 de la Fase 33), no duplican formularios completos aqui.
 //
 // Contrato de marcado documentado en la cabecera de settings-save.js (32-05), que este
 // modulo respeta para que saveSection/restoreSection localicen el panel solo con el
@@ -58,6 +60,26 @@ function _renderExternalGroup(group) {
   return fieldset;
 }
 
+// D-03: estas tres subsecciones son de solo lectura -- la edicion real vive en el
+// editor visual de la pestana Camara (Plan 33-13), no aqui.
+const _GROUP_INFO = {
+  zonas_definidas: {
+    kind: 'zones',
+    items: (data) => data.zones ?? [],
+    empty: ['Sin zonas definidas', 'Se crean y editan desde la pestaña Cámara → Zonas.'],
+  },
+  lineas_definidas: {
+    kind: 'lines',
+    items: (data) => data.lines ?? [],
+    empty: ['Sin líneas definidas', 'Se crean y editan desde la pestaña Cámara → Líneas.'],
+  },
+  reglas_cargadas: {
+    kind: 'rules',
+    items: (data) => data.rules ?? [],
+    empty: ['Sin reglas cargadas', 'Se crean y editan desde la pestaña Cámara → Reglas.'],
+  },
+};
+
 async function _loadExternalGroup(group, body) {
   let data;
   try {
@@ -68,16 +90,14 @@ async function _loadExternalGroup(group, body) {
     body.replaceChildren(_muted('No se pudo cargar.', 'text-sm text-slate-400'));
     return;
   }
-  const isZones = group.key === 'zonas_definidas';
-  const items = isZones ? (data.zones ?? []) : (data.rules ?? []);
+  const info = _GROUP_INFO[group.key];
+  const items = info.items(data);
   if (items.length === 0) {
-    const [title, hint] = isZones
-      ? ['Sin zonas definidas', 'Las zonas se crean y se borran desde el panel «Zonas de interés» de Operaciones.']
-      : ['Sin reglas cargadas', 'Las reglas se definen en el fichero config/rules.yaml.'];
+    const [title, hint] = info.empty;
     body.replaceChildren(_muted(title, 'text-sm text-slate-300'), _muted(hint, 'text-xs text-slate-500'));
     return;
   }
-  body.replaceChildren(...items.map((item) => _externalRow(isZones, item)));
+  body.replaceChildren(...items.map((item) => _externalRow(info.kind, item)));
 }
 
 function _muted(text, cls) {
@@ -87,7 +107,7 @@ function _muted(text, cls) {
   return p;
 }
 
-function _externalRow(isZones, item) {
+function _externalRow(kind, item) {
   const row = document.createElement('div');
   row.className = 'flex items-center justify-between text-sm text-slate-300 py-1 border-b border-slate-800 last:border-0';
   const name = document.createElement('span');
@@ -95,7 +115,8 @@ function _externalRow(isZones, item) {
   name.textContent = item.name;   // dato de usuario (no de Settings) -> textContent
   const meta = document.createElement('span');
   meta.className = 'mono text-xs text-slate-500 flex-shrink-0';
-  meta.textContent = isZones ? (item.kind ?? '') : (item.enabled ? 'habilitada' : 'deshabilitada');
+  // zonas: se etiquetan por kind (counting/restricted/exclusion); lineas/reglas: enabled.
+  meta.textContent = kind === 'zones' ? (item.kind ?? '') : (item.enabled ? 'habilitada' : 'deshabilitada');
   row.append(name, meta);
   return row;
 }

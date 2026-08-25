@@ -279,12 +279,10 @@ def _tracked_cls(boxes, tids, class_ids, names=None) -> sv.Detections:
 
 # ─── PolygonZone cuenta presencia y entradas acumuladas por zona ────────────
 def test_polygon_zone_counts_presence_and_entries():
-    import json
-
     worker = _worker_for_zones()
     worker.set_zones([{
         "id": "z1", "name": "Puerta", "enabled": True,
-        "polygon_json": json.dumps([[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]]),
+        "polygon": [[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]],
     }])
 
     shape = (720, 1280, 3)
@@ -431,14 +429,12 @@ def TEST_behavior_failure_does_not_kill_thread():
 
 
 def TEST_behavior_zone_membership_snapshot_reuses_zone_states():
-    import json
-
     worker = _worker_for_zones()
     worker.set_zones([
         {"id": "z1", "name": "Z1", "enabled": True,
-         "polygon_json": json.dumps([[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]])},
+         "polygon": [[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]]},
         {"id": "z2", "name": "Z2", "enabled": True,
-         "polygon_json": json.dumps([[0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [0.5, 1.0]])},
+         "polygon": [[0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [0.5, 1.0]]},
     ])
     shape = (720, 1280, 3)
 
@@ -526,7 +522,7 @@ def TEST_object_class_does_not_reach_line_zone():
     person_ys = list(range(230, 340, 10))  # cruza y=300 hacia abajo
 
     # Escenario A: persona cruzando la linea, con un coche solapado cada frame
-    tracker_a = PersonTracker(line_start, line_end, frame_rate=15)
+    tracker_a = PersonTracker(lines=[{"id": "l1", "name": "Linea 1", "start": line_start, "end": line_end}], frame_rate=15)
     for y in person_ys:
         mixed = _tracked_cls(
             boxes=[[300, y, 340, y + 60], [10, 10, 60, 60]],
@@ -536,20 +532,23 @@ def TEST_object_class_does_not_reach_line_zone():
         tracker_a.update(person_dets)
 
     # Escenario B: la misma persona, sin ningun coche en la entrada
-    tracker_b = PersonTracker(line_start, line_end, frame_rate=15)
+    tracker_b = PersonTracker(lines=[{"id": "l1", "name": "Linea 1", "start": line_start, "end": line_end}], frame_rate=15)
     for y in person_ys:
         person_only = _tracked_cls([[300, y, 340, y + 60]], [1], [0], names=["person"])
         tracker_b.update(person_only)
 
     assert tracker_a.get_counts() == tracker_b.get_counts()
-    assert tracker_a.get_counts()["total"] >= 1  # confirma que la linea SI se cruzo
+    assert tracker_a.get_counts()["l1"]["total"] >= 1  # confirma que la linea SI se cruzo
 
 
 def TEST_objects_not_in_registry():
     from backend.tracker import ObjectTracker, PersonTracker
 
     broker = FrameBroker()
-    person_tracker = PersonTracker(sv.Point(0, 300), sv.Point(640, 300), frame_rate=15)
+    person_tracker = PersonTracker(
+        lines=[{"id": "l1", "name": "Linea 1", "start": sv.Point(0, 300), "end": sv.Point(640, 300)}],
+        frame_rate=15,
+    )
     object_tracker = ObjectTracker(frame_rate=15)
     registry = TrackRegistry()
     worker = DetectionWorker(
@@ -613,7 +612,10 @@ def TEST_bytetrack_ids_do_not_migrate_between_classes():
     for _ in range(5):
         object_tracker.update(_tracked_cls([backpack_box], [1], [24], names=["backpack"]))
 
-    person_tracker = PersonTracker(sv.Point(0, 5000), sv.Point(1, 5001), frame_rate=15)
+    person_tracker = PersonTracker(
+        lines=[{"id": "l1", "name": "Linea 1", "start": sv.Point(0, 5000), "end": sv.Point(1, 5001)}],
+        frame_rate=15,
+    )
     assert len(person_tracker._byte_tracker.tracked_tracks) == 0  # nunca vio nada aun
     tracked, _ = person_tracker.update(
         _tracked_cls([person_box], [1], [0], names=["person"])
@@ -747,8 +749,6 @@ def TEST_object_prune_findings_are_emitted():
 
 
 def TEST_excluded_zone_suppresses_object_candidate():
-    import json
-
     worker = _worker_for_zones()
     event_engine = MagicMock()
     worker._event_engine = event_engine
@@ -758,7 +758,7 @@ def TEST_excluded_zone_suppresses_object_candidate():
     worker._objects = objects
     worker.set_zones([{
         "id": "zex", "name": "Exclusion", "kind": "exclude_objects", "enabled": True,
-        "polygon_json": json.dumps([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+        "polygon": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     }])
     worker._update_zones_and_heat(sv.Detections.empty(), (360, 640, 3))
     obj_tracked = _tracked_cls([[10, 10, 50, 50]], [1], [24], names=["backpack"])
