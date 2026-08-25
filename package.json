@@ -1,0 +1,12 @@
+{
+  "name": "proyecto-camara-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Tests E2E (Playwright) del dashboard Tapo -- Fase 34",
+  "scripts": {
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}
