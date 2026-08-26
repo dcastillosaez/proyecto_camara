@@ -63,6 +63,17 @@ def _repo() -> AnalyticsRepo:
     return AnalyticsRepo(get_session_factory())
 
 
+async def _resolve_analytics_camera_id(camera_id: str | None) -> str | None:
+    """`camera_id="*"` (mismo comodín que las reglas, Fase 33) pide el agregado
+    TOTAL de todas las cámaras (Fase 36, SCALE-05) — se pasa `None` al repo, que
+    omite el filtro. Cualquier otro valor sigue el camino de siempre
+    (`resolve_camera_id`, Fase 35): una cámara concreta o el default cuando solo
+    hay una registrada."""
+    if camera_id == "*":
+        return None
+    return await resolve_camera_id(camera_id, get_session_factory())
+
+
 def _resolve_range(
     from_: datetime.date, to_: datetime.date
 ) -> tuple[datetime.datetime, datetime.datetime, int]:
@@ -110,7 +121,7 @@ def _parse_bucket_key(key: str, bucket: str) -> datetime.datetime:
     return datetime.datetime.strptime(key, fmt)
 
 
-async def _hourly_payload(camera_id: str, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
+async def _hourly_payload(camera_id: str | None, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
     cur_from, cur_to, span_days = _resolve_range(from_, to_)
     bucket = bucket_for(cur_from, cur_to)
 
@@ -153,11 +164,11 @@ async def get_hourly(
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
-    camera_id = await resolve_camera_id(camera_id, get_session_factory())
+    camera_id = await _resolve_analytics_camera_id(camera_id)
     return await _hourly_payload(camera_id, from_, to_)
 
 
-async def _summary_payload(camera_id: str, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
+async def _summary_payload(camera_id: str | None, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
     cur_from, cur_to, span_days = _resolve_range(from_, to_)
     bucket = bucket_for(cur_from, cur_to)
 
@@ -201,11 +212,11 @@ async def get_summary(
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
-    camera_id = await resolve_camera_id(camera_id, get_session_factory())
+    camera_id = await _resolve_analytics_camera_id(camera_id)
     return await _summary_payload(camera_id, from_, to_)
 
 
-async def _occupancy_payload(camera_id: str, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
+async def _occupancy_payload(camera_id: str | None, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
     cur_from, cur_to, span_days = _resolve_range(from_, to_)
 
     rows, total_zones = await _repo().occupancy(camera_id, cur_from, cur_to, limit=10)
@@ -231,11 +242,11 @@ async def get_occupancy(
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
-    camera_id = await resolve_camera_id(camera_id, get_session_factory())
+    camera_id = await _resolve_analytics_camera_id(camera_id)
     return await _occupancy_payload(camera_id, from_, to_)
 
 
-async def _persons_payload(camera_id: str, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
+async def _persons_payload(camera_id: str | None, from_: datetime.date, to_: datetime.date) -> dict[str, Any]:
     cur_from, cur_to, span_days = _resolve_range(from_, to_)
 
     rows = await _repo().persons_ranking(camera_id, cur_from, cur_to, limit=10)
@@ -278,7 +289,7 @@ async def get_persons(
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
-    camera_id = await resolve_camera_id(camera_id, get_session_factory())
+    camera_id = await _resolve_analytics_camera_id(camera_id)
     return await _persons_payload(camera_id, from_, to_)
 
 
@@ -344,7 +355,7 @@ async def export_analytics(
     el servidor con fechas ya normalizadas — ningun fragmento viene del cliente
     (V12 del Security Domain: path traversal en el nombre de fichero).
     """
-    camera_id = await resolve_camera_id(camera_id, get_session_factory())
+    camera_id = await _resolve_analytics_camera_id(camera_id)
     stamp = f"{from_:%Y%m%d}_{to_:%Y%m%d}"
 
     if fmt == "json":

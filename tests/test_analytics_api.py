@@ -154,6 +154,84 @@ async def TEST_hourly_requires_camera_id_when_ambiguous(sf, client):
     assert resp.status_code == 400
 
 
+# ─── Fase 36 (SCALE-05): camera_id="*" agrega todas las camaras ───────────────
+async def TEST_hourly_wildcard_camera_id_aggregates_instead_of_400(sf, client):
+    """Con dos camaras registradas, camera_id="*" NO es ambiguo -- es justo el
+    modo que pide el agregado total, nunca pasa por resolve_camera_id()."""
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam2", name="Cam 2", enabled=True))
+    await _insert(
+        sf,
+        make_event(camera_id="cam1", ts=datetime.datetime(2026, 1, 2, 14, 30)),
+        make_event(camera_id="cam2", ts=datetime.datetime(2026, 1, 2, 14, 45)),
+    )
+
+    resp = await client.get(
+        "/api/v2/analytics/hourly",
+        params={"camera_id": "*", "from": "2026-01-02", "to": "2026-01-02"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 2
+
+
+async def TEST_summary_wildcard_camera_id_sums_every_camera(sf, client):
+    await _insert(
+        sf,
+        make_event(camera_id="cam1", ts=datetime.datetime(2026, 1, 2, 4, 0)),
+        make_event(camera_id="cam2", ts=datetime.datetime(2026, 1, 2, 5, 0)),
+    )
+
+    resp = await client.get(
+        "/api/v2/analytics/summary",
+        params={"camera_id": "*", "from": "2026-01-02", "to": "2026-01-02"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 2
+
+
+async def TEST_occupancy_wildcard_camera_id_sums_every_camera(sf, client):
+    await _insert(
+        sf,
+        make_event(
+            camera_id="cam1", type=EventType.ZONE_ENTERED,
+            ts=datetime.datetime(2026, 1, 2, 4, 0), zone_id="z1"),
+        make_event(
+            camera_id="cam2", type=EventType.ZONE_ENTERED,
+            ts=datetime.datetime(2026, 1, 2, 5, 0), zone_id="z1"),
+    )
+
+    resp = await client.get(
+        "/api/v2/analytics/occupancy",
+        params={"camera_id": "*", "from": "2026-01-02", "to": "2026-01-02"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["values"] == [2]
+
+
+async def TEST_persons_wildcard_camera_id_sums_every_camera(sf, client):
+    await _insert(
+        sf,
+        make_event(
+            camera_id="cam1", type=EventType.PERSON_RECOGNIZED,
+            ts=datetime.datetime(2026, 1, 2, 10, 0), person_id=7),
+        make_event(
+            camera_id="cam2", type=EventType.PERSON_RECOGNIZED,
+            ts=datetime.datetime(2026, 1, 2, 11, 0), person_id=7),
+    )
+
+    resp = await client.get(
+        "/api/v2/analytics/persons",
+        params={"camera_id": "*", "from": "2026-01-02", "to": "2026-01-02"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["persons"][0]["visits"] == 2
+
+
 # ─── /hourly (OPS-12) ────────────────────────────────────────────────────────
 async def TEST_hourly_fills_empty_buckets_with_zero(sf, client):
     await _insert(sf, make_event(ts=datetime.datetime(2026, 1, 2, 14, 30)))

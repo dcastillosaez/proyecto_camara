@@ -358,6 +358,14 @@ ALL_SECTIONS: tuple[Section, ...] = (
                         hint="Intervalo de limpieza periódica de tracks y reconocedor por cámara.",
                         type="float", default=60.0, min=1, max=3600, applies="restart_camera",
                     ),
+                    FieldDef(
+                        key="cpu_budget_warn_pct", env="CPU_BUDGET_WARN_PCT",
+                        label="Umbral de aviso de CPU (%)",
+                        hint="% de un core equivalente, sumado entre todas las cámaras, a partir "
+                             "del cual la interfaz avisa de coste de CPU excesivo (estimación, no "
+                             "medición real del sistema operativo).",
+                        type="float", default=200.0, min=10, max=3200, applies="hot",
+                    ),
                 ),
             ),
             Group(

@@ -24,20 +24,55 @@
 import { initZoneEditor, disableZoneEditMode } from '../components/zoneEditor.js';
 import { initLineEditor, disableLineEditMode } from '../components/lineEditor.js';
 import { initRulesEditor } from './rules-editor.js';
+import { getActiveCameraId, setActiveCameraId, onActiveCameraChange } from '../components/activeCamera.js';
+import { initCameraMosaic } from './camera-mosaic.js';
 
-let _feedActivated = false;
+let _activatedCameraId = null;
 
 /**
- * Asigna `src="/video_feed"` a `#camera-feed` la primera vez que se llama. Llamadas
- * posteriores no hacen nada: reasignar el mismo src en cada activacion de pestana
- * dispararia el `onerror` de reconexion del <img> y la vista parpadearia a "offline"
- * cada vez que el operador vuelve a la pestana Camara.
+ * Asigna `src="/video_feed?camera_id=..."` a `#camera-feed` para la camara activa
+ * (Fase 36, SCALE-06). Repetir la llamada con la MISMA camara no hace nada:
+ * reasignar el mismo src en cada activacion de pestana dispararia el `onerror` de
+ * reconexion del <img> y la vista parpadearia a "offline" cada vez que el operador
+ * vuelve a la pestana Camara. Cambiar de camara (selector) SI reasigna.
  */
 export function activateCameraFeed() {
-  if (_feedActivated) return;
-  _feedActivated = true;
+  const cameraId = getActiveCameraId();
+  if (_activatedCameraId === cameraId) return;
+  _activatedCameraId = cameraId;
   const img = document.getElementById('camera-feed');
-  if (img) img.src = '/video_feed';
+  if (img) img.src = `/video_feed?camera_id=${encodeURIComponent(cameraId)}`;
+}
+
+/** Puebla el <select> con las camaras vivas y devuelve el coste de CPU agregado
+ * (loadRtspCard() lo reutiliza para el aviso de presupuesto, sin fetch duplicado). */
+async function _loadCameraOptions() {
+  const sel = document.getElementById('camera-select');
+  try {
+    const res = await fetch('/api/v2/cameras');
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (sel && data.cameras.length) {
+      const current = getActiveCameraId();
+      sel.replaceChildren(...data.cameras.map((c) => {
+        const opt = document.createElement('option');
+        opt.value = c.camera_id;
+        opt.textContent = c.camera_id;
+        opt.selected = c.camera_id === current;
+        return opt;
+      }));
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function _paintCpuWarning(data) {
+  const chip = document.getElementById('camera-cpu-warning');
+  if (!chip || !data) return;
+  chip.classList.toggle('hidden', !data.over_budget);
+  chip.textContent = `CPU: ${data.total_estimated_cpu_pct}% / ${data.cpu_budget_warn_pct}%`;
 }
 
 // Mismos tres colores que el semaforo de cabecera de la Fase 29
@@ -58,15 +93,18 @@ function _paintRtspState(state) {
 
 /**
  * Pinta la tarjeta de estado RTSP: semaforo + edad de ultimo frame + reconexiones +
- * resolucion nativa (todo desde GET /api/v2/cameras/cam1/health) y la URL RTSP
- * enmascarada por el servidor (desde GET /api/v2/config, campo
- * `camara.captura.camera_url`). Nunca se reconstruye ni se enmascara la URL en el
- * navegador (T-32-12).
+ * resolucion nativa (todo desde GET /api/v2/cameras/{camara activa}/health) y la URL
+ * RTSP enmascarada por el servidor (desde GET /api/v2/config, campo
+ * `camara.captura.camera_url` -- sigue siendo la de la camara primaria, D-XX: el
+ * esquema de config es global, no por camara). Nunca se reconstruye ni se enmascara
+ * la URL en el navegador (T-32-12). De paso refresca el selector y el aviso de CPU
+ * (Fase 36) sobre el mismo tick de 5s, sin abrir una peticion aparte.
  */
 export async function loadRtspCard() {
+  _paintCpuWarning(await _loadCameraOptions());
   try {
     const [healthRes, configRes] = await Promise.all([
-      fetch('/api/v2/cameras/cam1/health'),
+      fetch(`/api/v2/cameras/${encodeURIComponent(getActiveCameraId())}/health`),
       fetch('/api/v2/config'),
     ]);
     if (!healthRes.ok) throw new Error('health fetch failed');
@@ -131,4 +169,29 @@ export function initCamera() {
   // los clicks de raton no compitan entre zoneEditor.js y lineEditor.js.
   document.getElementById('zone-mode-toggle')?.addEventListener('click', disableLineEditMode);
   document.getElementById('line-mode-toggle')?.addEventListener('click', disableZoneEditMode);
+
+  // Selector de camara (SCALE-06): cambiar la seleccion re-activa el feed grande,
+  // recarga la tarjeta RTSP para la nueva camara y sale de cualquier modo de edicion
+  // en curso -- un trazado a medias (poligono/linea) quedaria atribuido a la camara
+  // equivocada si el operador siguiera editando tras cambiar de camara.
+  document.getElementById('camera-select')?.addEventListener('change', (evt) => {
+    setActiveCameraId(evt.target.value);
+  });
+  onActiveCameraChange(() => {
+    activateCameraFeed();
+    loadRtspCard();
+    disableZoneEditMode();
+    disableLineEditMode();
+  });
+
+  document.getElementById('camera-feed-retry-btn')?.addEventListener('click', () => {
+    _activatedCameraId = null; // fuerza la reasignacion aunque la camara no haya cambiado
+    activateCameraFeed();
+    const offline = document.getElementById('camera-offline');
+    const img = document.getElementById('camera-feed');
+    if (offline) offline.style.display = 'none';
+    if (img) img.style.display = 'block';
+  });
+
+  initCameraMosaic();
 }

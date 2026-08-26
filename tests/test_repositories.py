@@ -1083,6 +1083,92 @@ async def TEST_analytics_person_avatars_returns_latest_capture(db):
     assert avatars == {1: "/gallery/1/new.jpg"}
 
 
+# --- Fase 36 (SCALE-05): camera_id=None agrega TODAS las camaras ------------------
+async def TEST_analytics_hourly_camera_id_none_aggregates_every_camera(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    await events.insert(make_event(
+        camera_id="cam1", type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 15)))
+    await events.insert(make_event(
+        camera_id="cam2", type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 20)))
+
+    rows = await repo.hourly(None, cur_from, cur_to, "hour")
+
+    assert dict((b, cur) for b, cur, _ in rows)["2026-01-02 10"] == 2
+
+
+async def TEST_analytics_hourly_camera_id_concrete_still_filters(db):
+    """camera_id=None es el UNICO valor que agrega -- un id concreto sigue
+    filtrando exactamente igual que antes de la Fase 36."""
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    await events.insert(make_event(
+        camera_id="cam1", type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 15)))
+    await events.insert(make_event(
+        camera_id="cam2", type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 10, 15)))
+
+    rows = await repo.hourly("cam1", cur_from, cur_to, "hour")
+
+    assert dict((b, cur) for b, cur, _ in rows)["2026-01-02 10"] == 1
+
+
+async def TEST_analytics_summary_camera_id_none_aggregates_every_camera(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    await events.insert(make_event(
+        camera_id="cam1", type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 4, 0)))
+    await events.insert(make_event(
+        camera_id="cam2", type=EventType.LINE_CROSSED, ts=datetime.datetime(2026, 1, 2, 5, 0)))
+
+    data = await repo.summary(None, cur_from, cur_to, "hour")
+
+    assert data["total"] == 2
+
+
+async def TEST_analytics_occupancy_camera_id_none_aggregates_every_camera(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    await events.insert(make_event(
+        camera_id="cam1", type=EventType.ZONE_ENTERED, ts=datetime.datetime(2026, 1, 2, 4, 0), zone_id="z1"))
+    await events.insert(make_event(
+        camera_id="cam2", type=EventType.ZONE_ENTERED, ts=datetime.datetime(2026, 1, 2, 5, 0), zone_id="z1"))
+
+    zones, total = await repo.occupancy(None, cur_from, cur_to)
+
+    assert zones == [{"zone_id": "z1", "name": "z1", "value": 2}]
+    assert total == 1
+
+
+async def TEST_analytics_ranking_camera_id_none_aggregates_every_camera(db):
+    _, sf = db
+    events = EventRepo(sf)
+    repo = AnalyticsRepo(sf)
+    cur_from = datetime.datetime(2026, 1, 2, 0, 0, 0)
+    cur_to = datetime.datetime(2026, 1, 3, 0, 0, 0)
+    await events.insert(make_event(
+        camera_id="cam1", type=EventType.PERSON_RECOGNIZED,
+        ts=datetime.datetime(2026, 1, 2, 10, 0), person_id=7))
+    await events.insert(make_event(
+        camera_id="cam2", type=EventType.PERSON_RECOGNIZED,
+        ts=datetime.datetime(2026, 1, 2, 11, 0), person_id=7))
+
+    ranking = await repo.persons_ranking(None, cur_from, cur_to)
+
+    assert ranking == [(7, 2, 0)]
+
+
 # --- Criterio 4 de la Fase 31: las cuatro agregaciones @100k con identidad/zona ----
 #
 # 0,5s es el presupuesto literal del ROADMAP. Medido en 31-RESEARCH.md: 14-78 ms con
@@ -1326,3 +1412,83 @@ async def TEST_camera_repo_default_id_is_none_with_two_cameras(db):
     repo = CameraRepo(sf)
 
     assert await repo.default_camera_id() is None
+
+
+# ─── Fase 36 (SCALE-05): CameraRepo CRUD ──────────────────────────────────────
+async def TEST_camera_repo_list_returns_all_cameras(db):
+    _, sf = db  # el fixture ya siembra 'cam1'
+    repo = CameraRepo(sf)
+
+    cameras = await repo.list()
+
+    assert [c["id"] for c in cameras] == ["cam1"]
+
+
+async def TEST_camera_repo_list_filters_by_enabled(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+    await repo.create("cam2", "Cam 2", "rtsp://cam2/stream", enabled=False)
+
+    assert [c["id"] for c in await repo.list(enabled=True)] == ["cam1"]
+    assert [c["id"] for c in await repo.list(enabled=False)] == ["cam2"]
+
+
+async def TEST_camera_repo_create_persists_all_fields(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+
+    created = await repo.create(
+        "cam2", "Entrada trasera", "rtsp://user:pass@host/stream",
+        enabled=True, process_w=640, process_h=480,
+    )
+
+    assert created["id"] == "cam2"
+    assert created["name"] == "Entrada trasera"
+    assert created["rtsp_url"] == "rtsp://user:pass@host/stream"
+    assert created["enabled"] is True
+    assert created["process_w"] == 640
+    assert created["process_h"] == 480
+
+    fetched = await repo.get("cam2")
+    assert fetched == created
+
+
+async def TEST_camera_repo_get_miss_returns_none(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+
+    assert await repo.get("does-not-exist") is None
+
+
+async def TEST_camera_repo_update_partial_fields_only(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+    await repo.create("cam2", "Cam 2", "rtsp://cam2/stream")
+
+    updated = await repo.update("cam2", name="Renombrada")
+
+    assert updated["name"] == "Renombrada"
+    assert updated["rtsp_url"] == "rtsp://cam2/stream"  # sin tocar
+
+
+async def TEST_camera_repo_update_unknown_camera_returns_none(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+
+    assert await repo.update("does-not-exist", name="X") is None
+
+
+async def TEST_camera_repo_delete_removes_row(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+    await repo.create("cam2", "Cam 2", "rtsp://cam2/stream")
+
+    assert await repo.delete("cam2") is True
+    assert await repo.get("cam2") is None
+
+
+async def TEST_camera_repo_delete_unknown_camera_returns_false(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+
+    assert await repo.delete("does-not-exist") is False

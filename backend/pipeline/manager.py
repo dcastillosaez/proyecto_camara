@@ -273,6 +273,23 @@ class CameraPipeline:
     def degraded(self) -> bool:
         return self.supervisor.degraded
 
+    @property
+    def estimated_cpu_pct(self) -> float:
+        """Estimacion del coste de CPU de esta camara (SCALE-08) — NO es una
+        medicion real del sistema operativo, sino `fps_efectivo * latencia_media`
+        de cada worker de AdaptiveRate (deteccion + reconocimiento), como
+        fraccion de UN core. `behavior`/`objects` corren dentro del bucle de
+        deteccion, asi que su coste ya queda incluido en la latencia medida
+        de `detection`; no se contabilizan aparte."""
+        pct = 0.0
+        if self.detection is not None:
+            s = self.detection.stats
+            pct += s.get("effective_fps", 0.0) * s.get("avg_latency", 0.0) * 100.0
+        if self.recognition is not None:
+            s = self.recognition.stats
+            pct += s.get("effective_fps", 0.0) * s.get("avg_latency", 0.0) * 100.0
+        return round(pct, 1)
+
     def worker_status(self) -> dict[str, str]:
         return {name: st.value for name, st in self.supervisor.status().items()}
 
@@ -435,6 +452,47 @@ class CameraManager:
 
     def all(self) -> list[CameraPipeline]:
         return list(self._pipelines.values())
+
+    def remove(self, camera_id: str) -> bool:
+        """Para y libera la pipeline de una camara sin afectar a las demas.
+
+        Contrapartida runtime de `add()`: quien la llame es responsable de
+        borrar tambien el catalogo persistido (CameraRepo) si procede.
+        """
+        pipeline = self._pipelines.pop(camera_id, None)
+        if pipeline is None:
+            return False
+        pipeline.stop()
+        return True
+
+    def rebalance_fps(self, budget_pct: float) -> None:
+        """Reparte el presupuesto de CPU entre camaras (Fase 36, SCALE-08 —
+        riesgo "CPU insuficiente para N camaras" que SPEC_v2.md Fase 36
+        anticipa mitigar con "AdaptiveRate global con presupuesto compartido").
+
+        Si el coste total estimado (`CameraPipeline.estimated_cpu_pct`) supera
+        `budget_pct`, impone un techo de FPS de DETECCION proporcional en cada
+        camara (nunca por debajo de su `min_fps` configurado) — el `_idx`
+        interno de cada `AdaptiveRate` no se toca, asi que quitar el techo
+        (coste ya por debajo del presupuesto) devuelve el ritmo que la propia
+        histeresis de latencia habria elegido, sin recalcular nada. Solo actua
+        sobre `detection`: `recognition` corre a un ritmo fijo por diseno
+        (min_fps == max_fps), imponerle un techo por debajo de su unico
+        escalon lo dejaria mudo en vez de mas lento.
+        """
+        pipelines = [p for p in self._pipelines.values() if p.detection is not None]
+        if not pipelines:
+            return
+        total = sum(p.estimated_cpu_pct for p in pipelines)
+        if total <= budget_pct or total <= 0:
+            for p in pipelines:
+                p.detection.rate.set_external_cap(None)
+            return
+        ratio = budget_pct / total
+        for p in pipelines:
+            rate = p.detection.rate
+            cap = max(rate.effective_fps * ratio, rate.min_fps)
+            rate.set_external_cap(cap)
 
     def start_all(self) -> None:
         for pipeline in self._pipelines.values():

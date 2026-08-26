@@ -135,6 +135,12 @@ class DetectionWorker:
             **self._rate.stats,
         }
 
+    @property
+    def rate(self) -> AdaptiveRate:
+        """Acceso publico al AdaptiveRate (Fase 36, SCALE-08): CameraManager.rebalance_fps()
+        lo usa para imponer un techo compartido de FPS cuando varias camaras compiten por CPU."""
+        return self._rate
+
     def set_zones(self, zones: list[dict]) -> None:
         """Replace the active interest zones list. Thread-safe."""
         with self._lock:

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from backend.perception.face.identity import IdentityState
-from backend.pipeline.manager import CameraPipeline
+from backend.pipeline.manager import CameraManager, CameraPipeline
 from backend.pipeline.tracking import TrackRegistry
 
 
@@ -90,3 +90,153 @@ def TEST_get_person_boxes_includes_identity_fields():
     assert len(boxes) == 1
     assert boxes[0]["identity_state"] == "CONFIRMED"
     assert boxes[0]["person_name"] == "Ana"
+
+
+# ─── Fase 36 (SCALE-05): CameraManager.remove() ───────────────────────────────
+class _FakePipeline:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+def TEST_manager_remove_stops_pipeline_and_forgets_it():
+    manager = CameraManager()
+    fake = _FakePipeline()
+    manager._pipelines["cam1"] = fake
+
+    assert manager.remove("cam1") is True
+    assert fake.stopped is True
+    assert manager.get("cam1") is None
+
+
+def TEST_manager_remove_unknown_camera_returns_false_without_error():
+    manager = CameraManager()
+
+    assert manager.remove("does-not-exist") is False
+
+
+def TEST_manager_remove_one_camera_does_not_touch_the_others():
+    manager = CameraManager()
+    cam1, cam2 = _FakePipeline(), _FakePipeline()
+    manager._pipelines["cam1"] = cam1
+    manager._pipelines["cam2"] = cam2
+
+    manager.remove("cam1")
+
+    assert cam1.stopped is True
+    assert cam2.stopped is False
+    assert manager.get("cam2") is cam2
+
+
+# ─── Fase 36 (SCALE-08): CameraPipeline.estimated_cpu_pct ─────────────────────
+def _pipeline_with_worker_stats(detection_stats=None, recognition_stats=None) -> CameraPipeline:
+    p = object.__new__(CameraPipeline)
+    p.detection = SimpleNamespace(stats=detection_stats) if detection_stats is not None else None
+    p.recognition = SimpleNamespace(stats=recognition_stats) if recognition_stats is not None else None
+    return p
+
+
+def TEST_estimated_cpu_pct_is_fps_times_latency_as_percentage():
+    """8 fps * 0.05s/frame = 40% de un core."""
+    pipeline = _pipeline_with_worker_stats(
+        detection_stats={"effective_fps": 8.0, "avg_latency": 0.05},
+    )
+    assert pipeline.estimated_cpu_pct == 40.0
+
+
+def TEST_estimated_cpu_pct_sums_detection_and_recognition():
+    pipeline = _pipeline_with_worker_stats(
+        detection_stats={"effective_fps": 8.0, "avg_latency": 0.05},   # 40%
+        recognition_stats={"effective_fps": 2.0, "avg_latency": 0.10},  # 20%
+    )
+    assert pipeline.estimated_cpu_pct == 60.0
+
+
+def TEST_estimated_cpu_pct_is_zero_without_detection_or_recognition():
+    pipeline = _pipeline_with_worker_stats()
+    assert pipeline.estimated_cpu_pct == 0.0
+
+
+# ─── Fase 36 (SCALE-08): CameraManager.rebalance_fps() ────────────────────────
+class _FakeRate:
+    def __init__(self, effective_fps: float, min_fps: float = 1.0) -> None:
+        self.effective_fps = effective_fps
+        self.min_fps = min_fps
+        self.cap: float | None = "untouched"  # distinto de None para detectar "no se llamo"
+
+    def set_external_cap(self, cap: float | None) -> None:
+        self.cap = cap
+
+
+def _fake_pipeline_for_rebalance(estimated_cpu_pct: float, effective_fps: float = 8.0, min_fps: float = 1.0):
+    """`estimated_cpu_pct` es una @property de solo lectura calculada a partir de
+    `detection.stats` — se fabrica una `avg_latency` que produzca el pct pedido
+    (`effective_fps * avg_latency * 100`) en vez de asignarla directamente."""
+    p = object.__new__(CameraPipeline)
+    avg_latency = estimated_cpu_pct / (effective_fps * 100.0)
+    p.detection = SimpleNamespace(
+        rate=_FakeRate(effective_fps, min_fps),
+        stats={"effective_fps": effective_fps, "avg_latency": avg_latency},
+    )
+    p.recognition = None
+    return p
+
+
+def TEST_rebalance_releases_cap_when_total_within_budget():
+    manager = CameraManager()
+    cam1 = _fake_pipeline_for_rebalance(estimated_cpu_pct=40.0)
+    manager._pipelines["cam1"] = cam1
+
+    manager.rebalance_fps(budget_pct=200.0)
+
+    assert cam1.detection.rate.cap is None
+
+
+def TEST_rebalance_caps_fps_proportionally_when_over_budget():
+    manager = CameraManager()
+    cam1 = _fake_pipeline_for_rebalance(estimated_cpu_pct=90.0, effective_fps=8.0)
+    cam2 = _fake_pipeline_for_rebalance(estimated_cpu_pct=90.0, effective_fps=8.0)
+    manager._pipelines["cam1"] = cam1
+    manager._pipelines["cam2"] = cam2
+
+    manager.rebalance_fps(budget_pct=90.0)  # total 180, presupuesto 90 -> ratio 0.5
+
+    assert cam1.detection.rate.cap == 4.0
+    assert cam2.detection.rate.cap == 4.0
+
+
+def TEST_rebalance_never_caps_below_min_fps():
+    manager = CameraManager()
+    cam1 = _fake_pipeline_for_rebalance(estimated_cpu_pct=1000.0, effective_fps=8.0, min_fps=3.0)
+    manager._pipelines["cam1"] = cam1
+
+    manager.rebalance_fps(budget_pct=1.0)  # ratio minusculo, forzaria muy por debajo de 3.0
+
+    assert cam1.detection.rate.cap == 3.0
+
+
+def TEST_rebalance_does_not_touch_recognition_rate():
+    manager = CameraManager()
+    cam1 = _fake_pipeline_for_rebalance(estimated_cpu_pct=1000.0)
+    cam1.recognition = SimpleNamespace(rate=_FakeRate(2.0, min_fps=2.0), stats={})
+    manager._pipelines["cam1"] = cam1
+
+    manager.rebalance_fps(budget_pct=1.0)
+
+    assert cam1.recognition.rate.cap == "untouched"
+
+
+def TEST_rebalance_skips_cameras_without_detection_worker():
+    manager = CameraManager()
+    p = object.__new__(CameraPipeline)
+    p.detection = None
+    manager._pipelines["cam1"] = p
+
+    manager.rebalance_fps(budget_pct=1.0)  # no debe lanzar excepcion
+
+
+def TEST_rebalance_with_zero_cameras_does_nothing():
+    manager = CameraManager()
+    manager.rebalance_fps(budget_pct=200.0)  # no debe lanzar excepcion

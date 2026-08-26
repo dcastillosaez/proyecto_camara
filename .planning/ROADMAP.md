@@ -292,7 +292,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 ### Bloque D — Escalabilidad
 
 - [x] **Phase 35: CameraManager y camera_id transversal** — El código deja de asumir una única cámara (completed 2026-08-25; planificada y ejecutada a mano sin `gsd-sdk`, ver `.planning/phases/35-cameramanager-camera-id-transversal/PLAN.md`)
-- [ ] **Phase 36: Multi-cámara en runtime y UI** — Añadir cámaras sin reiniciar; vista mosaico
+- [x] **Phase 36: Multi-cámara en runtime y UI** — Añadir cámaras sin reiniciar; vista mosaico (completed 2026-08-26; planificada y ejecutada a mano sin `gsd-sdk`, ver `.planning/phases/36-multi-camara-runtime-ui/PLAN.md`)
 - [ ] **Phase 37: Backends opcionales — PostgreSQL y Redis** — Repositorios intercambiables, SQLite sigue siendo default
 - [ ] **Phase 38: Worker de inferencia en GPU (opcional)** — Aprovechar GPU si existe, fallback limpio a CPU
 
