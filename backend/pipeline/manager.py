@@ -436,6 +436,18 @@ class CameraManager:
     def all(self) -> list[CameraPipeline]:
         return list(self._pipelines.values())
 
+    def remove(self, camera_id: str) -> bool:
+        """Para y libera la pipeline de una camara sin afectar a las demas.
+
+        Contrapartida runtime de `add()`: quien la llame es responsable de
+        borrar tambien el catalogo persistido (CameraRepo) si procede.
+        """
+        pipeline = self._pipelines.pop(camera_id, None)
+        if pipeline is None:
+            return False
+        pipeline.stop()
+        return True
+
     def start_all(self) -> None:
         for pipeline in self._pipelines.values():
             pipeline.start()

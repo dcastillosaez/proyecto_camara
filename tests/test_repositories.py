@@ -1326,3 +1326,83 @@ async def TEST_camera_repo_default_id_is_none_with_two_cameras(db):
     repo = CameraRepo(sf)
 
     assert await repo.default_camera_id() is None
+
+
+# ─── Fase 36 (SCALE-05): CameraRepo CRUD ──────────────────────────────────────
+async def TEST_camera_repo_list_returns_all_cameras(db):
+    _, sf = db  # el fixture ya siembra 'cam1'
+    repo = CameraRepo(sf)
+
+    cameras = await repo.list()
+
+    assert [c["id"] for c in cameras] == ["cam1"]
+
+
+async def TEST_camera_repo_list_filters_by_enabled(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+    await repo.create("cam2", "Cam 2", "rtsp://cam2/stream", enabled=False)
+
+    assert [c["id"] for c in await repo.list(enabled=True)] == ["cam1"]
+    assert [c["id"] for c in await repo.list(enabled=False)] == ["cam2"]
+
+
+async def TEST_camera_repo_create_persists_all_fields(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+
+    created = await repo.create(
+        "cam2", "Entrada trasera", "rtsp://user:pass@host/stream",
+        enabled=True, process_w=640, process_h=480,
+    )
+
+    assert created["id"] == "cam2"
+    assert created["name"] == "Entrada trasera"
+    assert created["rtsp_url"] == "rtsp://user:pass@host/stream"
+    assert created["enabled"] is True
+    assert created["process_w"] == 640
+    assert created["process_h"] == 480
+
+    fetched = await repo.get("cam2")
+    assert fetched == created
+
+
+async def TEST_camera_repo_get_miss_returns_none(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+
+    assert await repo.get("does-not-exist") is None
+
+
+async def TEST_camera_repo_update_partial_fields_only(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+    await repo.create("cam2", "Cam 2", "rtsp://cam2/stream")
+
+    updated = await repo.update("cam2", name="Renombrada")
+
+    assert updated["name"] == "Renombrada"
+    assert updated["rtsp_url"] == "rtsp://cam2/stream"  # sin tocar
+
+
+async def TEST_camera_repo_update_unknown_camera_returns_none(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+
+    assert await repo.update("does-not-exist", name="X") is None
+
+
+async def TEST_camera_repo_delete_removes_row(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+    await repo.create("cam2", "Cam 2", "rtsp://cam2/stream")
+
+    assert await repo.delete("cam2") is True
+    assert await repo.get("cam2") is None
+
+
+async def TEST_camera_repo_delete_unknown_camera_returns_false(db):
+    _, sf = db
+    repo = CameraRepo(sf)
+
+    assert await repo.delete("does-not-exist") is False

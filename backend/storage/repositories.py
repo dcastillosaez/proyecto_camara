@@ -1157,3 +1157,66 @@ class CameraRepo:
             result = await session.execute(select(models.Camera.id))
             ids = result.scalars().all()
         return ids[0] if len(ids) == 1 else None
+
+    async def list(self, enabled: bool | None = None) -> list[dict[str, Any]]:
+        q = select(models.Camera)
+        if enabled is not None:
+            q = q.where(models.Camera.enabled == enabled)
+        async with self._sf() as session:
+            result = await session.execute(q)
+            return [self._to_dict(c) for c in result.scalars().all()]
+
+    async def get(self, camera_id: str) -> dict[str, Any] | None:
+        async with self._sf() as session:
+            row = await session.get(models.Camera, camera_id)
+            return self._to_dict(row) if row else None
+
+    async def create(
+        self, camera_id: str, name: str, rtsp_url: str, enabled: bool = True,
+        process_w: int | None = None, process_h: int | None = None,
+    ) -> dict[str, Any]:
+        async with self._sf() as session:
+            async with session.begin():
+                session.add(models.Camera(
+                    id=camera_id, name=name, rtsp_url_ref=rtsp_url, enabled=enabled,
+                    process_w=process_w, process_h=process_h,
+                ))
+        return await self.get(camera_id)
+
+    async def update(
+        self, camera_id: str, *, name: str | None = None, rtsp_url: str | None = None,
+        enabled: bool | None = None, process_w: int | None = None, process_h: int | None = None,
+    ) -> dict[str, Any] | None:
+        async with self._sf() as session:
+            async with session.begin():
+                row = await session.get(models.Camera, camera_id)
+                if row is None:
+                    return None
+                if name is not None:
+                    row.name = name
+                if rtsp_url is not None:
+                    row.rtsp_url_ref = rtsp_url
+                if enabled is not None:
+                    row.enabled = enabled
+                if process_w is not None:
+                    row.process_w = process_w
+                if process_h is not None:
+                    row.process_h = process_h
+        return await self.get(camera_id)
+
+    async def delete(self, camera_id: str) -> bool:
+        async with self._sf() as session:
+            async with session.begin():
+                row = await session.get(models.Camera, camera_id)
+                if row:
+                    await session.delete(row)
+                    return True
+        return False
+
+    @staticmethod
+    def _to_dict(c: models.Camera) -> dict[str, Any]:
+        return {
+            "id": c.id, "name": c.name, "rtsp_url": c.rtsp_url_ref, "enabled": bool(c.enabled),
+            "process_w": c.process_w, "process_h": c.process_h,
+            "created_at": c.created_at, "last_seen_at": c.last_seen_at,
+        }

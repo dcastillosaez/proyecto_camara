@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from backend.perception.face.identity import IdentityState
-from backend.pipeline.manager import CameraPipeline
+from backend.pipeline.manager import CameraManager, CameraPipeline
 from backend.pipeline.tracking import TrackRegistry
 
 
@@ -90,3 +90,41 @@ def TEST_get_person_boxes_includes_identity_fields():
     assert len(boxes) == 1
     assert boxes[0]["identity_state"] == "CONFIRMED"
     assert boxes[0]["person_name"] == "Ana"
+
+
+# ─── Fase 36 (SCALE-05): CameraManager.remove() ───────────────────────────────
+class _FakePipeline:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+def TEST_manager_remove_stops_pipeline_and_forgets_it():
+    manager = CameraManager()
+    fake = _FakePipeline()
+    manager._pipelines["cam1"] = fake
+
+    assert manager.remove("cam1") is True
+    assert fake.stopped is True
+    assert manager.get("cam1") is None
+
+
+def TEST_manager_remove_unknown_camera_returns_false_without_error():
+    manager = CameraManager()
+
+    assert manager.remove("does-not-exist") is False
+
+
+def TEST_manager_remove_one_camera_does_not_touch_the_others():
+    manager = CameraManager()
+    cam1, cam2 = _FakePipeline(), _FakePipeline()
+    manager._pipelines["cam1"] = cam1
+    manager._pipelines["cam2"] = cam2
+
+    manager.remove("cam1")
+
+    assert cam1.stopped is True
+    assert cam2.stopped is False
+    assert manager.get("cam2") is cam2
