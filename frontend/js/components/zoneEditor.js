@@ -1,14 +1,14 @@
 // frontend/js/components/zoneEditor.js
-// Fase 33 (OPS-21/OPS-23): editor visual de zonas sobre <canvas>, sustituye al
-// formulario JSON de /api/zones v1. CRUD exclusivamente contra /api/v2/zones (D-02);
-// coordenadas siempre en fraccion [0,1] (canvasClickToFrac, D-06 33-RESEARCH.md).
-// Ids en index.html (montado por 33-13, tabpanel Camara): #zone-line-canvas (sobre
-// #camera-feed, compartido con lineEditor.js) #zone-mode-toggle #zone-list #zone-new-btn
-// #zone-form-kind #zone-kind-locked-label #zone-form-days #zone-form-time-start/-end
-// #zone-save-btn #zone-cancel-btn #zone-error. initZoneEditor() la llama initCamera().
+// Fase 33 (OPS-21/OPS-23): editor visual de zonas sobre <canvas>, sustituye al formulario
+// JSON de /api/zones v1. CRUD contra /api/v2/zones (D-02); coordenadas en fraccion [0,1]
+// (canvasClickToFrac, D-06). Ids en index.html: #zone-line-canvas (sobre #camera-feed)
+// #zone-mode-toggle #zone-list #zone-new-btn #zone-form-kind #zone-kind-locked-label
+// #zone-form-days #zone-form-time-start/-end #zone-save-btn #zone-cancel-btn #zone-error.
+// initZoneEditor() la llama initCamera(). Fase 36: camera_id de activeCamera.js (D-XX).
 
 import { showToast } from '../views/dashboard.js';
 import { canvasClickToFrac, syncCanvasToImage } from './videoCanvas.js';
+import { getActiveCameraId } from './activeCamera.js';
 
 const WEEKDAY_LABELS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 const VERTEX_RADIUS = 5;
@@ -18,7 +18,6 @@ const KIND_VALUES = ['counting', 'restricted', 'exclusion'];
 let _canvas = null;
 let _img = null;
 let _editMode = false;
-let _zonesLoaded = false;
 // Trazado en curso ({x_frac,y_frac}[], se conserva tras un 422); id/kind en edicion.
 let _polygonPoints = [];
 let _draggingIndex = -1;
@@ -185,7 +184,7 @@ async function _saveZone() {
     id: _editingZoneId ?? `zone-${Date.now()}`,
     name: _editingZoneId ?? `Zona ${new Date().toLocaleTimeString('es-ES', { hour12: false })}`,
     polygon: _polygonPoints.map((p) => [p.x_frac, p.y_frac]),
-    kind,
+    kind, camera_id: getActiveCameraId(),
     schedule: _buildSchedule(),
     enabled: true,
   };
@@ -227,7 +226,7 @@ export async function loadZones() {
   const list = _byId('zone-list');
   if (!list) return;
   try {
-    const res = await fetch('/api/v2/zones');
+    const res = await fetch(`/api/v2/zones?camera_id=${encodeURIComponent(getActiveCameraId())}`);
     if (!res.ok) return;
     const data = await res.json();
     const zones = data.zones ?? [];
@@ -260,10 +259,9 @@ function _toggleEditMode() {
   const toggle = _byId('zone-mode-toggle');
   if (toggle) toggle.setAttribute('aria-pressed', String(_editMode));
   if (_canvas) _canvas.classList.toggle('zone-editor-canvas', _editMode);
-  if (_editMode && !_zonesLoaded) {
-    _zonesLoaded = true;
-    loadZones();
-  }
+  // Siempre recarga al entrar (Fase 36: la camara activa pudo cambiar desde la
+  // ultima vez), no solo la primera -- una lista de zonas es barata de repetir.
+  if (_editMode) loadZones();
 }
 
 // Exportada: camera.js la usa para desactivar este modo al activar "Editar lineas".

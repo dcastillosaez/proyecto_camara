@@ -804,20 +804,20 @@ async def root():
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
-async def mjpeg_generator():
+async def mjpeg_generator(pipeline: "CameraPipeline | None"):
     """Yield JPEG frames in MJPEG multipart format.
 
     El encode lo hace el StreamingWorker en su propio hilo; aqui solo se
     sirve el ultimo JPEG listo. Registrar la conexion y desconexion del
     cliente es lo que permite al worker no encodear cuando nadie mira.
     """
-    if rtsp_stream is None:
+    if pipeline is None:
         return
-    rtsp_stream.client_connected()
+    pipeline.client_connected()
     last: bytes | None = None
     try:
         while True:
-            jpeg = rtsp_stream.get_jpeg()
+            jpeg = pipeline.get_jpeg()
             if jpeg is None or jpeg is last:
                 await asyncio.sleep(0.02)
                 continue
@@ -832,13 +832,19 @@ async def mjpeg_generator():
     except asyncio.CancelledError:
         pass
     finally:
-        rtsp_stream.client_disconnected()
+        pipeline.client_disconnected()
 
 
 @app.get("/video_feed")
-async def video_feed():
+async def video_feed(camera_id: str | None = None):
+    # Sin camera_id: fachada v1, la camara primaria (compatibilidad hacia atras,
+    # incluida la tolerancia previa: sin pipeline activo, 200 con stream vacio en
+    # vez de error). Con camera_id (Fase 36, SCALE-06): cualquier camara viva, para
+    # el selector y la vista mosaico -- una camara desconocida se comporta igual,
+    # stream vacio, nunca 404: es un <img>, no una API JSON.
+    pipeline = camera_manager.get(camera_id) if camera_id and camera_manager is not None else rtsp_stream
     return StreamingResponse(
-        mjpeg_generator(),
+        mjpeg_generator(pipeline),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 

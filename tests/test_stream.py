@@ -34,7 +34,7 @@ async def TEST_075_video_feed_returns_mjpeg_content_type(fake_jpeg_frame):
 
     import backend.main as main_module
 
-    async def _finite_generator():
+    async def _finite_generator(pipeline):
         _, jpeg = cv2.imencode(".jpg", fake_jpeg_frame)
         yield (
             b"--frame\r\n"
@@ -64,7 +64,7 @@ async def TEST_076_video_feed_contains_jpeg_boundary(fake_jpeg_frame):
 
     import backend.main as main_module
 
-    async def _finite_generator():
+    async def _finite_generator(pipeline):
         _, jpeg = cv2.imencode(".jpg", fake_jpeg_frame)
         yield (
             b"--frame\r\n"
@@ -119,12 +119,11 @@ async def TEST_078_mjpeg_generator_tracks_client_lifecycle():
     pipeline = MagicMock()
     pipeline.get_jpeg.return_value = b"\xff\xd8fake"
 
-    with patch.object(main_module, "rtsp_stream", pipeline):
-        gen = main_module.mjpeg_generator()
-        chunk = await anext(gen)
-        assert b"--frame" in chunk
-        pipeline.client_connected.assert_called_once()
-        await gen.aclose()
+    gen = main_module.mjpeg_generator(pipeline)
+    chunk = await anext(gen)
+    assert b"--frame" in chunk
+    pipeline.client_connected.assert_called_once()
+    await gen.aclose()
 
     pipeline.client_disconnected.assert_called_once()
 
@@ -298,3 +297,71 @@ async def TEST_cpu_rebalance_loop_skips_tick_without_camera_manager():
         with pytest.raises(asyncio.CancelledError):
             await main_module._cpu_rebalance_loop(interval=0.01)
     # sin camera_manager, el tick no debe lanzar excepcion (ya verificado arriba)
+
+
+# ─── Fase 36 (SCALE-06): /video_feed acepta camera_id para el selector/mosaico ──
+async def _empty_generator(pipeline):
+    return
+    yield  # pragma: no cover - hace de este un generador vacio, nunca produce nada
+
+
+async def TEST_video_feed_without_camera_id_uses_primary_pipeline():
+    import backend.main as main_module
+
+    primary = MagicMock()
+    calls = []
+
+    def _capture(pipeline):
+        calls.append(pipeline)
+        return _empty_generator(pipeline)
+
+    with patch.object(main_module, "rtsp_stream", primary), \
+         patch.object(main_module, "mjpeg_generator", _capture):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=main_module.app), base_url="http://test"
+        ) as client:
+            await client.get("/video_feed")
+
+    assert calls == [primary]
+
+
+async def TEST_video_feed_with_camera_id_resolves_via_camera_manager():
+    import backend.main as main_module
+
+    primary = MagicMock()
+    other = MagicMock()
+    manager = MagicMock()
+    manager.get.side_effect = lambda cid: {"cam2": other}.get(cid)
+    calls = []
+
+    def _capture(pipeline):
+        calls.append(pipeline)
+        return _empty_generator(pipeline)
+
+    with patch.object(main_module, "rtsp_stream", primary), \
+         patch.object(main_module, "camera_manager", manager), \
+         patch.object(main_module, "mjpeg_generator", _capture):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=main_module.app), base_url="http://test"
+        ) as client:
+            await client.get("/video_feed", params={"camera_id": "cam2"})
+
+    manager.get.assert_called_once_with("cam2")
+    assert calls == [other]
+
+
+async def TEST_video_feed_with_unknown_camera_id_returns_empty_stream_not_error():
+    """Es un <img>, no una API JSON: una camara desconocida da 200 con stream
+    vacio, nunca 404 -- mismo criterio de tolerancia que sin pipeline activo."""
+    import backend.main as main_module
+
+    manager = MagicMock()
+    manager.get.return_value = None
+
+    with patch.object(main_module, "camera_manager", manager):
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=main_module.app), base_url="http://test"
+        ) as client:
+            response = await client.get("/video_feed", params={"camera_id": "does-not-exist"})
+
+    assert response.status_code == 200

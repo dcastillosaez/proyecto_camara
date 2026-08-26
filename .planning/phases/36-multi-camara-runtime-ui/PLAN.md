@@ -260,8 +260,70 @@ qué cámara entre, es el comportamiento correcto, no un atajo.
   contención de CPU de la máquina tras ~4 min de suite, no algo que este
   cambio toque (no roza `detector.py`). Playwright completo: **11 passed,
   20.9s**.
-- [ ] **36-07** — Frontend: selector de cámara + vista mosaico
-  (`frontend/js/views/mosaic.js`), `/video_feed` acepta `?camera_id=`.
+- [x] **36-07** — Frontend: selector de cámara + vista mosaico.
+
+  **Backend**: `/video_feed` acepta `?camera_id=` opcional (`backend/main.py`) —
+  sin él, la fachada v1 de siempre (cámara primaria, tolerante: sin pipeline
+  activo, 200 con stream vacío en vez de error, igual que antes); con él,
+  resuelve vía `camera_manager.get(camera_id)` para el selector/mosaico — una
+  cámara desconocida también da stream vacío, nunca 404 (es un `<img>`, no
+  una API JSON). `mjpeg_generator()` pasa a recibir la pipeline como
+  parámetro explícito en vez de leer el global `rtsp_stream` internamente.
+
+  **Frontend**: `components/activeCamera.js` (nuevo, ~22 líneas) es el único
+  estado compartido de "qué cámara está activa" — import por módulo, nunca
+  `window`/`localStorage` (es estado de la pestaña, no configuración
+  persistente). `views/camera-mosaic.js` (nuevo) pinta un grid de teselas de
+  solo lectura (`GET /api/v2/cameras` + `/video_feed?camera_id=X` por
+  tesela), alterna con `#camera-single-left`/`#camera-single-right` vía
+  `#mosaic-toggle`, y clicar una tesela selecciona esa cámara sin salir del
+  mosaico. `camera.js` gana el selector (`#camera-select`, poblado desde el
+  mismo `GET /api/v2/cameras` que ya usaba `loadRtspCard()` en su tick de 5s
+  — sin fetch duplicado), el aviso de CPU (`#camera-cpu-warning`,
+  reutilizando `total_estimated_cpu_pct`/`over_budget` de 36-05) y sale de
+  cualquier modo de edición en curso al cambiar de cámara (un trazado a
+  medias no debe quedar atribuido a la cámara equivocada). El botón
+  "Reintentar conexión", que vivía como `onclick=` inline en `index.html`,
+  se movió a un listener real en `camera.js` (ya no podía preservar
+  `camera_id` desde un atributo inline).
+
+  **zoneEditor.js/lineEditor.js se vuelven conscientes de la cámara activa**
+  (`camera_id: getActiveCameraId()` en el POST, filtro `?camera_id=` en el
+  GET) — sin esto, cualquier zona/línea creada habría seguido cayendo
+  siempre en `"cam1"` pase lo que pase en el selector, pese a que el backend
+  (Fase 33/35) ya soportaba `camera_id` de punta a punta. `zoneEditor.js`
+  estaba EXACTAMENTE en el límite de 300 líneas — se compensó comprimiendo
+  la cabecera y retirando el flag `_zonesLoaded`/`_linesLoaded` (recargar la
+  lista al entrar en modo edición siempre, no solo la primera vez, es más
+  correcto Y más corto: una lista de zonas/líneas es barata de repetir).
+  `rules-form.js` **no se tocó**: ya tenía `_renderCameraField` (Fase 33) con
+  el wildcard `"*"` como valor por defecto — el criterio 3 ("reglas admiten
+  camera \*") ya estaba resuelto, un hallazgo real del research, no una
+  decisión de esta sub-tarea.
+
+  `LOCKED_JS` gana `components/activeCamera.js` y `views/camera-mosaic.js`.
+
+  **Verificación manual con servidor y navegador reales** (no solo suite
+  automatizada): selector y botón de mosaico se renderizan correctamente en
+  `#view-camara`; alternar "Vista mosaico" oculta/muestra
+  `#camera-single-left`/`#camera-single-right` sin errores de JavaScript
+  (confirmado con `read_console_messages`, ida y vuelta). **Hallazgo real,
+  no introducido por esta fase** (confirmado con `git stash` que ya existía
+  antes de tocar nada): `GET /api/v2/cameras`/`GET /api/v2/cameras/{id}/health`
+  devuelven 500 cuando una cámara nunca ha capturado un frame (RTSP
+  inalcanzable, el caso real de esta máquina de desarrollo sin cámara
+  conectada) — `backend/pipeline/capture.py:111` usa `float("inf")` como
+  centinela de "sin frame", que el JSON estricto de Starlette
+  (`allow_nan=False`) rechaza. Esto vació el selector/mosaico en la
+  verificación manual (sin datos que pintar) pero no crasheó la página — el
+  código nuevo degrada con gracia (mismo criterio que el `try/catch` de
+  `loadRtspCard()` ya establecido en la Fase 32). Deliberadamente NO
+  arreglado aquí (toca `capture.py`, invariantes críticas del proyecto, sin
+  relación con SCALE-05..08) — reportado aparte con `spawn_task`
+  (`task_27f60468`) para una sesión propia.
+
+  Suite completa: **840 passed, 2 skipped, 4m9s** (+4 sobre 36-06, incluido
+  el flaky de 36-06 ya en verde). Playwright: **11 passed, 20.8s**.
 - [ ] **36-08** — Frontend: CRUD de cámaras en Ajustes
   (`frontend/js/views/cameras-crud.js`), consumidor de 36-03.
 - [ ] **36-09** — Analítica por cámara y total: `AnalyticsRepo`/

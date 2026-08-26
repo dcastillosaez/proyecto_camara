@@ -69,6 +69,9 @@ LOCKED_JS = [
     "components/lineEditor.js",
     "views/rules-form.js",
     "views/rules-editor.js",
+    # Fase 36: selector/mosaico multi-camara y CRUD de camaras
+    "components/activeCamera.js",
+    "views/camera-mosaic.js",
 ]
 
 
