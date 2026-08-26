@@ -359,9 +359,48 @@ qué cámara entre, es el comportamiento correcto, no un atajo.
   (`test_frontend_modules.py`, 9 passed); cambio solo de frontend, sin
   relanzar la suite completa (mismo criterio que el resto de sub-tareas de
   frontend de fases anteriores).
-- [ ] **36-09** — Analítica por cámara y total: `AnalyticsRepo`/
-  `analytics.py` con `camera_id=None` → agregación `GROUP BY camera_id` +
-  total combinado; filtro de cámara en `analytics.js`.
+- [x] **36-09** — Analítica por cámara y total. `AnalyticsRepo` (`hourly`,
+  `summary`, `occupancy`, `persons_ranking`) acepta `camera_id: str | None`
+  — `None` omite el filtro `WHERE camera_id = :cam` (helper `_camera_clause()`
+  nuevo) y agrega TODAS las cámaras. Decisión documentada en
+  `persons_ranking()`: el `INDEXED BY idx_events_analytics` (obligatorio,
+  26,7ms vs 212,6ms @100k) solo se aplica con `camera_id` concreto — forzar
+  un índice que empieza por `camera_id` sin filtrarlo no aporta nada con
+  "todas las cámaras", así que se omite en ese caso (sin medir esa ruta:
+  no hay presupuesto de rendimiento para el agregado total en el ROADMAP).
+
+  `analytics.py`: `camera_id="*"` (mismo comodín que usan las reglas desde
+  la Fase 33) pide el total — interceptado por `_resolve_analytics_camera_id()`
+  ANTES de `resolve_camera_id()` (Fase 35), así que con 2+ cámaras dejar de
+  especificar una sigue dando 400 (ambiguo) pero pedir `"*"` explícitamente
+  nunca lo hace. Aplicado a `/hourly`, `/summary`, `/occupancy`, `/persons`
+  y `/export`; **`/heatmap`/`/heatmap/scale` deliberadamente sin tocar** —
+  un mapa de calor es la máscara acumulada de UNA cámara, "todas" no tiene
+  sentido ahí.
+
+  `analytics.js` gana un selector `#an-camera-filter` (default `"*"`,
+  poblado con `GET /api/v2/cameras`) que sustituye los tres `camera_id=cam1`
+  literales que arrastraba desde la Fase 31. El heatmap, que no admite
+  comodín, omite el parámetro cuando el filtro es `"*"` (cae al default del
+  servidor) en vez de forzar `cam1`.
+
+  9 tests nuevos en `test_repositories.py` (4, `camera_id=None` por
+  método) y `test_analytics_api.py` (4 de endpoint + el de ambigüedad ya
+  existente verificado que sigue en 400). Suite completa: **849 passed, 2
+  skipped, 4m13s** (+9 sobre 36-07 — 36-08 no tocó nada de Python).
+  Playwright: **10 passed, 1 fallo preexistente** (`camera-offline.spec.js`,
+  ver nota abajo) — el resto sin regresión.
+
+  **Hallazgo real, no introducido por esta fase**: durante la verificación
+  de esta sub-tarea, `camera-offline.spec.js` empezó a fallar
+  ("Sin señal" esperado, "Conectado" recibido). Antes de asumir una
+  regresión propia, se verificó con `git stash` (revirtiendo TODOS los
+  cambios de la Fase 36, no solo los de esta sub-tarea) que el mismo test
+  falla igual sobre el código de antes de esta sesión — confirmado con
+  `playwright.config.js` en `reuseExistingServer: false` (cada ejecución
+  arranca un servidor fresco, no hay contaminación entre corridas).
+  Reportado aparte con `spawn_task` (`task_b41aa1cf`) en vez de arreglado
+  aquí — toca `backend/pipeline/capture.py`, fuera del alcance de SCALE-05.
 - [ ] **36-10** — Puerta de fase: test de carga corto + extrapolación
   (criterio 6), trazabilidad de los 6 criterios y SCALE-05..08, suite
   completa final.

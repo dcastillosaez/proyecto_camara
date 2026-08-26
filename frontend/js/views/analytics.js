@@ -35,12 +35,23 @@ let pending = 0;
 let okPanels = 0;
 let lastRange = null;
 let heatmapPending = null;
+// Fase 36 (SCALE-05): "*" (todas las camaras, agregado total) es el default -- una
+// vista de analitica que arranca mostrando solo una camara al azar seria enganosa.
+let _cameraFilter = '*';
 
 function _show(id, on) {
   const el = $(id);
   if (!el) return;
   el.classList.toggle('hidden', !on);
   el.classList.toggle('flex', on);
+}
+
+// El heatmap es un mapa de UNA camara (superpone su ultimo frame): no admite "*". Con
+// "todas" seleccionado, se omite el parametro (querystring vacia) y el servidor cae a
+// su propio default (la unica camara registrada, o "offline" si hay varias --
+// degradacion honesta, D-12).
+function _heatmapCameraQuery() {
+  return _cameraFilter === '*' ? '' : `camera_id=${encodeURIComponent(_cameraFilter)}&`;
 }
 
 function setPanelState(name, state) {
@@ -69,7 +80,7 @@ async function loadPanel(name, range, signal) {
   let data;
   try {
     data = await apiFetch(
-      `/api/v2/analytics/${name}?camera_id=cam1&from=${range.from}&to=${range.to}`,
+      `/api/v2/analytics/${name}?camera_id=${encodeURIComponent(_cameraFilter)}&from=${range.from}&to=${range.to}`,
       { signal },
     );
   } catch (err) {
@@ -138,7 +149,7 @@ function applyHeatmap(scale) {
 
   // Sin el ?t= el navegador serviria de cache y el mapa parece congelado; el servidor
   // ignora el parametro. Sigue empezando por '/', asi que isSafeMediaUrl la acepta.
-  const url = `/api/v2/analytics/heatmap?camera_id=cam1&t=${Date.now()}`;
+  const url = `/api/v2/analytics/heatmap?${_heatmapCameraQuery()}t=${Date.now()}`;
   if (nav.activeView() !== 'analitica') { heatmapPending = url; return; }
   paintHeatmap(url);
 }
@@ -149,7 +160,7 @@ async function loadHeatmap() {
   // fetch crudo y no apiFetch A PROPOSITO: apiFetch lanza y pierde el codigo, y aqui
   // el codigo ES el dato (404 = sin actividad, 503 = sin senal). No "unificar" esto.
   try {
-    res = await fetch('/api/v2/analytics/heatmap/scale?camera_id=cam1');
+    res = await fetch(`/api/v2/analytics/heatmap/scale?${_heatmapCameraQuery()}`);
   } catch (e) {
     setPanelState('heatmap', 'offline');
     settle();
@@ -189,11 +200,36 @@ function bindPanelButtons() {
   }
 }
 
+// Puebla el selector con "Todas las cámaras" (default) + una opción por cámara viva
+// (GET /api/v2/cameras, mismo endpoint que camera.js). Cambiar la seleccion recarga
+// la tanda entera con el nuevo filtro.
+async function _initCameraFilter() {
+  const sel = $('an-camera-filter');
+  if (!sel) return;
+  try {
+    const res = await fetch('/api/v2/cameras');
+    if (res.ok) {
+      const data = await res.json();
+      data.cameras.forEach((c) => {
+        const opt = document.createElement('option');
+        opt.value = c.camera_id;
+        opt.textContent = c.camera_id;
+        sel.appendChild(opt);
+      });
+    }
+  } catch { /* el selector se queda solo con "Todas las cámaras"; sin ruido */ }
+  sel.addEventListener('change', () => {
+    _cameraFilter = sel.value;
+    load(currentRange());
+  });
+}
+
 function bootAnalytics() {
   createCharts();
   initRange(load);
   initExport(currentRange);
   bindPanelButtons();
+  _initCameraFilter();
   load(currentRange());
 }
 

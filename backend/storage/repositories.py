@@ -877,11 +877,20 @@ def _bucket_expr(bucket: str) -> str:
     return "substr(ts,1,13)" if bucket == "hour" else "substr(ts,1,10)"
 
 
+def _camera_clause(camera_id: str | None) -> str:
+    """Fase 36 (SCALE-05): `camera_id=None` significa "todas las camaras" (agregado
+    total) -- el filtro simplemente se omite de la consulta. `:cam` sigue en `params`
+    sin problema aunque no aparezca en el SQL, SQLAlchemy ignora los parametros de
+    mas."""
+    return "camera_id = :cam AND " if camera_id is not None else ""
+
+
 class AnalyticsRepo:
     """Las cuatro agregaciones de la Vista de analitica (OPS-12..OPS-14), todas
     resueltas en SQL sobre `events` — nunca `detection_stats` (ver docstring del
     plan 31-04 para las tres razones) y nunca Python (`sorted()`/`sum()` sobre
-    filas ya traidas), que es justo lo que OPS-14 exige.
+    filas ya traidas), que es justo lo que OPS-14 exige. `camera_id=None` en
+    cualquier metodo agrega TODAS las camaras (Fase 36, SCALE-05).
     """
 
     def __init__(self, session_factory) -> None:
@@ -889,7 +898,7 @@ class AnalyticsRepo:
 
     async def hourly(
         self,
-        camera_id: str,
+        camera_id: str | None,
         cur_from: datetime.datetime,
         cur_to: datetime.datetime,
         bucket: str,
@@ -911,7 +920,7 @@ class AnalyticsRepo:
                    SUM(CASE WHEN ts >= :cur_from THEN 1 ELSE 0 END) AS cur,
                    SUM(CASE WHEN ts <  :cur_from THEN 1 ELSE 0 END) AS prev
               FROM events
-             WHERE camera_id = :cam AND ts >= :prev_from AND ts < :cur_to
+             WHERE {_camera_clause(camera_id)}ts >= :prev_from AND ts < :cur_to
                AND type = :etype
              GROUP BY b ORDER BY b
         """)
@@ -925,7 +934,7 @@ class AnalyticsRepo:
 
     async def summary(
         self,
-        camera_id: str,
+        camera_id: str | None,
         cur_from: datetime.datetime,
         cur_to: datetime.datetime,
         bucket: str,
@@ -948,11 +957,12 @@ class AnalyticsRepo:
         etype = EventType.LINE_CROSSED.value
         bucket_expr = _bucket_expr(bucket)
 
+        cam_clause = _camera_clause(camera_id)
         totals_sql = text(f"""
             WITH b AS (
               SELECT {bucket_expr} AS bucket, COUNT(*) AS n
                 FROM events
-               WHERE camera_id = :cam AND ts >= :cur_from AND ts < :cur_to AND type = :etype
+               WHERE {cam_clause}ts >= :cur_from AND ts < :cur_to AND type = :etype
                GROUP BY bucket
             )
             SELECT (SELECT SUM(n) FROM b) AS total,
@@ -961,17 +971,17 @@ class AnalyticsRepo:
                    (SELECT bucket FROM b ORDER BY n ASC,  bucket ASC LIMIT 1) AS min_bucket,
                    (SELECT MIN(n)  FROM b) AS min_value
         """)
-        window_sql = text("""
+        window_sql = text(f"""
             SELECT SUM(CASE WHEN ts >= :cur_from THEN 1 ELSE 0 END) AS cur,
                    SUM(CASE WHEN ts <  :cur_from THEN 1 ELSE 0 END) AS prev
               FROM events
-             WHERE camera_id = :cam AND ts >= :prev_from AND ts < :cur_to AND type = :etype
+             WHERE {cam_clause}ts >= :prev_from AND ts < :cur_to AND type = :etype
         """)
-        identity_sql = text("""
+        identity_sql = text(f"""
             SELECT COUNT(DISTINCT person_id) AS known,
                    COUNT(DISTINCT CASE WHEN person_id IS NULL THEN track_id END) AS unknown
               FROM events
-             WHERE camera_id = :cam AND ts >= :cur_from AND ts < :cur_to
+             WHERE {cam_clause}ts >= :cur_from AND ts < :cur_to
         """)
         params = {
             "cam": camera_id, "cur_from": cur_from, "cur_to": cur_to,
@@ -996,7 +1006,7 @@ class AnalyticsRepo:
 
     async def occupancy(
         self,
-        camera_id: str,
+        camera_id: str | None,
         cur_from: datetime.datetime,
         cur_to: datetime.datetime,
         limit: int = 10,
@@ -1009,21 +1019,22 @@ class AnalyticsRepo:
         borro, el LEFT JOIN da NULL y sin el el panel pintaria la cadena "null"
         en vez del id de la zona.
         """
-        rows_sql = text("""
+        cam_clause_e = "e.camera_id = :cam AND " if camera_id is not None else ""
+        rows_sql = text(f"""
             SELECT e.zone_id AS zone_id,
                    COALESCE(z.name, e.zone_id) AS zone_name,
                    COUNT(*) AS n
               FROM events e
               LEFT JOIN zones z ON z.id = e.zone_id
-             WHERE e.camera_id = :cam AND e.ts >= :cur_from AND e.ts < :cur_to
+             WHERE {cam_clause_e}e.ts >= :cur_from AND e.ts < :cur_to
                AND e.type = :etype AND e.zone_id IS NOT NULL
              GROUP BY e.zone_id
              ORDER BY n DESC
              LIMIT :limit
         """)
-        total_sql = text("""
+        total_sql = text(f"""
             SELECT COUNT(DISTINCT zone_id) AS n FROM events
-             WHERE camera_id = :cam AND ts >= :cur_from AND ts < :cur_to
+             WHERE {_camera_clause(camera_id)}ts >= :cur_from AND ts < :cur_to
                AND type = :etype AND zone_id IS NOT NULL
         """)
         params = {
@@ -1039,7 +1050,7 @@ class AnalyticsRepo:
 
     async def persons_ranking(
         self,
-        camera_id: str,
+        camera_id: str | None,
         cur_from: datetime.datetime,
         cur_to: datetime.datetime,
         limit: int = 10,
@@ -1048,22 +1059,25 @@ class AnalyticsRepo:
         nombre: los nombres viven en persons.db, otro fichero distinto de
         events.db — los resuelve el router (31-05).
 
-        `INDEXED BY idx_events_analytics` es obligatorio aqui (26,7 ms con hint
-        frente a 212,6 ms sin el, medido @100k): sin el, SQLite elige
-        idx_events_person y hace skip-scan. Se probaron cinco reescrituras para
-        desviarlo sin hint y ninguna cambia el plan — camera_id y ts siguen
+        `INDEXED BY idx_events_analytics` es obligatorio con `camera_id` concreto
+        (26,7 ms con hint frente a 212,6 ms sin el, medido @100k): sin el, SQLite
+        elige idx_events_person y hace skip-scan. Se probaron cinco reescrituras
+        para desviarlo sin hint y ninguna cambia el plan — camera_id y ts siguen
         siendo terminos indexables de idx_events_person. `INDEXED BY` FALLA LA
         CONSULTA si el indice no existe: la migracion v4 de 31-01 es precondicion
         dura, y TEST_analytics_ranking_uses_analytics_index (Task 3) es lo que
-        detecta su desaparicion en CI, no en produccion.
+        detecta su desaparicion en CI, no en produccion. Con `camera_id=None`
+        (Fase 36, "todas las camaras") el hint se omite: forzar un indice que
+        empieza por `camera_id` sin filtrarlo no aporta nada.
         """
         prev_from = cur_from - (cur_to - cur_from)
-        sql = text("""
+        indexed_by = " INDEXED BY idx_events_analytics" if camera_id is not None else ""
+        sql = text(f"""
             SELECT person_id,
                    SUM(CASE WHEN ts >= :cur_from THEN 1 ELSE 0 END) AS cur,
                    SUM(CASE WHEN ts <  :cur_from THEN 1 ELSE 0 END) AS prev
-              FROM events INDEXED BY idx_events_analytics
-             WHERE camera_id = :cam AND ts >= :prev_from AND ts < :cur_to
+              FROM events{indexed_by}
+             WHERE {_camera_clause(camera_id)}ts >= :prev_from AND ts < :cur_to
                AND person_id IS NOT NULL
              GROUP BY person_id
             HAVING cur > 0
