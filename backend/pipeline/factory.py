@@ -28,13 +28,14 @@ from typing import Any, Awaitable, Callable
 import numpy as np
 
 from backend.config import Settings
+from backend.database import get_session_factory
 from backend.detector import PersonDetector
 from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
 from backend.observability.latency import LatencyTracker
 from backend.pipeline.manager import CameraManager, CameraPipeline
 from backend.recognizer import PersonRecognizer
-from backend.storage.repositories import RecordingRepo
+from backend.storage.repositories import LineRepo, RecordingRepo, ZoneRepo
 from backend.tracker import PersonTracker
 
 logger = logging.getLogger(__name__)
@@ -171,4 +172,26 @@ def build_camera_pipeline(
         object_max_tracks=settings.object_max_tracks,
     )
     pipeline.set_detection_classes(services.active_classes)
+    return pipeline
+
+
+async def start_camera_pipeline(
+    camera_manager: CameraManager, camera: dict[str, Any], services: SharedPipelineServices,
+) -> CameraPipeline:
+    """Construye, arranca y carga zonas/lineas persistidas de UNA fila de
+    `CameraRepo`. Punto unico usado tanto por el arranque (main.py, N filas)
+    como por el alta en caliente (`POST /api/v2/cameras`) para que ambos
+    caminos hagan exactamente la misma secuencia."""
+    process_size = (
+        (camera["process_w"], camera["process_h"])
+        if camera.get("process_w") and camera.get("process_h") else None
+    )
+    pipeline = build_camera_pipeline(
+        camera_manager, camera["id"], camera["rtsp_url"], services, process_size=process_size,
+    )
+    pipeline.start()
+    camera_id = camera["id"]
+    pipeline.set_zones(await ZoneRepo(get_session_factory()).list(camera_id=camera_id))
+    pipeline.set_lines(await LineRepo(get_session_factory()).list(camera_id=camera_id))
+    logger.info("CameraPipeline %s arrancada en caliente", camera_id)
     return pipeline

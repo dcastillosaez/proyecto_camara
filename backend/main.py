@@ -49,17 +49,16 @@ from backend.observability.metrics import metrics as obs_metrics
 from backend.observability.sampler import MetricsSampler
 from backend.notifier import Notifier
 from backend.pipeline import CameraManager, CameraPipeline
-from backend.pipeline.factory import SharedPipelineServices, build_camera_pipeline
+from backend.pipeline.factory import SharedPipelineServices, start_camera_pipeline
 from backend.recognizer import PersonRecognizer
 from backend.storage.repositories import (
     ConfigRepo,
     DetectionStatRepo,
     EventRepo,
-    LineRepo,
     RecordingRepo,
     RuleRepo,
-    ZoneRepo,
 )
+
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 logger = logging.getLogger(__name__)
@@ -553,9 +552,6 @@ async def lifespan(app: FastAPI):
     )
     camera_manager = CameraManager()
 
-    from backend.api.v2 import cameras as cameras_v2_module
-    cameras_v2_module.configure(camera_manager)
-
     from backend.api.v2 import context as context_v2_module
     context_v2_module.configure(camera_manager)
 
@@ -586,26 +582,24 @@ async def lifespan(app: FastAPI):
         is_intrusion=lambda: not _is_in_schedule(), on_identified=_save_gallery_capture,
         broadcast=_broadcast, loop=loop,
     )
-    pipeline = build_camera_pipeline(
-        camera_manager, "cam1", build_rtsp_url(settings), pipeline_services,
-        process_size=process_size,
+    from backend.api.v2 import cameras as cameras_v2_module
+    cameras_v2_module.configure(camera_manager, pipeline_services)
+
+    pipeline = await start_camera_pipeline(
+        camera_manager,
+        {"id": "cam1", "rtsp_url": build_rtsp_url(settings), "process_w": process_size[0] if process_size else None,
+         "process_h": process_size[1] if process_size else None},
+        pipeline_services,
     )
     rtsp_stream = pipeline  # fachada consumida por los endpoints v1
-
-    if settings.camera_driver == "tapo":
-        from backend.camera import set_refs as camera_set_refs
-        camera_set_refs(pipeline, pipeline.tracker)
-
-    pipeline.start()
     logger.info(
         "Pipeline v2 arrancado (%s) — deteccion %.0f FPS objetivo",
         mask_rtsp_url(build_rtsp_url(settings)), settings.detection_target_fps,
     )
 
-    # Load persisted zones/lines into the detection worker — fuente unica v2
-    # (ZoneRepo/LineRepo), D-02.
-    pipeline.set_zones(await ZoneRepo(get_session_factory()).list(camera_id="cam1"))
-    pipeline.set_lines(await LineRepo(get_session_factory()).list(camera_id="cam1"))
+    if settings.camera_driver == "tapo":
+        from backend.camera import set_refs as camera_set_refs
+        camera_set_refs(pipeline, pipeline.tracker)
 
     metrics_sampler = None
     if settings.metrics_enabled:

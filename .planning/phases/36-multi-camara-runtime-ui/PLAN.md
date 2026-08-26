@@ -136,12 +136,38 @@ qué cámara entre, es el comportamiento correcto, no un atajo.
   (con un warning preexistente de `ValueError: Out of range float... inf` en
   el log del servidor de tests, verificado con `git stash` que ya aparecía
   ANTES de este cambio — no es una regresión, no se ha tocado).
-- [ ] **36-03** — Endpoints `POST/PUT/DELETE /api/v2/cameras` en
-  `backend/api/v2/cameras.py`: crear arranca la pipeline en caliente
-  (factoría de 36-02 + `camera_manager.add()` + `pipeline.start()`, zonas/
-  líneas vacías por defecto), editar permite renombrar/activar-desactivar/
-  cambiar URL (reconstruye la pipeline si cambia la URL), borrar para +
-  quita del `CameraManager` + borra la fila. Tests en `test_cameras_api.py`.
+- [x] **36-03** — Endpoints `POST/PUT/DELETE /api/v2/cameras` +
+  `GET /api/v2/cameras/catalog` en `backend/api/v2/cameras.py`. De paso,
+  `backend/pipeline/factory.py` gana `start_camera_pipeline()` (construir +
+  `.start()` + cargar zonas/líneas persistidas — la secuencia completa que
+  antes solo vivía inline en `main.py`), que ahora usan **tanto** el
+  arranque de "cam1" en `main.py` **como** el endpoint de creación — un solo
+  sitio que sabe arrancar una cámara de producción de principio a fin, para
+  que 36-04 (arranque de N cámaras) no tenga que reinventar la secuencia.
+
+  - `POST` — 409 si el id ya existe (`CameraRepo.get()` primero); si
+    `enabled`, arranca la pipeline en caliente antes de responder.
+    `CameraIn` valida `rtsp_url` con `rtsp://` obligatorio (mismo criterio
+    que el resto de validación v2, `ZoneIn`/`LineIn` como referencia).
+  - `PUT` — solo reinicia la pipeline (`camera_manager.remove()` +
+    `start_camera_pipeline()`) si el cambio afecta a algo que la pipeline
+    necesita reconstruir (`rtsp_url`/`process_w`/`process_h`/`enabled`);
+    renombrar una cámara en marcha NO la reinicia — el nombre es un
+    atributo de catálogo, nunca se pasa a `CameraPipeline`.
+  - `DELETE` — para la pipeline (no-op si no corría) + borra la fila.
+  - `GET /catalog` (nuevo, no en el research original — necesario para que
+    36-08 pueda listar TODAS las cámaras del catálogo, incluidas las
+    deshabilitadas/paradas, ya que `GET ""` solo lista pipelines VIVAS).
+    `rtsp_url` siempre enmascarada en toda respuesta saliente
+    (`mask_rtsp_url`, mismo criterio que `config.py` de la Fase 32) — nunca
+    se devuelven credenciales RTSP en claro por la API.
+
+  20 tests dirigidos verdes (13 nuevos) en `test_cameras_api.py`, con
+  `CameraRepo`/`CameraManager` sustituidos por dobles de prueba (mismo
+  patrón que `test_zones_api.py`) — sin tocar una base de datos real.
+  Suite completa: **814 passed, 2 skipped, 4m12s** (+13 sobre 36-02).
+  Playwright completo: **11 passed, 21.2s** (mismo warning preexistente de
+  `inf`, sin regresión).
 - [ ] **36-04** — Arranque dinámico desde la tabla `cameras`: `main.py` siembra
   `cam1` una sola vez desde `settings` si la tabla está vacía (migración
   desde variables de entorno, compatibilidad hacia atrás) y luego arranca
