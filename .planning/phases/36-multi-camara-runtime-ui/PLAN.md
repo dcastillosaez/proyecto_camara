@@ -206,11 +206,28 @@ qué cámara entre, es el comportamiento correcto, no un atajo.
   Suite completa: **819 passed, 2 skipped, 4m14s** (+5 sobre 36-03).
   Playwright completo: **11 passed, 21.1s** (servidor real arrancando por
   el camino nuevo, sin regresión).
-- [ ] **36-05** — Coste de CPU estimado por cámara: `estimated_cpu_pct` en
-  `pipeline.stats()`/`GET /api/v2/cameras` (proxy `detection_fps ×
-  latencia_media`, documentado como estimación, no medición de SO), umbral
-  configurable (`Settings.cpu_budget_warn_pct`) y flag `over_budget` en la
-  respuesta agregada.
+- [x] **36-05** — Coste de CPU estimado por cámara. `CameraPipeline.
+  estimated_cpu_pct` (nueva `@property`, `backend/pipeline/manager.py`):
+  `fps_efectivo × latencia_media` de detección + reconocimiento, como
+  fracción de UN core — documentado explícitamente como estimación, no
+  medición real del sistema operativo (no hay instrumentación de SO en
+  este proyecto). `behavior`/`objects` corren dentro del bucle de
+  detección, así que su coste ya está incluido en la latencia medida de
+  `detection`, no se contabilizan aparte. Nuevo campo de configuración
+  `Settings.cpu_budget_warn_pct` (default 200.0 — "hasta 2 cores llenos"),
+  registrado también en `config_schema.py` (`applies="hot"`, sin reinicio)
+  porque `TEST_config_schema_covers_every_settings_field` así lo exige.
+  `GET /api/v2/cameras` gana `estimated_cpu_pct` por cámara y, a nivel de
+  respuesta, `total_estimated_cpu_pct`/`cpu_budget_warn_pct`/`over_budget`
+  — todo lo que 36-08 necesita para pintar un aviso sin cálculos en
+  cliente (D-02, mismo criterio que el resto del proyecto: agregaciones en
+  servidor).
+
+  9 tests nuevos (3 en `test_manager.py` sobre `estimated_cpu_pct`, 2 en
+  `test_cameras_api.py` sobre el agregado/umbral, 4 indirectos vía
+  `test_config_schema.py`/`test_config_api.py` que ya cubrían el nuevo
+  campo por construcción). Suite completa: **824 passed, 2 skipped, 4m8s**
+  (+5 sobre 36-04). Playwright: **11 passed, 23.0s**.
 - [ ] **36-06** — Presupuesto de FPS compartido: `CameraManager` reparte el
   FPS objetivo de detección entre pipelines cuando el coste total estimado
   supera el presupuesto (reduce proporcionalmente, restaura al bajar).

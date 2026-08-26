@@ -30,7 +30,7 @@ def _reset_cameras_wiring():
     cameras_module.configure(None)
 
 
-def _fake_pipeline(camera_id="cam1", connected=True, degraded=False) -> MagicMock:
+def _fake_pipeline(camera_id="cam1", connected=True, degraded=False, estimated_cpu_pct=0.0) -> MagicMock:
     pipeline = MagicMock()
     pipeline.health = CaptureHealth(
         camera_id=camera_id, connected=connected, fps=12.5, reconnects=0,
@@ -38,6 +38,7 @@ def _fake_pipeline(camera_id="cam1", connected=True, degraded=False) -> MagicMoc
     )
     pipeline.worker_status.return_value = {"capture": "running", "detector": "running"}
     pipeline.degraded = degraded
+    pipeline.estimated_cpu_pct = estimated_cpu_pct
     pipeline.get_fps.return_value = 12.5
     pipeline.get_detection_fps.return_value = 8.0
     pipeline.broker.stats.return_value = {"subscribers": 2}
@@ -73,6 +74,40 @@ async def TEST_list_returns_health_for_every_camera():
     assert all("workers" in c and "degraded" in c for c in body["cameras"])
 
 
+async def TEST_list_includes_per_camera_and_total_estimated_cpu():
+    """SCALE-08: coste de CPU estimado por camara y total, con umbral de aviso."""
+    cam1 = _fake_pipeline("cam1", estimated_cpu_pct=60.0)
+    cam2 = _fake_pipeline("cam2", estimated_cpu_pct=90.0)
+    cameras_module.configure(_mock_manager(cam1, cam2))  # sin services -> umbral por defecto
+
+    async with await _client() as client:
+        resp = await client.get("/api/v2/cameras")
+
+    body = resp.json()
+    by_id = {c["camera_id"]: c for c in body["cameras"]}
+    assert by_id["cam1"]["estimated_cpu_pct"] == 60.0
+    assert by_id["cam2"]["estimated_cpu_pct"] == 90.0
+    assert body["total_estimated_cpu_pct"] == 150.0
+    assert body["cpu_budget_warn_pct"] == cameras_module._DEFAULT_CPU_BUDGET_WARN_PCT
+    assert body["over_budget"] is False  # 150 < 200 por defecto
+
+
+async def TEST_list_flags_over_budget_when_total_exceeds_configured_threshold():
+    cam1 = _fake_pipeline("cam1", estimated_cpu_pct=90.0)
+    cam2 = _fake_pipeline("cam2", estimated_cpu_pct=90.0)
+    services = MagicMock()
+    services.settings.cpu_budget_warn_pct = 150.0
+    cameras_module.configure(_mock_manager(cam1, cam2), services=services)
+
+    async with await _client() as client:
+        resp = await client.get("/api/v2/cameras")
+
+    body = resp.json()
+    assert body["total_estimated_cpu_pct"] == 180.0
+    assert body["cpu_budget_warn_pct"] == 150.0
+    assert body["over_budget"] is True
+
+
 async def TEST_list_is_empty_with_zero_cameras_but_pipeline_active():
     cameras_module.configure(_mock_manager())
 
@@ -80,7 +115,9 @@ async def TEST_list_is_empty_with_zero_cameras_but_pipeline_active():
         resp = await client.get("/api/v2/cameras")
 
     assert resp.status_code == 200
-    assert resp.json() == {"cameras": []}
+    assert resp.json()["cameras"] == []
+    assert resp.json()["total_estimated_cpu_pct"] == 0.0
+    assert resp.json()["over_budget"] is False
 
 
 async def TEST_health_returns_503_when_pipeline_v2_not_active():

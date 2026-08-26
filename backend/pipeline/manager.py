@@ -273,6 +273,23 @@ class CameraPipeline:
     def degraded(self) -> bool:
         return self.supervisor.degraded
 
+    @property
+    def estimated_cpu_pct(self) -> float:
+        """Estimacion del coste de CPU de esta camara (SCALE-08) — NO es una
+        medicion real del sistema operativo, sino `fps_efectivo * latencia_media`
+        de cada worker de AdaptiveRate (deteccion + reconocimiento), como
+        fraccion de UN core. `behavior`/`objects` corren dentro del bucle de
+        deteccion, asi que su coste ya queda incluido en la latencia medida
+        de `detection`; no se contabilizan aparte."""
+        pct = 0.0
+        if self.detection is not None:
+            s = self.detection.stats
+            pct += s.get("effective_fps", 0.0) * s.get("avg_latency", 0.0) * 100.0
+        if self.recognition is not None:
+            s = self.recognition.stats
+            pct += s.get("effective_fps", 0.0) * s.get("avg_latency", 0.0) * 100.0
+        return round(pct, 1)
+
     def worker_status(self) -> dict[str, str]:
         return {name: st.value for name, st in self.supervisor.status().items()}
 

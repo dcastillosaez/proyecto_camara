@@ -28,6 +28,10 @@ from backend.storage.repositories import CameraRepo
 
 router = APIRouter(prefix="/api/v2/cameras", tags=["cameras"])
 
+# Mismo valor por defecto que Settings.cpu_budget_warn_pct (backend/config.py) --
+# fallback solo cuando _services es None (tests que ejercitan unicamente GET).
+_DEFAULT_CPU_BUDGET_WARN_PCT = 200.0
+
 _camera_manager: Any = None
 _services: SharedPipelineServices | None = None
 
@@ -108,14 +112,25 @@ class CameraUpdate(BaseModel):
 @router.get("")
 @limiter.limit(V2_RATE_LIMIT)
 async def list_cameras(request: Request):
-    """List cameras managed by pipeline v2, with their capture health."""
+    """List cameras managed by pipeline v2, with their capture health y coste de
+    CPU estimado (SCALE-08) — ver CameraPipeline.estimated_cpu_pct: es una
+    estimacion, no una medicion real del sistema operativo."""
     if _camera_manager is None:
         raise HTTPException(status_code=503, detail="Pipeline v2 no activo")
+    pipelines = _camera_manager.all()
+    budget = _services.settings.cpu_budget_warn_pct if _services is not None else _DEFAULT_CPU_BUDGET_WARN_PCT
+    total_cpu = round(sum(p.estimated_cpu_pct for p in pipelines), 1)
     return {
         "cameras": [
-            {**asdict(p.health), "workers": p.worker_status(), "degraded": p.degraded}
-            for p in _camera_manager.all()
-        ]
+            {
+                **asdict(p.health), "workers": p.worker_status(), "degraded": p.degraded,
+                "estimated_cpu_pct": p.estimated_cpu_pct,
+            }
+            for p in pipelines
+        ],
+        "total_estimated_cpu_pct": total_cpu,
+        "cpu_budget_warn_pct": budget,
+        "over_budget": total_cpu > budget,
     }
 
 

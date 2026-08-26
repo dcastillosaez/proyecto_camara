@@ -128,3 +128,32 @@ def TEST_manager_remove_one_camera_does_not_touch_the_others():
     assert cam1.stopped is True
     assert cam2.stopped is False
     assert manager.get("cam2") is cam2
+
+
+# ─── Fase 36 (SCALE-08): CameraPipeline.estimated_cpu_pct ─────────────────────
+def _pipeline_with_worker_stats(detection_stats=None, recognition_stats=None) -> CameraPipeline:
+    p = object.__new__(CameraPipeline)
+    p.detection = SimpleNamespace(stats=detection_stats) if detection_stats is not None else None
+    p.recognition = SimpleNamespace(stats=recognition_stats) if recognition_stats is not None else None
+    return p
+
+
+def TEST_estimated_cpu_pct_is_fps_times_latency_as_percentage():
+    """8 fps * 0.05s/frame = 40% de un core."""
+    pipeline = _pipeline_with_worker_stats(
+        detection_stats={"effective_fps": 8.0, "avg_latency": 0.05},
+    )
+    assert pipeline.estimated_cpu_pct == 40.0
+
+
+def TEST_estimated_cpu_pct_sums_detection_and_recognition():
+    pipeline = _pipeline_with_worker_stats(
+        detection_stats={"effective_fps": 8.0, "avg_latency": 0.05},   # 40%
+        recognition_stats={"effective_fps": 2.0, "avg_latency": 0.10},  # 20%
+    )
+    assert pipeline.estimated_cpu_pct == 60.0
+
+
+def TEST_estimated_cpu_pct_is_zero_without_detection_or_recognition():
+    pipeline = _pipeline_with_worker_stats()
+    assert pipeline.estimated_cpu_pct == 0.0

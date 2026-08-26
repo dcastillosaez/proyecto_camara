@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     detection_max_fps: float = 12.0
     recognition_target_fps: float = 2.0
 
+    # --- Presupuesto de CPU multi-camara (Fase 36, SCALE-08) ---
+    # Umbral de aviso, en % de un unico core equivalente sumado entre TODAS las
+    # camaras (p.ej. 200.0 = "hasta 2 cores llenos"). No es una medicion real del
+    # SO: CameraPipeline.estimated_cpu_pct estima fps_efectivo * latencia_media de
+    # deteccion/reconocimiento por camara (backend/pipeline/manager.py).
+    cpu_budget_warn_pct: float = 200.0
+
     db_path: str = "data/events.db"
     host: str = "0.0.0.0"
     port: int = 8000
