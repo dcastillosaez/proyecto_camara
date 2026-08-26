@@ -26,6 +26,7 @@
 
 import { showToast } from '../views/dashboard.js';
 import { canvasClickToFrac, syncCanvasToImage } from './videoCanvas.js';
+import { getActiveCameraId } from './activeCamera.js';
 
 const ARROW_LEN = 14;
 const ARROW_HALF = 6;
@@ -33,7 +34,6 @@ const ARROW_HALF = 6;
 let _canvas = null;
 let _img = null;
 let _editMode = false;
-let _linesLoaded = false;
 let _lines = []; // ultima lista cargada de /api/v2/lines, para redibujar todas
 let _currentStart = null; // {x_frac,y_frac} o null
 let _currentEnd = null;
@@ -177,6 +177,7 @@ async function _saveLine() {
     start_y_frac: _currentStart.y_frac,
     end_x_frac: _currentEnd.x_frac,
     end_y_frac: _currentEnd.y_frac,
+    camera_id: getActiveCameraId(),
     enabled: true,
   };
   const btn = _byId('line-save-btn');
@@ -218,7 +219,7 @@ async function _deleteLine(id, name) {
 export async function loadLines() {
   const list = _byId('line-list');
   try {
-    const res = await fetch('/api/v2/lines');
+    const res = await fetch(`/api/v2/lines?camera_id=${encodeURIComponent(getActiveCameraId())}`);
     if (!res.ok) return;
     const data = await res.json();
     _lines = data.lines ?? [];
@@ -252,10 +253,9 @@ function _toggleEditMode() {
   const toggle = _byId('line-mode-toggle');
   if (toggle) toggle.setAttribute('aria-pressed', String(_editMode));
   if (_canvas) _canvas.classList.toggle('zone-editor-canvas', _editMode);
-  if (_editMode && !_linesLoaded) {
-    _linesLoaded = true;
-    loadLines();
-  }
+  // Siempre recarga al entrar (Fase 36: la camara activa pudo cambiar desde la
+  // ultima vez), no solo la primera -- una lista de lineas es barata de repetir.
+  if (_editMode) loadLines();
 }
 
 // Exportada para que camera.js (Plan 33-13) desactive este modo cuando el operador

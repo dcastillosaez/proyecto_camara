@@ -39,9 +39,9 @@ async def force_retry_now(session_factory, rec_id: int) -> None:
                 row.next_attempt_at = datetime.datetime.now() - datetime.timedelta(seconds=1)
 
 
-async def make_pending_recording(repo: RecordingRepo, filename="clip.mp4") -> int:
+async def make_pending_recording(repo: RecordingRepo, filename="clip.mp4", camera_id="cam1") -> int:
     rec_id = await repo.create(
-        camera_id="cam1", filename=filename, started_at=datetime.datetime.now(), reason="test",
+        camera_id=camera_id, filename=filename, started_at=datetime.datetime.now(), reason="test",
     )
     await repo.finalize(
         rec_id, ended_at=datetime.datetime.now(), duration_s=5.0, size_bytes=1024,
@@ -163,8 +163,8 @@ async def TEST_failed_upload_emits_event(db):
 
     emitted = []
 
-    async def on_permanent_failure(rid, message):
-        emitted.append((rid, message))
+    async def on_permanent_failure(rid, camera_id, message):
+        emitted.append((rid, camera_id, message))
 
     queue = UploadQueue(
         repo, folder_id="F", credentials_path="creds.json", max_attempts=1, poll_secs=1000,
@@ -177,6 +177,30 @@ async def TEST_failed_upload_emits_event(db):
 
     assert len(emitted) == 1
     assert emitted[0][0] == rec_id
+    assert emitted[0][1] == "cam1"
+
+
+async def TEST_failed_upload_reports_the_actual_camera_id(db):
+    """Fase 36 (SCALE-05): una cola de subida compartida entre camaras debe
+    reportar el camera_id real de la grabacion, no asumir siempre 'cam1'."""
+    repo = RecordingRepo(db)
+    rec_id = await make_pending_recording(repo, filename="clip-cam2.mp4", camera_id="cam2")
+
+    emitted = []
+
+    async def on_permanent_failure(rid, camera_id, message):
+        emitted.append((rid, camera_id, message))
+
+    queue = UploadQueue(
+        repo, folder_id="F", credentials_path="creds.json", max_attempts=1, poll_secs=1000,
+        on_permanent_failure=on_permanent_failure,
+    )
+
+    with patch("backend.gdrive.upload_file", side_effect=RuntimeError("network error")):
+        await queue.run_once()
+        await asyncio.sleep(0.05)
+
+    assert emitted == [(rec_id, "cam2", "network error")]
 
 
 async def TEST_upload_does_not_block_pipeline(db):

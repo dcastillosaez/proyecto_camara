@@ -82,3 +82,44 @@ def test_stats_exposes_effective_fps_and_latency():
     for key in ("effective_fps", "avg_latency", "steps_down", "steps_up"):
         assert key in s
         assert isinstance(s[key], (int, float))
+
+
+# ─── Fase 36 (SCALE-08): techo externo compartido entre camaras ──────────────
+def test_external_cap_clamps_effective_fps():
+    r = AdaptiveRate(target_fps=8.0, min_fps=3.0, max_fps=12.0)
+    r.set_external_cap(4.0)
+    assert r.effective_fps == 4.0
+
+
+def test_external_cap_never_raises_effective_fps_above_its_own_step():
+    """El techo solo puede BAJAR el ritmo, nunca subirlo por encima de lo que
+    la propia histeresis ya eligio."""
+    r = AdaptiveRate(target_fps=8.0, min_fps=3.0, max_fps=12.0)
+    r.set_external_cap(100.0)
+    assert r.effective_fps == 8.0
+
+
+def test_external_cap_none_releases_it_without_touching_internal_step():
+    r = AdaptiveRate(target_fps=8.0, min_fps=3.0, max_fps=12.0)
+    r.set_external_cap(4.0)
+    r.set_external_cap(None)
+    assert r.effective_fps == 8.0
+
+
+def test_should_process_respects_external_cap():
+    r = AdaptiveRate(target_fps=10.0, min_fps=10.0, max_fps=10.0)
+    r.set_external_cap(2.0)
+    now = 0.0
+    accepted = 0
+    r.should_process(now)
+    for _ in range(100):
+        now += 0.01
+        if r.should_process(now):
+            accepted += 1
+    # 1 segundo simulado a 2 fps (techo), no a los 10 fps originales
+    assert 1 <= accepted <= 3
+
+
+def test_min_fps_is_readable():
+    r = AdaptiveRate(target_fps=8.0, min_fps=3.0, max_fps=12.0)
+    assert r.min_fps == 3.0

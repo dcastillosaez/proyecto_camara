@@ -656,6 +656,9 @@
         <p id="an-subtitle" class="mono text-xs text-slate-500">—</p>
       </div>
       <div class="flex flex-wrap items-center gap-3">
+        <select id="an-camera-filter" class="text-xs bg-slate-800 border border-slate-700 text-slate-300 rounded-lg px-2 py-1.5 cursor-pointer focus:outline-none focus:border-blue-500 transition-colors" aria-label="Filtrar por cámara">
+          <option value="*" selected>Todas las cámaras</option>
+        </select>
         <div id="an-range" class="range-seg">
           <button id="an-range-today" class="filter-chip active" data-range="today" aria-pressed="true">Hoy</button>
           <button id="an-range-7d" class="filter-chip" data-range="7d" aria-pressed="false">7 días</button>
@@ -803,12 +806,26 @@
     <p id="an-updated" class="lg:col-span-12 mono text-xs text-slate-600">Actualizado a las --:--:--</p>
   </section>
 
-  <!-- ══════════════════ VISTA CÁMARA (Fase 32, OPS-16/17) ══════════════════ -->
+  <!-- ══════════════════ VISTA CÁMARA (Fase 32, OPS-16/17; selector/mosaico Fase 36) ══ -->
   <section id="view-camara" role="tabpanel" aria-labelledby="tab-camara" hidden
            class="p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 max-w-[1600px] mx-auto w-full">
 
+    <!-- Selector de cámara + vista mosaico (SCALE-06) -->
+    <div class="lg:col-span-12 flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-2">
+        <label for="camera-select" class="text-xs text-slate-500">Cámara</label>
+        <select id="camera-select" class="text-xs bg-slate-800 border border-slate-700 text-slate-300 rounded-lg px-2 py-1.5 cursor-pointer focus:outline-none focus:border-blue-500 transition-colors"></select>
+        <span id="camera-cpu-warning" class="chip mono hidden" style="border-color:#f59e0b; color:#f59e0b" title="El coste de CPU estimado supera el umbral configurado"></span>
+      </div>
+      <button id="mosaic-toggle" type="button" aria-pressed="false" class="filter-chip">Vista mosaico</button>
+    </div>
+
+    <!-- Vista mosaico: N streams de solo lectura (SCALE-06). Sustituye a las dos
+         columnas de abajo mientras está activa -- toggleada por camera-mosaic.js. -->
+    <div id="camera-mosaic-grid" hidden class="lg:col-span-12 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+
     <!-- ─── Izquierda: vídeo grande + ajustes rápidos (7 col) ─── -->
-    <section class="lg:col-span-7 flex flex-col gap-4" aria-label="Vídeo y ajustes rápidos">
+    <section id="camera-single-left" class="lg:col-span-7 flex flex-col gap-4" aria-label="Vídeo y ajustes rápidos">
       <div class="card relative rounded-2xl overflow-hidden bg-black border border-slate-800 shadow-2xl shadow-black/60">
         <img
           id="camera-feed"
@@ -824,7 +841,7 @@
           </svg>
           <p class="text-slate-500 text-sm">Cámara sin señal</p>
           <button
-            onclick="document.getElementById('camera-feed').src='/video_feed?t='+Date.now(); document.getElementById('camera-offline').style.display='none'; document.getElementById('camera-feed').style.display='block';"
+            id="camera-feed-retry-btn"
             class="text-xs px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 cursor-pointer transition-colors mt-1"
           >Reintentar conexión</button>
         </div>
@@ -962,7 +979,7 @@
     </section>
 
     <!-- ─── Derecha: estado RTSP + teselas + PTZ (5 col) ─── -->
-    <section class="lg:col-span-5 flex flex-col gap-4" aria-label="Estado de la cámara">
+    <section id="camera-single-right" class="lg:col-span-5 flex flex-col gap-4" aria-label="Estado de la cámara">
 
       <!-- Tarjeta de estado RTSP -->
       <div class="rtsp-card">

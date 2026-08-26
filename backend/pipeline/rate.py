@@ -47,10 +47,26 @@ class AdaptiveRate:
         self._under = 0
         self.steps_down = 0
         self.steps_up = 0
+        self._external_cap: float | None = None
 
     @property
     def effective_fps(self) -> float:
-        return self._steps[self._idx]
+        fps = self._steps[self._idx]
+        if self._external_cap is not None:
+            return min(fps, self._external_cap)
+        return fps
+
+    @property
+    def min_fps(self) -> float:
+        return self._min_fps
+
+    def set_external_cap(self, cap: float | None) -> None:
+        """Techo impuesto por un coordinador externo (Fase 36, SCALE-08:
+        CameraManager.rebalance_fps() reparte CPU entre camaras), por encima de
+        la propia histeresis de latencia. `None` lo libera — el escalon interno
+        (`_idx`) nunca se toca, asi que retirar el techo restaura el ritmo que
+        la propia latencia habria elegido sin necesidad de recalcular nada."""
+        self._external_cap = cap
 
     def should_process(self, now: float) -> bool:
         if self._last_ts is None:
