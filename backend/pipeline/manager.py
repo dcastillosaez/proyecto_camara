@@ -465,6 +465,35 @@ class CameraManager:
         pipeline.stop()
         return True
 
+    def rebalance_fps(self, budget_pct: float) -> None:
+        """Reparte el presupuesto de CPU entre camaras (Fase 36, SCALE-08 —
+        riesgo "CPU insuficiente para N camaras" que SPEC_v2.md Fase 36
+        anticipa mitigar con "AdaptiveRate global con presupuesto compartido").
+
+        Si el coste total estimado (`CameraPipeline.estimated_cpu_pct`) supera
+        `budget_pct`, impone un techo de FPS de DETECCION proporcional en cada
+        camara (nunca por debajo de su `min_fps` configurado) — el `_idx`
+        interno de cada `AdaptiveRate` no se toca, asi que quitar el techo
+        (coste ya por debajo del presupuesto) devuelve el ritmo que la propia
+        histeresis de latencia habria elegido, sin recalcular nada. Solo actua
+        sobre `detection`: `recognition` corre a un ritmo fijo por diseno
+        (min_fps == max_fps), imponerle un techo por debajo de su unico
+        escalon lo dejaria mudo en vez de mas lento.
+        """
+        pipelines = [p for p in self._pipelines.values() if p.detection is not None]
+        if not pipelines:
+            return
+        total = sum(p.estimated_cpu_pct for p in pipelines)
+        if total <= budget_pct or total <= 0:
+            for p in pipelines:
+                p.detection.rate.set_external_cap(None)
+            return
+        ratio = budget_pct / total
+        for p in pipelines:
+            rate = p.detection.rate
+            cap = max(rate.effective_fps * ratio, rate.min_fps)
+            rate.set_external_cap(cap)
+
     def start_all(self) -> None:
         for pipeline in self._pipelines.values():
             pipeline.start()

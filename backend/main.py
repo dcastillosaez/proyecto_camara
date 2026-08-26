@@ -347,6 +347,22 @@ async def _housekeeping_loop(interval: float = 60.0) -> None:
                 logger.exception("housekeeping: prune failed for camera %s", pipeline.camera_id)
 
 
+async def _cpu_rebalance_loop(interval: float = 10.0) -> None:
+    """Reparte el presupuesto de CPU entre camaras (Fase 36, SCALE-08 — riesgo
+    "CPU insuficiente para N camaras" que SPEC_v2.md Fase 36 anticipa
+    mitigar con "AdaptiveRate global con presupuesto compartido"). Lee
+    `camera_manager`/`settings` frescos en cada tick, igual que
+    `_housekeeping_loop`."""
+    while True:
+        await asyncio.sleep(interval)
+        if camera_manager is None:
+            continue
+        try:
+            camera_manager.rebalance_fps(get_settings().cpu_budget_warn_pct)
+        except Exception:
+            logger.exception("cpu rebalance: fallo repartiendo presupuesto de CPU")
+
+
 async def _tracks_broadcast_loop(interval: float = 0.5) -> None:
     """Publica bboxes de personas por /ws a ritmo fijo, desacoplado del DetectionWorker
     (OPS-05, 29-RESEARCH.md Pattern 1). Solo lectura -- ninguna corrutina ejecuta inferencia,
@@ -669,10 +685,12 @@ async def lifespan(app: FastAPI):
     stats_flush_task = asyncio.create_task(_detection_stats_flush_loop())
     housekeeping_task = asyncio.create_task(_housekeeping_loop(settings.housekeeping_secs))
     tracks_task = asyncio.create_task(_tracks_broadcast_loop())
+    cpu_rebalance_task = asyncio.create_task(_cpu_rebalance_loop())
 
     yield
     if metrics_sampler is not None:
         metrics_sampler.stop()
+    cpu_rebalance_task.cancel()
     tracks_task.cancel()
     housekeeping_task.cancel()
     stats_flush_task.cancel()

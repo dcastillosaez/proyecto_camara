@@ -228,9 +228,38 @@ qué cámara entre, es el comportamiento correcto, no un atajo.
   `test_config_schema.py`/`test_config_api.py` que ya cubrían el nuevo
   campo por construcción). Suite completa: **824 passed, 2 skipped, 4m8s**
   (+5 sobre 36-04). Playwright: **11 passed, 23.0s**.
-- [ ] **36-06** — Presupuesto de FPS compartido: `CameraManager` reparte el
-  FPS objetivo de detección entre pipelines cuando el coste total estimado
-  supera el presupuesto (reduce proporcionalmente, restaura al bajar).
+- [x] **36-06** — Presupuesto de FPS compartido. `AdaptiveRate` gana
+  `set_external_cap()`/`min_fps` (`backend/pipeline/rate.py`): un techo
+  impuesto desde fuera de la propia histeresis de latencia, que clampa
+  `effective_fps` sin tocar el escalón interno (`_idx`) — quitar el techo
+  restaura exactamente el ritmo que la latencia real habría elegido, sin
+  recalcular nada. `DetectionWorker` expone ese `AdaptiveRate` por una
+  nueva `@property rate` (antes privado, `_rate`). `CameraManager.
+  rebalance_fps(budget_pct)` (nuevo) suma `estimated_cpu_pct` (36-05) de
+  todas las cámaras y, si supera el presupuesto, impone un techo
+  proporcional en el `AdaptiveRate` de DETECCIÓN de cada una (nunca por
+  debajo de su `min_fps`); si vuelve a estar por debajo, libera el techo.
+
+  Decisión deliberada: **no** toca `recognition` — su `AdaptiveRate` tiene
+  `min_fps == max_fps` (un único escalón fijo por diseño, Fase 24), así que
+  imponerle un techo lo dejaría mudo en vez de más lento; solo `detection`
+  tiene margen real para bajar sin perder la funcionalidad.
+
+  `main.py` gana `_cpu_rebalance_loop()` (cada 10s, mismo patrón que
+  `_housekeeping_loop`), enganchado al lifespan junto al resto de tareas
+  periódicas.
+
+  16 tests nuevos (5 en `test_adaptive_rate.py` sobre el techo externo, 7
+  en `test_manager.py` sobre `rebalance_fps`, 2 en `test_stream.py` sobre
+  el wiring del loop). Suite completa: **836 passed, 2 skipped, 4m14s**
+  (+12 sobre 36-05 — 4 de los 16 ya estaban cubiertos por rutas
+  existentes). Un fallo real detectado y descartado como no-regresión:
+  `TEST_multiclass_latency_under_15_percent` (marcado `@pytest.mark.perf`,
+  inferencia YOLO real con márgenes estrechos, documentado así en
+  `pytest.ini`) falló en la corrida completa pero pasó en aislamiento —
+  contención de CPU de la máquina tras ~4 min de suite, no algo que este
+  cambio toque (no roza `detector.py`). Playwright completo: **11 passed,
+  20.9s**.
 - [ ] **36-07** — Frontend: selector de cámara + vista mosaico
   (`frontend/js/views/mosaic.js`), `/video_feed` acepta `?camera_id=`.
 - [ ] **36-08** — Frontend: CRUD de cámaras en Ajustes

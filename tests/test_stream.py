@@ -267,3 +267,34 @@ async def TEST_start_configured_cameras_uses_global_default_process_size_unless_
     by_id = {c.args[1]["id"]: c.args[1] for c in start_mock.await_args_list}
     assert (by_id["cam1"]["process_w"], by_id["cam1"]["process_h"]) == (1280, 720)
     assert (by_id["cam2"]["process_w"], by_id["cam2"]["process_h"]) == (320, 240)
+
+
+# ─── Fase 36 (SCALE-08): _cpu_rebalance_loop llama a CameraManager.rebalance_fps ──
+async def TEST_cpu_rebalance_loop_calls_manager_with_configured_budget():
+    import backend.main as main_module
+
+    manager = MagicMock()
+    settings = MagicMock()
+    settings.cpu_budget_warn_pct = 150.0
+
+    with (
+        patch.object(main_module, "camera_manager", manager),
+        patch.object(main_module, "get_settings", return_value=settings),
+        patch("asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError()])),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await main_module._cpu_rebalance_loop(interval=0.01)
+
+    manager.rebalance_fps.assert_called_once_with(150.0)
+
+
+async def TEST_cpu_rebalance_loop_skips_tick_without_camera_manager():
+    import backend.main as main_module
+
+    with (
+        patch.object(main_module, "camera_manager", None),
+        patch("asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError()])),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await main_module._cpu_rebalance_loop(interval=0.01)
+    # sin camera_manager, el tick no debe lanzar excepcion (ya verificado arriba)

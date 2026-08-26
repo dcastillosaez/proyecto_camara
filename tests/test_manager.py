@@ -157,3 +157,86 @@ def TEST_estimated_cpu_pct_sums_detection_and_recognition():
 def TEST_estimated_cpu_pct_is_zero_without_detection_or_recognition():
     pipeline = _pipeline_with_worker_stats()
     assert pipeline.estimated_cpu_pct == 0.0
+
+
+# ─── Fase 36 (SCALE-08): CameraManager.rebalance_fps() ────────────────────────
+class _FakeRate:
+    def __init__(self, effective_fps: float, min_fps: float = 1.0) -> None:
+        self.effective_fps = effective_fps
+        self.min_fps = min_fps
+        self.cap: float | None = "untouched"  # distinto de None para detectar "no se llamo"
+
+    def set_external_cap(self, cap: float | None) -> None:
+        self.cap = cap
+
+
+def _fake_pipeline_for_rebalance(estimated_cpu_pct: float, effective_fps: float = 8.0, min_fps: float = 1.0):
+    """`estimated_cpu_pct` es una @property de solo lectura calculada a partir de
+    `detection.stats` — se fabrica una `avg_latency` que produzca el pct pedido
+    (`effective_fps * avg_latency * 100`) en vez de asignarla directamente."""
+    p = object.__new__(CameraPipeline)
+    avg_latency = estimated_cpu_pct / (effective_fps * 100.0)
+    p.detection = SimpleNamespace(
+        rate=_FakeRate(effective_fps, min_fps),
+        stats={"effective_fps": effective_fps, "avg_latency": avg_latency},
+    )
+    p.recognition = None
+    return p
+
+
+def TEST_rebalance_releases_cap_when_total_within_budget():
+    manager = CameraManager()
+    cam1 = _fake_pipeline_for_rebalance(estimated_cpu_pct=40.0)
+    manager._pipelines["cam1"] = cam1
+
+    manager.rebalance_fps(budget_pct=200.0)
+
+    assert cam1.detection.rate.cap is None
+
+
+def TEST_rebalance_caps_fps_proportionally_when_over_budget():
+    manager = CameraManager()
+    cam1 = _fake_pipeline_for_rebalance(estimated_cpu_pct=90.0, effective_fps=8.0)
+    cam2 = _fake_pipeline_for_rebalance(estimated_cpu_pct=90.0, effective_fps=8.0)
+    manager._pipelines["cam1"] = cam1
+    manager._pipelines["cam2"] = cam2
+
+    manager.rebalance_fps(budget_pct=90.0)  # total 180, presupuesto 90 -> ratio 0.5
+
+    assert cam1.detection.rate.cap == 4.0
+    assert cam2.detection.rate.cap == 4.0
+
+
+def TEST_rebalance_never_caps_below_min_fps():
+    manager = CameraManager()
+    cam1 = _fake_pipeline_for_rebalance(estimated_cpu_pct=1000.0, effective_fps=8.0, min_fps=3.0)
+    manager._pipelines["cam1"] = cam1
+
+    manager.rebalance_fps(budget_pct=1.0)  # ratio minusculo, forzaria muy por debajo de 3.0
+
+    assert cam1.detection.rate.cap == 3.0
+
+
+def TEST_rebalance_does_not_touch_recognition_rate():
+    manager = CameraManager()
+    cam1 = _fake_pipeline_for_rebalance(estimated_cpu_pct=1000.0)
+    cam1.recognition = SimpleNamespace(rate=_FakeRate(2.0, min_fps=2.0), stats={})
+    manager._pipelines["cam1"] = cam1
+
+    manager.rebalance_fps(budget_pct=1.0)
+
+    assert cam1.recognition.rate.cap == "untouched"
+
+
+def TEST_rebalance_skips_cameras_without_detection_worker():
+    manager = CameraManager()
+    p = object.__new__(CameraPipeline)
+    p.detection = None
+    manager._pipelines["cam1"] = p
+
+    manager.rebalance_fps(budget_pct=1.0)  # no debe lanzar excepcion
+
+
+def TEST_rebalance_with_zero_cameras_does_nothing():
+    manager = CameraManager()
+    manager.rebalance_fps(budget_pct=200.0)  # no debe lanzar excepcion
