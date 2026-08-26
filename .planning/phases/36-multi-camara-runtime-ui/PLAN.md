@@ -324,8 +324,41 @@ qué cámara entre, es el comportamiento correcto, no un atajo.
 
   Suite completa: **840 passed, 2 skipped, 4m9s** (+4 sobre 36-06, incluido
   el flaky de 36-06 ya en verde). Playwright: **11 passed, 20.8s**.
-- [ ] **36-08** — Frontend: CRUD de cámaras en Ajustes
-  (`frontend/js/views/cameras-crud.js`), consumidor de 36-03.
+- [x] **36-08** — Frontend: CRUD de cámaras en Ajustes
+  (`frontend/js/views/cameras-crud.js`, nuevo), consumidor de 36-03.
+  "Cámaras" es una pestaña **estática** en el árbol de `settings.js`, fuera
+  de `_schema.sections` (`GET /api/v2/config`) — no es un editor de campos
+  de Settings, es alta/baja/edición de entidades, mismo espíritu que
+  `zoneEditor.js`/`rules-editor.js` en la pestaña Cámara. Reutiliza el
+  estilo visual de `settings-section.js` (fieldset/legend, `filter-input`/
+  `filter-chip`) para no introducir un patrón nuevo. Lista todas las
+  cámaras del catálogo (`GET /api/v2/cameras/catalog`, 36-03 — incluye
+  deshabilitadas, a diferencia de `GET ""` que solo lista pipelines vivas),
+  con botones Habilitar/Deshabilitar (`PUT`) y Eliminar (`DELETE`,
+  confirmación nativa) por fila, y un formulario para dar de alta una
+  cámara nueva (id/nombre/URL RTSP).
+
+  **Verificación manual de extremo a extremo con servidor y navegador
+  reales** — no solo lectura de código: crear "cam-test" con una URL RTSP
+  real (inalcanzable a propósito) → aparece en la lista con estado
+  "en marcha" (la pipeline se arrancó de verdad, en caliente, sin reiniciar
+  el servidor — el criterio 1 de la fase comprobado en vivo, no solo en
+  test) → Eliminar → confirmado por `DELETE /api/v2/cameras/cam-test` (200)
+  → la fila desaparece y el catálogo vuelve a mostrar solo "cam1". Un
+  contratiempo de la propia sesión de verificación, no del código: la
+  pestaña del navegador reutilizada entre sub-tareas se quedó con una
+  versión cacheada de `settings.js` de antes de este cambio (ni
+  `location.reload()` ni `navigate()` la invalidaron) — diagnosticado
+  reimportando el módulo con un parámetro que rompe caché
+  (`import('/static/js/views/settings.js?bust=...')`) y comprobando que la
+  versión fresca sí pintaba las 9 pestañas correctamente, confirmando que
+  el código estaba bien y el problema era de la sesión de navegador, no del
+  cambio.
+
+  `LOCKED_JS` gana `views/cameras-crud.js`. Suite dirigida
+  (`test_frontend_modules.py`, 9 passed); cambio solo de frontend, sin
+  relanzar la suite completa (mismo criterio que el resto de sub-tareas de
+  frontend de fases anteriores).
 - [ ] **36-09** — Analítica por cámara y total: `AnalyticsRepo`/
   `analytics.py` con `camera_id=None` → agregación `GROUP BY camera_id` +
   total combinado; filtro de cámara en `analytics.js`.

@@ -13,6 +13,11 @@
 
 import { renderSection } from './settings-section.js';
 import { isDirty, setOnSectionSaved } from './settings-save.js';
+import { renderCamerasSection } from './cameras-crud.js';
+
+// Fase 36 (SCALE-05): "Cámaras" es una pestaña estática -- CRUD de entidades, no un
+// editor de campos de Settings, así que vive fuera de _schema.sections (GET /api/v2/config).
+const CAMERAS_SECTION_KEY = 'camaras';
 
 const SECTION_SKELETON_ROWS = 8;   // 8 secciones fijas del UI-SPEC, ancho conocido de antemano
 
@@ -64,6 +69,7 @@ function _sectionFromHash() {
   const m = /^#ajustes\/(.+)$/.exec(location.hash);
   if (!m) return null;
   const key = decodeURIComponent(m[1]);
+  if (key === CAMERAS_SECTION_KEY) return key;
   return _sectionForKey(key) ? key : null;
 }
 
@@ -118,11 +124,29 @@ function _renderTree() {
     tab.addEventListener('click', () => _openSection(section.key));
     tree.appendChild(tab);
   }
+  tree.appendChild(_camerasTab());
   if (!_keydownBound) {
     tree.addEventListener('keydown', _onTreeKeydown);
     _keydownBound = true;
   }
   _refreshTreeDirtyDots();
+}
+
+function _camerasTab() {
+  const tab = document.createElement('button');
+  tab.type = 'button';
+  tab.className = 'cfg-node w-full';
+  tab.setAttribute('role', 'tab');
+  tab.dataset.sectionKey = CAMERAS_SECTION_KEY;
+  const active = _activeSection === CAMERAS_SECTION_KEY;
+  tab.setAttribute('aria-selected', String(active));
+  tab.tabIndex = active ? 0 : -1;
+  const label = document.createElement('span');
+  label.className = 'flex-1 text-left truncate';
+  label.textContent = 'Cámaras';
+  tab.appendChild(label);
+  tab.addEventListener('click', () => _openSection(CAMERAS_SECTION_KEY));
+  return tab;
 }
 
 // Navegacion ARIA tab estandar, un unico listener delegado en el contenedor: las flechas
@@ -151,8 +175,9 @@ function _onTreeKeydown(e) {
 }
 
 function _openSection(key, requiresRestart = []) {
-  const section = _sectionForKey(key);
-  if (!section) return;
+  const isCameras = key === CAMERAS_SECTION_KEY;
+  const section = isCameras ? null : _sectionForKey(key);
+  if (!isCameras && !section) return;
   _activeSection = key;
   for (const tab of _tree()?.querySelectorAll('[role="tab"]') ?? []) {
     const active = tab.dataset.sectionKey === key;
@@ -160,7 +185,8 @@ function _openSection(key, requiresRestart = []) {
     tab.setAttribute('aria-current', String(active));
     tab.tabIndex = active ? 0 : -1;
   }
-  renderSection(section, key, requiresRestart);
+  if (isCameras) renderCamerasSection();
+  else renderSection(section, key, requiresRestart);
   history.replaceState(null, '', `#ajustes/${key}`);
 }
 
