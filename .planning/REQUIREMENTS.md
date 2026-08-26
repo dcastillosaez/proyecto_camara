@@ -290,8 +290,8 @@
 - [x] **SCALE-06**: Existe vista mosaico multi-cámara y selector de cámara — en la vista Cámara, no en Operaciones (decisión de la Fase 36: la vista Cámara ya concentra feed/editores/salud RTSP por cámara; duplicar el selector en Operaciones queda fuera de alcance, ver PLAN.md de la fase)
 - [x] **SCALE-07**: Zonas, líneas y reglas son propias de cada cámara, con posibilidad de reglas globales
 - [x] **SCALE-08**: El presupuesto de CPU se reparte automáticamente entre cámaras y la interfaz advierte al superarlo
-- [ ] **SCALE-09**: Todo el acceso a datos pasa por repositorios, permitiendo cambiar de SQLite a PostgreSQL sin tocar la lógica
-- [ ] **SCALE-10**: El bus de eventos tiene implementación in-process por defecto y una alternativa distribuida opcional
+- [x] **SCALE-09**: Todo el acceso a datos pasa por repositorios, permitiendo cambiar de SQLite a PostgreSQL sin tocar la lógica
+- [x] **SCALE-10**: El bus de eventos tiene implementación in-process por defecto y una alternativa distribuida opcional
 - [ ] **SCALE-11**: La GPU se detecta automáticamente y se usa si está disponible, con fallback limpio a CPU
 - [ ] **SCALE-12**: Sin GPU, el comportamiento del sistema es idéntico al de la ruta CPU
 

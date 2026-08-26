@@ -22,7 +22,8 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.config import get_settings
 from backend.events.types import Event, EventType
-from backend.storage.migrations import run_migrations
+from backend.storage import models as storage_models
+from backend.storage.migrations import SCHEMA_VERSION, run_migrations
 from backend.storage.repositories import EventRepo
 
 # ---------------------------------------------------------------------------
@@ -80,11 +81,20 @@ _session_factory = None
 
 
 def _get_engine():
+    """Fase 37 (SCALE-09): con `database_url` vacio (default) el motor sigue siendo
+    SQLite sobre `db_path`, sin cambio de comportamiento. Con `database_url` puesto
+    (p.ej. postgresql+asyncpg://...) se usa esa URL tal cual -- ningun otro codigo
+    de este modulo necesita saber que motor hay detras, salvo init_db() (abajo),
+    que si ramifica por dialecto para las migraciones."""
     global _engine
     if _engine is None:
-        db_path = get_settings().db_path
-        os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
-        _engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        settings = get_settings()
+        if settings.database_url:
+            _engine = create_async_engine(settings.database_url)
+        else:
+            db_path = settings.db_path
+            os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
+            _engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
     return _engine
 
 
@@ -112,21 +122,55 @@ def get_session_factory():
 
 
 async def init_db() -> None:
-    """Migrate to schema v2 (idempotent) and enable WAL mode. Call once at startup."""
-    engine = _get_engine()
-    db_path = engine.url.database
-    if db_path and db_path != ":memory:":
-        sync_engine = create_engine(f"sqlite:///{db_path}")
-        try:
-            run_migrations(sync_engine)
-        finally:
-            sync_engine.dispose()
+    """Migrate to schema v2 (idempotent) and enable WAL mode. Call once at startup.
 
-    async with engine.begin() as conn:
-        await conn.execute(text("PRAGMA journal_mode=WAL"))
-        # No-op for zones/recordings (already created/extended by run_migrations);
-        # creates `captures`, which has no v2 equivalent model.
-        await conn.run_sync(Base.metadata.create_all)
+    Fase 37 (SCALE-09): el camino SQLite (por defecto) es exactamente el de
+    siempre -- migraciones incrementales v1->v6 de storage/migrations.py, todas
+    escritas contra sintaxis SQLite. PostgreSQL nunca ha tenido una instalacion v1
+    previa que migrar, asi que en vez de reescribir ese historial para un segundo
+    dialecto se crea el esquema v2 completo de una sola vez
+    (`_bootstrap_fresh_schema`) -- misma forma final, sin el viaje incremental.
+    """
+    engine = _get_engine()
+    if engine.dialect.name == "sqlite":
+        db_path = engine.url.database
+        if db_path and db_path != ":memory:":
+            sync_engine = create_engine(f"sqlite:///{db_path}")
+            try:
+                run_migrations(sync_engine)
+            finally:
+                sync_engine.dispose()
+
+        async with engine.begin() as conn:
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+            # No-op for zones/recordings (already created/extended by run_migrations);
+            # creates `captures`, which has no v2 equivalent model.
+            await conn.run_sync(Base.metadata.create_all)
+    else:
+        async with engine.begin() as conn:
+            await conn.run_sync(storage_models.Base.metadata.create_all)
+            await conn.run_sync(Base.metadata.create_all)  # `captures` (legacy, sin equivalente v2)
+            await _bootstrap_fresh_schema(conn)
+
+
+async def _bootstrap_fresh_schema(conn) -> None:
+    """Siembra cam1 + sella schema_version=SCHEMA_VERSION sobre un esquema recien
+    creado (Postgres). Espejo minimo de los pasos 4 y 6 de
+    storage.migrations._migrate_v1_to_v2, sin el resto del historial SQLite-only."""
+    existing_cam = (await conn.execute(
+        select(storage_models.Camera).where(storage_models.Camera.id == "cam1")
+    )).first()
+    if existing_cam is None:
+        await conn.execute(storage_models.Camera.__table__.insert().values(
+            id="cam1", name="Camara 1", enabled=True, created_at=datetime.datetime.now(),
+        ))
+    existing_version = (await conn.execute(
+        select(storage_models.AppConfig).where(storage_models.AppConfig.key == "schema_version")
+    )).first()
+    if existing_version is None:
+        await conn.execute(storage_models.AppConfig.__table__.insert().values(
+            key="schema_version", value=SCHEMA_VERSION, updated_at=datetime.datetime.now(),
+        ))
 
 
 def _event_to_legacy_dict(event: Event) -> dict[str, Any]:

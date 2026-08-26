@@ -79,6 +79,16 @@ class Settings(BaseSettings):
     cpu_budget_warn_pct: float = 200.0
 
     db_path: str = "data/events.db"
+    # --- Backends opcionales (Fase 37, SCALE-09/10) ---
+    # Vacio (default) = SQLite sobre db_path, sigue siendo la ruta soportada de
+    # primera clase. Con valor: URL SQLAlchemy async completa, p.ej.
+    # "postgresql+asyncpg://user:pass@host:5432/dbname" -- ver STACK.md "Cuando
+    # migrar a Postgres/Redis" para el criterio de decision.
+    database_url: str = ""
+    # Vacio (default) = EventBus in-process (un unico proceso backend). Con
+    # valor, p.ej. "redis://localhost:6379/0": EventBus usa pub/sub de Redis,
+    # permitiendo que el bus se comparta entre varios procesos.
+    redis_url: str = ""
     host: str = "0.0.0.0"
     port: int = 8000
 

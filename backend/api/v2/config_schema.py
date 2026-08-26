@@ -168,6 +168,19 @@ ALL_SECTIONS: tuple[Section, ...] = (
                         hint="Contraseña del dashboard; vacío = acceso abierto en LAN.",
                         type="secret", default="", secret=True,
                     ),
+                    FieldDef(
+                        key="database_url", env="DATABASE_URL", label="URL de base de datos",
+                        hint="Vacío = SQLite (por defecto). URL SQLAlchemy async completa "
+                             "para usar PostgreSQL, p. ej. postgresql+asyncpg://usuario:"
+                             "contraseña@host:5432/nombre_bd.",
+                        type="secret", default="", secret=True,
+                    ),
+                    FieldDef(
+                        key="redis_url", env="REDIS_URL", label="URL de Redis",
+                        hint="Vacío = bus de eventos en memoria del proceso (por defecto). "
+                             "Con una URL redis://host:6379/0 el bus usa pub/sub de Redis.",
+                        type="secret", default="", secret=True,
+                    ),
                 ),
             ),
         ),

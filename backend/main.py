@@ -39,7 +39,7 @@ from backend.database import (
     purge_old_recordings,
 )
 from backend.events import actions as event_actions
-from backend.events.bus import EventBus
+from backend.events.bus import EventBusBase, create_event_bus
 from backend.events.engine import EventEngine
 from backend.events.rules import RuleEngine, load_rules
 from backend.events.types import Event, EventType
@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 rtsp_stream: "CameraPipeline | None" = None
 camera_manager: CameraManager | None = None
 notifier: Notifier | None = None
-event_bus: EventBus | None = None
+event_bus: EventBusBase | None = None
 event_engine: EventEngine | None = None
 rule_engine: RuleEngine | None = None
 latency_tracker: "LatencyTracker | None" = None
@@ -470,7 +470,8 @@ async def lifespan(app: FastAPI):
     await init_db()  # idempotent: also runs the v1 -> v2 schema migration
 
     loop = asyncio.get_event_loop()
-    event_bus = EventBus(loop=loop)
+    event_bus = create_event_bus(settings, loop=loop)  # InProcessBus salvo settings.redis_url (Fase 37)
+    await event_bus.start()
     latency_tracker = LatencyTracker()
     event_engine = EventEngine(event_bus, camera_id="cam1", latency_tracker=latency_tracker)
 
@@ -698,6 +699,8 @@ async def lifespan(app: FastAPI):
     watchdog_task.cancel()
     camera_manager.stop_all()   # para los workers, incluido el recorder
     upload_queue.stop()
+    if event_bus is not None:
+        await event_bus.close()  # no-op en InProcessBus; cierra la conexion en RedisBus
     logger.info("Pipeline detenido")
 
 
