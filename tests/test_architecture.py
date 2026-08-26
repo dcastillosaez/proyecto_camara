@@ -7,6 +7,7 @@ ejecutan en cada push y senalan fichero, linea y funcion infractora.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 PIPELINE_DIR = Path("backend/pipeline")
@@ -140,3 +141,42 @@ def test_pipeline_modules_do_not_import_fastapi():
                 if n.split(".")[0] in {"fastapi", "starlette"}:
                     offenders.append(f"{path}:{node.lineno} importa {n}")
     assert not offenders, "El pipeline no debe conocer la capa web:\n" + "\n".join(offenders)
+
+
+# ─── SQL crudo concentrado en storage/ (Fase 37, SCALE-09, criterio 1) ──────────
+# AnalyticsRepo/EventRepo (storage/repositories.py) y las migraciones SQLite-only
+# (storage/migrations.py) son los UNICOS sitios que necesitan sintaxis especifica
+# de dialecto (substr/strftime/json_each/INDEXED BY en SQLite, to_char/jsonb en
+# Postgres). El resto del acceso a datos usa SQLAlchemy ORM/Core, portable sin
+# cambios. La unica excepcion conocida y documentada es el PRAGMA de SQLite en
+# database.py -- una linea de configuracion de conexion, no una query de datos.
+_SQL_TEXT_ALLOWED = {
+    Path("backend/storage/repositories.py"),
+    Path("backend/storage/migrations.py"),
+}
+_SQL_TEXT_KNOWN_EXCEPTIONS = {
+    (Path("backend/database.py"), 'await conn.execute(text("PRAGMA journal_mode=WAL"))'),
+}
+
+
+_SQLALCHEMY_TEXT_CALL = re.compile(r"(?<![\w.])text\(")
+
+
+def test_raw_sql_text_stays_in_storage_module():
+    offenders: list[str] = []
+    for path in sorted(BACKEND_DIR.rglob("*.py")):
+        if path in _SQL_TEXT_ALLOWED:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not _SQLALCHEMY_TEXT_CALL.search(line):
+                continue
+            stripped = line.strip()
+            if (path, stripped) in _SQL_TEXT_KNOWN_EXCEPTIONS:
+                continue
+            offenders.append(f"{path}:{lineno} {stripped}")
+    assert not offenders, (
+        "SQL crudo (sqlalchemy.text) fuera de storage/repositories.py o "
+        "storage/migrations.py -- rompe la portabilidad SQLite/Postgres de la "
+        "Fase 37 salvo que se anada a _SQL_TEXT_KNOWN_EXCEPTIONS con justificacion:\n"
+        + "\n".join(offenders)
+    )

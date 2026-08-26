@@ -6,6 +6,10 @@ supervision>=0.25
 aiosqlite>=0.20
 sqlalchemy[asyncio]>=2.0
 pydantic-settings>=2.0
+# Backends opcionales (Fase 37, SCALE-09/10) -- SQLite/in-process siguen siendo el
+# default; asyncpg/redis solo se usan si DATABASE_URL/REDIS_URL los activan.
+asyncpg>=0.29
+redis>=5.0
 websockets>=12.0
 python-multipart>=0.0.9
 aiofiles>=23.0

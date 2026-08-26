@@ -40,6 +40,14 @@ def _decode_cursor(cursor: str) -> tuple[datetime.datetime, str]:
     return datetime.datetime.fromisoformat(ts_str), id_
 
 
+def _dialect_of(session_factory) -> str:
+    """Nombre del dialecto SQLAlchemy ('sqlite'|'postgresql') del engine que respalda
+    *session_factory*, resuelto UNA VEZ desde el `bind` guardado por `sessionmaker`
+    -- sin abrir sesion ni hacer I/O (Fase 37, SCALE-09). Usado por los repos que
+    tienen SQL especifico de dialecto (AnalyticsRepo, EventRepo)."""
+    return session_factory.kw["bind"].dialect.name
+
+
 # Ventana y contiguidad para la asignacion retroactiva por track (Fase 30, OPS-08).
 # Los tracker_id de ByteTrack se reinician al recrear el tracker (backend/tracker.py:181)
 # y la tabla `tracks` nunca se escribe: sin estas dos cotas, un UPDATE por track_id
@@ -52,6 +60,7 @@ TRACK_WINDOW_HOURS = 6
 class EventRepo:
     def __init__(self, session_factory) -> None:
         self._sf = session_factory
+        self._dialect = _dialect_of(session_factory)
 
     @staticmethod
     def _to_row(event: EventDTO) -> models.Event:
@@ -110,12 +119,16 @@ class EventRepo:
         rule: str | None = None,
         ts_from: datetime.datetime | None = None,
         ts_to: datetime.datetime | None = None,
+        dialect: str = "sqlite",
     ) -> tuple[list, dict]:
         """Condiciones WHERE compartidas por query() y count(). Devuelve (conditions, params).
 
         El prefijo '+' unario del IN multi-valor desactiva idx_events_type_ts SOLO en ese
         termino: sin el, SQLite elige ese indice y ordena con TEMP B-TREE (medido: 54ms
-        vs 0,52ms @100k, 30-RESEARCH.md Hallazgo 7).
+        vs 0,52ms @100k, 30-RESEARCH.md Hallazgo 7). El truco es sintaxis SQLite -- en
+        Postgres el '+' unario sobre un VARCHAR es un error de tipo, asi que ese dialecto
+        usa un IN normal via SQLAlchemy Core (Fase 37, SCALE-09); Postgres no sufre el
+        mismo problema de planner que motivo el truco.
         """
         conditions: list = []
         params: dict = {}
@@ -123,11 +136,14 @@ class EventRepo:
         if len(types) == 1:
             conditions.append(models.Event.type == types[0].value)
         elif len(types) > 1:
-            conditions.append(
-                text("+events.type IN :types").bindparams(
-                    bindparam("types", expanding=True, type_=String))
-            )
-            params["types"] = [t.value for t in types]
+            if dialect == "postgresql":
+                conditions.append(models.Event.type.in_([t.value for t in types]))
+            else:
+                conditions.append(
+                    text("+events.type IN :types").bindparams(
+                        bindparam("types", expanding=True, type_=String))
+                )
+                params["types"] = [t.value for t in types]
         if severity is not None:
             conditions.append(models.Event.severity == severity.value)
         if person_id is not None:
@@ -138,10 +154,21 @@ class EventRepo:
             conditions.append(models.Event.camera_id == camera_id)
         if rule is not None:
             # T-30-05: el nombre de regla llega del navegador -> bindparam, nunca f-string.
-            conditions.append(text(
-                "EXISTS (SELECT 1 FROM json_each(events.payload, '$.rules') je "
-                "WHERE je.value = :rule)"
-            ))
+            # json_each es especifico de SQLite; Postgres resuelve el mismo "rules
+            # contiene X" con jsonb_array_elements_text sobre payload casteado a jsonb
+            # (Fase 37, SCALE-09) -- payload puede no tener la clave "rules", de ahi el
+            # COALESCE a un array vacio antes de castear.
+            if dialect == "postgresql":
+                conditions.append(text(
+                    "EXISTS (SELECT 1 FROM jsonb_array_elements_text("
+                    "COALESCE(events.payload -> 'rules', '[]'::json)::jsonb) je(value) "
+                    "WHERE je.value = :rule)"
+                ))
+            else:
+                conditions.append(text(
+                    "EXISTS (SELECT 1 FROM json_each(events.payload, '$.rules') je "
+                    "WHERE je.value = :rule)"
+                ))
             params["rule"] = rule
         if ts_from is not None:
             conditions.append(models.Event.ts >= ts_from)
@@ -166,7 +193,8 @@ class EventRepo:
         """Filter + cursor-paginate, newest first. Cursor is (ts, id) base64-encoded."""
         conditions, params = self._filter_conditions(
             type=type, severity=severity, person_id=person_id, zone_id=zone_id,
-            camera_id=camera_id, rule=rule, ts_from=ts_from, ts_to=ts_to)
+            camera_id=camera_id, rule=rule, ts_from=ts_from, ts_to=ts_to,
+            dialect=self._dialect)
         if cursor is not None:
             cursor_ts, cursor_id = _decode_cursor(cursor)
             conditions.append(
@@ -210,7 +238,8 @@ class EventRepo:
         """
         conditions, params = self._filter_conditions(
             type=type, severity=severity, person_id=person_id, zone_id=zone_id,
-            camera_id=camera_id, rule=rule, ts_from=ts_from, ts_to=ts_to)
+            camera_id=camera_id, rule=rule, ts_from=ts_from, ts_to=ts_to,
+            dialect=self._dialect)
         q = select(func.count()).select_from(models.Event)
         if conditions:
             q = q.where(and_(*conditions))
@@ -305,12 +334,14 @@ class EventRepo:
         conditions = [models.Event.ts >= ts_from]
         if type is not None:
             conditions.append(models.Event.type == type.value)
+        # strftime es especifico de SQLite; Postgres usa to_char (Fase 37, SCALE-09).
+        hour_expr = (
+            func.to_char(models.Event.ts, "HH24") if self._dialect == "postgresql"
+            else func.strftime("%H", models.Event.ts)
+        )
         async with self._sf() as session:
             result = await session.execute(
-                select(
-                    func.strftime("%H", models.Event.ts).label("hour"),
-                    func.count().label("count"),
-                )
+                select(hour_expr.label("hour"), func.count().label("count"))
                 .where(and_(*conditions))
                 .group_by(text("hour"))
                 .order_by(text("hour"))
@@ -869,11 +900,17 @@ def bucket_for(cur_from: datetime.datetime, cur_to: datetime.datetime) -> str:
     return "hour" if (cur_to - cur_from) <= datetime.timedelta(days=BUCKET_HOUR_MAX_DAYS) else "day"
 
 
-def _bucket_expr(bucket: str) -> str:
+def _bucket_expr(bucket: str, dialect: str = "sqlite") -> str:
     """substr sobre el TEXT ISO de ancho fijo — 2,3x mas rapido que strftime
     (51,8 ms frente a 120,8 ms @100k). El formato de almacenamiento esta
     protegido por TEST_datetime_storage_format_is_fixed_width_iso (31-01):
-    si ese test cae, hay que volver a strftime de forma explicita."""
+    si ese test cae, hay que volver a strftime de forma explicita.
+
+    En Postgres `ts` es tipo `timestamp`, no TEXT, asi que substr no aplica:
+    to_char con el mismo formato de ancho fijo produce el mismo agrupamiento
+    (Fase 37, SCALE-09)."""
+    if dialect == "postgresql":
+        return "to_char(ts, 'YYYY-MM-DD HH24')" if bucket == "hour" else "to_char(ts, 'YYYY-MM-DD')"
     return "substr(ts,1,13)" if bucket == "hour" else "substr(ts,1,10)"
 
 
@@ -895,6 +932,7 @@ class AnalyticsRepo:
 
     def __init__(self, session_factory) -> None:
         self._sf = session_factory
+        self._dialect = _dialect_of(session_factory)
 
     async def hourly(
         self,
@@ -916,7 +954,7 @@ class AnalyticsRepo:
         """
         prev_from = cur_from - (cur_to - cur_from)
         sql = text(f"""
-            SELECT {_bucket_expr(bucket)} AS b,
+            SELECT {_bucket_expr(bucket, self._dialect)} AS b,
                    SUM(CASE WHEN ts >= :cur_from THEN 1 ELSE 0 END) AS cur,
                    SUM(CASE WHEN ts <  :cur_from THEN 1 ELSE 0 END) AS prev
               FROM events
@@ -955,7 +993,7 @@ class AnalyticsRepo:
         """
         prev_from = cur_from - (cur_to - cur_from)
         etype = EventType.LINE_CROSSED.value
-        bucket_expr = _bucket_expr(bucket)
+        bucket_expr = _bucket_expr(bucket, self._dialect)
 
         cam_clause = _camera_clause(camera_id)
         totals_sql = text(f"""
@@ -1028,7 +1066,7 @@ class AnalyticsRepo:
               LEFT JOIN zones z ON z.id = e.zone_id
              WHERE {cam_clause_e}e.ts >= :cur_from AND e.ts < :cur_to
                AND e.type = :etype AND e.zone_id IS NOT NULL
-             GROUP BY e.zone_id
+             GROUP BY e.zone_id, z.name
              ORDER BY n DESC
              LIMIT :limit
         """)
@@ -1071,7 +1109,13 @@ class AnalyticsRepo:
         empieza por `camera_id` sin filtrarlo no aporta nada.
         """
         prev_from = cur_from - (cur_to - cur_from)
-        indexed_by = " INDEXED BY idx_events_analytics" if camera_id is not None else ""
+        # INDEXED BY es sintaxis SQLite; Postgres no soporta forzar indice por nombre en
+        # el SQL y su planner ya elige bien con ANALYZE, asi que el hint se omite del
+        # todo en ese dialecto (Fase 37, SCALE-09).
+        indexed_by = (
+            " INDEXED BY idx_events_analytics"
+            if camera_id is not None and self._dialect != "postgresql" else ""
+        )
         sql = text(f"""
             SELECT person_id,
                    SUM(CASE WHEN ts >= :cur_from THEN 1 ELSE 0 END) AS cur,
@@ -1080,7 +1124,7 @@ class AnalyticsRepo:
              WHERE {_camera_clause(camera_id)}ts >= :prev_from AND ts < :cur_to
                AND person_id IS NOT NULL
              GROUP BY person_id
-            HAVING cur > 0
+            HAVING SUM(CASE WHEN ts >= :cur_from THEN 1 ELSE 0 END) > 0
              ORDER BY cur DESC
              LIMIT :limit
         """)
