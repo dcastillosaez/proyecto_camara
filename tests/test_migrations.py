@@ -493,3 +493,112 @@ def TEST_migration_v5_is_idempotent(tmp_path):
     assert line_count == 1
     assert json.loads(polygon) == [[0, 0], [1, 0], [1, 1]]
     assert _schema_version(engine) == SCHEMA_VERSION
+
+
+def make_v5_db_with_nullable_system_metrics(path):
+    """Base en el estado v5: system_metrics.camera_id todavia NULLABLE (Fase 35).
+
+    DDL a mano (no via el modelo ORM, que ya declara NOT NULL) para reproducir
+    exactamente el esquema que una instalacion real llegaria a tener en v5 --
+    mismo criterio que make_v1_db con la tabla events legacy.
+    """
+    engine = create_engine(f"sqlite:///{path}")
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE cameras (id VARCHAR(50) PRIMARY KEY, name VARCHAR(100), "
+            "enabled BOOLEAN, created_at DATETIME)"
+        ))
+        conn.execute(text(
+            "INSERT INTO cameras (id, name, enabled, created_at) "
+            "VALUES ('cam1', 'Camara 1', 1, :now)"
+        ), {"now": datetime.datetime(2026, 4, 16).isoformat(sep=" ")})
+        conn.execute(text(
+            "CREATE TABLE system_metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "camera_id VARCHAR(50) REFERENCES cameras(id), "
+            "ts DATETIME NOT NULL, metrics JSON NOT NULL)"
+        ))
+        conn.execute(text(
+            "INSERT INTO system_metrics (camera_id, ts, metrics) VALUES (NULL, :ts, :m)"
+        ), {"ts": datetime.datetime(2026, 4, 16, 10, 0, 0).isoformat(sep=" "), "m": '{"cpu": 12.5}'})
+        conn.execute(text(
+            "INSERT INTO system_metrics (camera_id, ts, metrics) VALUES ('cam1', :ts, :m)"
+        ), {"ts": datetime.datetime(2026, 4, 16, 10, 1, 0).isoformat(sep=" "), "m": '{"cpu": 13.0}'})
+        conn.execute(text(
+            "CREATE TABLE app_config (key VARCHAR(100) PRIMARY KEY, value JSON, updated_at DATETIME)"
+        ))
+        conn.execute(text(
+            "INSERT INTO app_config (key, value, updated_at) VALUES ('schema_version', '5', :now)"
+        ), {"now": datetime.datetime(2026, 4, 16).isoformat(sep=" ")})
+    engine.dispose()
+
+
+def TEST_migration_v6_backfills_null_camera_id_in_system_metrics(tmp_path):
+    db_path = tmp_path / "v5.db"
+    make_v5_db_with_nullable_system_metrics(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+
+    with engine.connect() as conn:
+        cams = [r[0] for r in conn.execute(text("SELECT camera_id FROM system_metrics ORDER BY id"))]
+    assert cams == ["cam1", "cam1"]
+    assert _schema_version(engine) == SCHEMA_VERSION
+
+
+def TEST_migration_v6_enforces_not_null_on_system_metrics(tmp_path):
+    db_path = tmp_path / "v5.db"
+    make_v5_db_with_nullable_system_metrics(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+
+    with engine.connect() as conn:
+        with pytest.raises(Exception):
+            conn.execute(text(
+                "INSERT INTO system_metrics (camera_id, ts, metrics) VALUES (NULL, :ts, :m)"
+            ), {"ts": datetime.datetime(2026, 4, 16, 10, 2, 0).isoformat(sep=" "), "m": "{}"})
+
+
+def TEST_migration_v6_preserves_row_count_and_metrics(tmp_path):
+    db_path = tmp_path / "v5.db"
+    make_v5_db_with_nullable_system_metrics(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+
+    with engine.connect() as conn:
+        count = conn.execute(text("SELECT COUNT(*) FROM system_metrics")).scalar()
+        metrics = [
+            json.loads(r[0])
+            for r in conn.execute(text("SELECT metrics FROM system_metrics ORDER BY id"))
+        ]
+    assert count == 2
+    assert metrics == [{"cpu": 12.5}, {"cpu": 13.0}]
+
+
+def TEST_migration_v6_is_idempotent(tmp_path):
+    db_path = tmp_path / "v5.db"
+    make_v5_db_with_nullable_system_metrics(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    run_migrations(engine)
+    run_migrations(engine)  # must not raise
+
+    with engine.connect() as conn:
+        count = conn.execute(text("SELECT COUNT(*) FROM system_metrics")).scalar()
+    assert count == 2
+    assert _schema_version(engine) == SCHEMA_VERSION
+
+
+def TEST_migration_v6_on_db_without_system_metrics_table(tmp_path):
+    """Una base v5 sin la tabla (edicion manual, o create_all() futuro que la retire)
+    no debe romper la cadena de migraciones -- solo avanzar la version."""
+    db_path = tmp_path / "v5.db"
+    make_v5_db_with_nullable_system_metrics(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE system_metrics"))
+
+    run_migrations(engine)  # must not raise
+
+    assert _schema_version(engine) == SCHEMA_VERSION

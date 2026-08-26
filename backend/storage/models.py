@@ -214,6 +214,6 @@ class SystemMetric(Base):
     __tablename__ = "system_metrics"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    camera_id = Column(String(50), ForeignKey("cameras.id"), nullable=True)
+    camera_id = Column(String(50), ForeignKey("cameras.id"), nullable=False, server_default="cam1")
     ts = Column(DateTime, nullable=False)
     metrics = Column(JSON, nullable=False)

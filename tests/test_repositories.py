@@ -17,6 +17,7 @@ from backend.events.types import Event, EventType, Severity
 from backend.storage import models
 from backend.storage.repositories import (
     AnalyticsRepo,
+    CameraRepo,
     ConfigRepo,
     DetectionStatRepo,
     EventRepo,
@@ -1297,3 +1298,31 @@ async def TEST_rule_get_miss_returns_none(db):
     repo = RuleRepo(sf)
 
     assert await repo.get("does-not-exist") is None
+
+
+# ─── Fase 35 (SCALE-03): CameraRepo.default_camera_id ────────────────────────
+async def TEST_camera_repo_default_id_with_exactly_one_camera(db):
+    _, sf = db  # el fixture ya siembra una unica camara 'cam1'
+    repo = CameraRepo(sf)
+
+    assert await repo.default_camera_id() == "cam1"
+
+
+async def TEST_camera_repo_default_id_is_none_with_zero_cameras(db):
+    db_file, sf = db
+    async with sf() as session:
+        async with session.begin():
+            await session.execute(models.Camera.__table__.delete())
+    repo = CameraRepo(sf)
+
+    assert await repo.default_camera_id() is None
+
+
+async def TEST_camera_repo_default_id_is_none_with_two_cameras(db):
+    _, sf = db
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam2", name="Cam 2", enabled=True))
+    repo = CameraRepo(sf)
+
+    assert await repo.default_camera_id() is None

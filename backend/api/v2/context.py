@@ -18,7 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Request
 
-from backend.api.v2.deps import V2_RATE_LIMIT, limiter
+from backend.api.v2.deps import V2_RATE_LIMIT, limiter, resolve_camera_id
 from backend.config import Settings, get_settings
 from backend.database import get_session_factory
 from backend.perception.face.identity import IdentityState
@@ -110,9 +110,10 @@ def _classify_activity(
 @limiter.limit(V2_RATE_LIMIT)
 async def get_context(
     request: Request,
-    camera_id: str = Query(default="cam1"),
+    camera_id: str | None = Query(default=None),
     days: int | None = Query(default=None, ge=1, le=90),
 ) -> dict[str, Any]:
+    camera_id = await resolve_camera_id(camera_id, get_session_factory())
     settings = get_settings()
     now = datetime.datetime.now()
     hour_start = now.replace(minute=0, second=0, microsecond=0)

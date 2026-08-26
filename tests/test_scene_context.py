@@ -190,3 +190,38 @@ async def TEST_context_never_leaks_person_identity(db, monkeypatch):
     assert resp.status_code == 200
     assert "person_id" not in resp.text
     assert "person_name" not in resp.text
+
+
+async def TEST_context_defaults_to_the_only_camera_when_omitted(db, monkeypatch):
+    """SCALE-03: sin camera_id en la query, con una sola camara registrada
+    resuelve a ella sola -- ya no al literal "cam1" fijo."""
+    sf = db
+    now = datetime.datetime.now()
+    await _seed_current_hour(sf, now)
+
+    monkeypatch.setattr(context_module, "_stat_repo", lambda: DetectionStatRepo(sf))
+    monkeypatch.setattr(context_module, "get_session_factory", lambda: sf)
+    context_module.configure(_mock_manager())
+
+    async with await _client() as client:
+        resp = await client.get("/api/v2/analytics/context")
+
+    assert resp.status_code == 200
+    assert resp.json()["camera_id"] == "cam1"
+
+
+async def TEST_context_requires_camera_id_when_ambiguous(db, monkeypatch):
+    """SCALE-03: con dos camaras registradas y sin camera_id en la query, la
+    eleccion es ambigua -- 400 en vez de adivinar."""
+    sf = db
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam2", name="Cam 2", enabled=True))
+
+    monkeypatch.setattr(context_module, "get_session_factory", lambda: sf)
+    context_module.configure(_mock_manager())
+
+    async with await _client() as client:
+        resp = await client.get("/api/v2/analytics/context")
+
+    assert resp.status_code == 400

@@ -41,7 +41,7 @@ import cv2
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
-from backend.api.v2.deps import V2_RATE_LIMIT, limiter
+from backend.api.v2.deps import V2_RATE_LIMIT, limiter, resolve_camera_id
 from backend.database import get_session_factory
 from backend.storage.repositories import AnalyticsRepo, bucket_for
 
@@ -149,10 +149,11 @@ async def _hourly_payload(camera_id: str, from_: datetime.date, to_: datetime.da
 @limiter.limit(V2_RATE_LIMIT)
 async def get_hourly(
     request: Request,
-    camera_id: str = Query(default="cam1"),
+    camera_id: str | None = Query(default=None),
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
+    camera_id = await resolve_camera_id(camera_id, get_session_factory())
     return await _hourly_payload(camera_id, from_, to_)
 
 
@@ -196,10 +197,11 @@ async def _summary_payload(camera_id: str, from_: datetime.date, to_: datetime.d
 @limiter.limit(V2_RATE_LIMIT)
 async def get_summary(
     request: Request,
-    camera_id: str = Query(default="cam1"),
+    camera_id: str | None = Query(default=None),
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
+    camera_id = await resolve_camera_id(camera_id, get_session_factory())
     return await _summary_payload(camera_id, from_, to_)
 
 
@@ -225,10 +227,11 @@ async def _occupancy_payload(camera_id: str, from_: datetime.date, to_: datetime
 @limiter.limit(V2_RATE_LIMIT)
 async def get_occupancy(
     request: Request,
-    camera_id: str = Query(default="cam1"),
+    camera_id: str | None = Query(default=None),
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
+    camera_id = await resolve_camera_id(camera_id, get_session_factory())
     return await _occupancy_payload(camera_id, from_, to_)
 
 
@@ -271,16 +274,17 @@ async def _persons_payload(camera_id: str, from_: datetime.date, to_: datetime.d
 @limiter.limit(V2_RATE_LIMIT)
 async def get_persons(
     request: Request,
-    camera_id: str = Query(default="cam1"),
+    camera_id: str | None = Query(default=None),
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
 ) -> dict[str, Any]:
+    camera_id = await resolve_camera_id(camera_id, get_session_factory())
     return await _persons_payload(camera_id, from_, to_)
 
 
 @router.get("/heatmap")
 @limiter.limit(V2_RATE_LIMIT)
-async def get_heatmap(request: Request, camera_id: str = Query(default="cam1")) -> Response:
+async def get_heatmap(request: Request, camera_id: str | None = Query(default=None)) -> Response:
     """Mapa de calor acumulado, compuesto sobre el ultimo frame (JPEG).
 
     Acumula desde el arranque de la camara y NO sigue el rango de la vista (D-12):
@@ -288,6 +292,7 @@ async def get_heatmap(request: Request, camera_id: str = Query(default="cam1")) 
     503 y 404 significan cosas distintas y el panel tiene un texto para cada una,
     a diferencia del v1 /api/heatmap, que devuelve 404 para las dos.
     """
+    camera_id = await resolve_camera_id(camera_id, get_session_factory())
     pipeline = _camera_manager.get(camera_id) if _camera_manager is not None else None
     if pipeline is None or pipeline.get_frame() is None:
         raise HTTPException(status_code=503, detail="Cámara sin señal")
@@ -302,12 +307,13 @@ async def get_heatmap(request: Request, camera_id: str = Query(default="cam1")) 
 
 @router.get("/heatmap/scale")
 @limiter.limit(V2_RATE_LIMIT)
-async def get_heatmap_scale(request: Request, camera_id: str = Query(default="cam1")) -> dict[str, Any]:
+async def get_heatmap_scale(request: Request, camera_id: str | None = Query(default=None)) -> dict[str, Any]:
     """Pico y media de la mascara acumulada, para la leyenda numerica del panel.
 
     Mismo orden de comprobaciones que /heatmap (503 antes que 404) para que los
     dos endpoints cuenten la misma historia.
     """
+    camera_id = await resolve_camera_id(camera_id, get_session_factory())
     pipeline = _camera_manager.get(camera_id) if _camera_manager is not None else None
     if pipeline is None or pipeline.get_frame() is None:
         raise HTTPException(status_code=503, detail="Cámara sin señal")
@@ -325,7 +331,7 @@ async def get_heatmap_scale(request: Request, camera_id: str = Query(default="ca
 @limiter.limit(V2_RATE_LIMIT)
 async def export_analytics(
     request: Request,
-    camera_id: str = Query(default="cam1"),
+    camera_id: str | None = Query(default=None),
     from_: datetime.date = Query(alias="from"),
     to_: datetime.date = Query(alias="to"),
     fmt: Literal["csv", "json"] = Query(default="csv", alias="format"),
@@ -338,6 +344,7 @@ async def export_analytics(
     el servidor con fechas ya normalizadas — ningun fragmento viene del cliente
     (V12 del Security Domain: path traversal en el nombre de fichero).
     """
+    camera_id = await resolve_camera_id(camera_id, get_session_factory())
     stamp = f"{from_:%Y%m%d}_{to_:%Y%m%d}"
 
     if fmt == "json":

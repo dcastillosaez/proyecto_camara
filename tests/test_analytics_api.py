@@ -141,6 +141,19 @@ async def TEST_garbage_date_returns_422(sf, client):
     assert resp.status_code == 422
 
 
+async def TEST_hourly_requires_camera_id_when_ambiguous(sf, client):
+    """SCALE-03: con dos camaras registradas y sin camera_id, 400 en vez de
+    adivinar cual -- mismo contrato en todos los endpoints de este router."""
+    async with sf() as session:
+        async with session.begin():
+            session.add(models.Camera(id="cam2", name="Cam 2", enabled=True))
+
+    resp = await client.get(
+        "/api/v2/analytics/hourly", params={"from": "2026-01-01", "to": "2026-01-07"}
+    )
+    assert resp.status_code == 400
+
+
 # ─── /hourly (OPS-12) ────────────────────────────────────────────────────────
 async def TEST_hourly_fills_empty_buckets_with_zero(sf, client):
     await _insert(sf, make_event(ts=datetime.datetime(2026, 1, 2, 14, 30)))

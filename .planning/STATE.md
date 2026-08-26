@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 34 COMPLETA (8/8 sub-tareas, puerta 34-08 con trazabilidad de los 6 criterios) en main, planificada y ejecutada a mano (sin gsd-sdk, no disponible en esta sesion -- ver .planning/phases/34-tests-e2e-integracion-pipeline/PLAN.md). TEST-01..05 cerrados en REQUIREMENTS.md. Fase 32 sigue abierta aparte (7/8 planes, falta 32-08) -- no se toco en esta sesion.
-last_updated: "2026-08-25T16:09:15.000Z"
-last_activity: 2026-08-25 -- Fase 34 (Tests E2E e integracion del pipeline) completada de extremo a extremo en una sesion sin gsd-sdk (agente gsd-planner/gsd-executor disponibles como subagentes, pero el orquestador /gsd:plan-phase//gsd:execute-phase no se pudo invocar -- gsd-sdk no esta en el PATH). Plan y bitacora unica en .planning/phases/34-tests-e2e-integracion-pipeline/PLAN.md (8 sub-tareas, no el formato estandar de PLAN.md por-plan de otras fases). 34-01: tests/integration/test_pipeline_e2e.py (FakeRTSP->detector mock->PersonTracker real->EventEngine->EventBus->make_event_pipeline real->RuleEngine->SQLite->broadcast). 34-02: pytest-cov + .coveragerc (events 90.8%, pipeline 89.7%, perception 94.3%, los tres >80% sin tocar produccion) + marker `perf` para excluir tests de latencia de la cobertura (coverage.py infla el tiempo de rutas con mucho glue Python de YOLO y colaba una regresion falsa). 34-03: quitado `continue-on-error: true` de tests.yml (enmascaraba cualquier fallo real). 34-04/34-05: Playwright completo, tests/e2e/ con los 10 escenarios de TEST-02 (11 tests, modales tiene 2) -- encontro y corrigio un bug real de produccion (el cierre del modal de clip al hacer click en el fondo nunca funcionaba: el listener vivia envuelto en un DOMContentLoaded que con type="module" ya habia disparado antes de registrarse, frontend/js/components/eventCard.js). 34-06: job `e2e` en tests.yml gateado a pull_request -- SIN VERIFICAR en una ejecucion real de GitHub Actions (requeriria git push, fuera de esta sesion sin permiso explicito), riesgo documentado: yolo26n.pt no esta en git y el webServer de Playwright construye un PersonDetector real al arrancar, primera vez que un job de CI de este repo lo hace de verdad. 34-07: 6 endpoints /api/* v1 marcados deprecated=True (GET/DELETE /api/events, GET /api/zones/stats, GET /api/heatmap, /api/alerts/config|test|status) tras confirmar por grep contra frontend/js/ que ninguno tiene consumidor real hoy -- deliberadamente NO se tocaron /api/events/export, /api/enroll_face y otros "v1" que la UI si usa activamente. Suite completa final: 769 passed, 2 skipped, 3m44s (pytest) + 11 passed, 22.4s (Playwright). NOTA para una sesion futura con gsd-sdk disponible: el bloque `progress` de abajo (total_plans/completed_plans/percent) NO se recalculo a mano tras esta fase porque no sigue el formato de PLAN.md por-plan que ese conteo asume -- solo se actualizo completed_phases; reconciliar con gsd-sdk cuando este disponible.
+stopped_at: Fase 35 COMPLETA (5/5 sub-tareas, puerta 35-05 con trazabilidad de los 6 criterios) en rama feature/fase-35 (sin PR todavia), planificada y ejecutada a mano (sin gsd-sdk, no disponible en esta sesion -- ver .planning/phases/35-cameramanager-camera-id-transversal/PLAN.md). SCALE-01..04 cerrados en REQUIREMENTS.md. Fase 32 sigue abierta aparte (7/8 planes, falta 32-08) -- no se toco en esta sesion.
+last_updated: "2026-08-25T18:29:10.000Z"
+last_activity: 2026-08-25 -- Fase 35 (CameraManager y camera_id transversal) completada de extremo a extremo en una sesion sin gsd-sdk, en rama feature/fase-35 aparte (sin PR abierto todavia). Research previo con un agente Explore: CameraPipeline/CameraManager ya existian disenadas para N camaras desde antes, 6 de las 7 tablas del criterio 2 ya tenian camera_id NOT NULL, y varios endpoints v2 ya aceptaban camera_id de verdad -- el hueco real era mas pequeno de lo que el ROADMAP sugeria. Plan y bitacora unica en .planning/phases/35-cameramanager-camera-id-transversal/PLAN.md (5 sub-tareas). 35-01: migracion v5->v6, system_metrics.camera_id NOT NULL (unica tabla que lo tenia opcional; resulto no tener NI UN escritor en todo el backend -- schema vestigial documentado, no tocado). 35-02: resolucion dinamica del camera_id por defecto (8 endpoints con "cam1" hardcodeado en context.py/analytics.py) -- el primer diseno (contra CameraManager en memoria) rompio 26 tests existentes, resuelto contra CameraRepo.default_camera_id() (tabla cameras, no pipeline vivo) tras entender por que esos tests desconectan el CameraManager a proposito. 35-03: /api/v2/cameras y /api/v2/cameras/{camera_id}/health extraidos de main.py a backend/api/v2/cameras.py (mismo patron que el resto de v2) -- hallazgo real: ningun test de Python cubria estos endpoints hasta ahora. 35-04: tests/integration/test_multi_camera.py, dos CameraPipeline reales via un CameraManager real contra la misma URL RTSP falsa, camera_id distintos en los eventos persistidos, y parar/reiniciar una camara no afecta a la otra. 35-05: puerta de fase, extendido el test de 35-04 para cubrir tambien el reinicio (SCALE-04 pedia "parar O reiniciar"). Suite completa final: 789 passed, 2 skipped, 4m19s (pytest, margen mas ajustado que en la Fase 34 -- cada pipeline real de test suma hilos) + 11 passed, 24.4s (Playwright). Sin checkpoint manual pendiente (fase puramente backend, sin superficie visual nueva). NOTA para una sesion futura con gsd-sdk disponible: el bloque `progress` de abajo (total_plans/completed_plans/percent) sigue sin recalcularse a mano por el mismo motivo que en el cierre de la Fase 34 -- solo se actualizo completed_phases.
 progress:
   total_phases: 32
-  completed_phases: 18
+  completed_phases: 19
   total_plans: 104
   completed_plans: 99
   percent: 95
@@ -21,15 +21,47 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-01)
 
 **Core value:** Ver en tiempo real cuántas personas han pasado frente a la cámara y a qué horas hay más actividad, con el vídeo en vivo, reconocimiento facial, grabación automática y métricas de sistema integrados en el mismo panel.
-**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08, rama distinta). Phase 34 — Tests E2E e integración del pipeline — **COMPLETA** (8/8 sub-tareas, puerta 34-08 aprobada)
+**Current focus:** Phase 32 — Vista de cámara y configuración visual (7/8 planes, falta 32-08, rama distinta). Phase 35 — CameraManager y camera_id transversal — **COMPLETA** (5/5 sub-tareas, puerta 35-05 aprobada), en rama `feature/fase-35` sin PR todavía
 
 ## Current Position
 
 Milestone: v2.0 — Plataforma de Video Analytics
 Phase: 32 (Vista de cámara y configuración visual) — EN MARCHA (7/8 planes, sin cerrar, rama distinta)
-Phase: 34 (Tests E2E e integración del pipeline) — **COMPLETA** (8/8 sub-tareas), en `main`
-Plan: 32 en 7 of 8 — 32-07 cerrado. 34: las 8 sub-tareas cerradas, puerta 34-08 con trazabilidad de los 6 criterios
-Status: Phase 32 sigue abierta en 32-08 — no se tocó en esta sesión (rama distinta). Phase 34 cerrada de extremo a extremo sin `gsd-sdk` (planificada y ejecutada a mano, ver nota en `stopped_at`): test de integración del pipeline completo (FakeRTSP→...→WebSocket), cobertura >80% en events/pipeline/perception, los 10 escenarios de Playwright (11 tests), CI con unit+integración en cada push y un job E2E nuevo gateado a pull_request (**sin verificar en una ejecución real de GitHub Actions**, pendiente del primer PR), y 6 endpoints `/api/*` v1 formalmente deprecados. TEST-01..05 marcados en REQUIREMENTS.md. Un bug real de producción encontrado y corregido de paso: el cierre del modal de clip al hacer click en el fondo nunca funcionaba (listener registrado dentro de un `DOMContentLoaded` que con `type="module"` ya había disparado). Siguiente paso natural: abrir un PR para verificar el job `e2e` en CI de verdad, o continuar con Fase 35 (CameraManager y `camera_id` transversal) cuando el usuario lo decida. Fase 32 sigue pendiente aparte, en su propia rama.
+Phase: 35 (CameraManager y camera_id transversal) — **COMPLETA** (5/5 sub-tareas), en `feature/fase-35` (sin PR)
+Plan: 32 en 7 of 8 — 32-07 cerrado. 35: las 5 sub-tareas cerradas, puerta 35-05 con trazabilidad de los 6 criterios
+Status: Phase 32 sigue abierta en 32-08 — no se tocó en esta sesión (rama distinta). Phase 34 mergeada en `main` (PR #18) con el job `e2e` de CI ya verificado en verde. Phase 35 cerrada de extremo a extremo sin `gsd-sdk` en su propia rama todavía sin PR: system_metrics.camera_id NOT NULL, resolución dinámica del camera_id por defecto en 8 endpoints v2, /api/v2/cameras extraído a su propio router, y un test de integración con dos CameraPipeline reales simultáneos (mismo RTSP, camera_id distintos, parar/reiniciar uno no afecta al otro). SCALE-01..04 marcados en REQUIREMENTS.md. Siguiente paso natural: pedir que se suba `feature/fase-35` y se abra el PR (mismo patrón que la Fase 34), o continuar con Fase 36 (Multi-cámara en runtime y UI) cuando el usuario lo decida. Fase 32 sigue pendiente aparte, en su propia rama.
+
+**La Fase 35 está completa.** El código deja de asumir una única cámara,
+planificada y ejecutada a mano en una sola sesión sin `gsd-sdk` (no disponible; ver
+`.planning/phases/35-cameramanager-camera-id-transversal/PLAN.md`, plan y bitácora
+únicos). Research previo con un agente Explore antes de tocar código: encontró que
+`CameraPipeline`/`CameraManager` ya existían diseñadas para N cámaras desde fases
+anteriores, que 6 de las 7 tablas del criterio 2 ya tenían `camera_id NOT NULL`, y
+que varios endpoints v2 (`zones`, `lines`, `events`, `recordings`) ya aceptaban
+`camera_id` de verdad — el hueco real era bastante más pequeño que lo que sugería
+el enunciado del ROADMAP. Cinco sub-tareas: (1) migración v5→v6,
+`system_metrics.camera_id` NOT NULL — la única tabla que lo tenía opcional, y que
+resultó no tener ni un solo escritor en todo `backend/` (schema vestigial,
+documentado y dejado tal cual); (2) resolución dinámica del `camera_id` por
+defecto en los 8 endpoints que aún llevaban `"cam1"` literal
+(`context.py`/`analytics.py`) — el primer diseño (contra el `CameraManager` en
+memoria) rompió 26 tests existentes que desconectan ese manager a propósito para
+probar lógica sin pipeline real pero sí con una cámara sembrada en la tabla
+`cameras`; se resolvió correctamente contra un `CameraRepo.default_camera_id()`
+nuevo (el catálogo persistido, no el estado de pipeline vivo); (3)
+`/api/v2/cameras` y `/api/v2/cameras/{camera_id}/health` extraídos de `main.py` a
+su propio router `backend/api/v2/cameras.py`, mismo patrón que el resto de v2 —
+hallazgo real: ningún test de Python cubría estos dos endpoints hasta ese momento;
+(4) `tests/integration/test_multi_camera.py`, dos `CameraPipeline` reales vía un
+`CameraManager` real contra la misma URL RTSP falsa, con eventos `camera_id`
+distintos correctamente persistidos y aislados; (5) puerta de fase, extendiendo el
+test anterior para cubrir también el reinicio de una cámara (SCALE-04 pedía "parar
+O reiniciar"), no solo pararla. Suite completa final: **789 passed, 2 skipped,
+4m19s** (pytest, margen más ajustado que en la Fase 34 — cada pipeline real de
+test añade sus propios hilos) + **11 passed, 24.4s** (Playwright). SCALE-01..04
+cerrados en `REQUIREMENTS.md`. Sin checkpoint manual pendiente: a diferencia de la
+Fase 34, esta es puramente backend/infraestructura, sin superficie visual nueva
+que revisar a ojo. Trabajo en la rama `feature/fase-35`, todavía sin PR abierto.
 
 **La Fase 34 está completa.** Red de seguridad del pipeline completo, planificada y
 ejecutada a mano en una sola sesión sin `gsd-sdk` (no disponible; ver nota en
