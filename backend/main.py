@@ -23,7 +23,7 @@ from starlette.responses import Response
 
 from backend.api.v2.deps import snapshot_url
 from backend.auth import issue_ws_token, verify, verify_ws_token
-from backend.config import build_rtsp_url, get_settings, mask_rtsp_url
+from backend.config import build_rtsp_url, get_settings
 from backend.database import (
     delete_events_range,
     delete_recordings_range,
@@ -52,6 +52,7 @@ from backend.pipeline import CameraManager, CameraPipeline
 from backend.pipeline.factory import SharedPipelineServices, start_camera_pipeline
 from backend.recognizer import PersonRecognizer
 from backend.storage.repositories import (
+    CameraRepo,
     ConfigRepo,
     DetectionStatRepo,
     EventRepo,
@@ -409,6 +410,42 @@ def _resolve_active_classes(persisted: list[int] | None, settings_value: list[in
     return list(persisted) if persisted else list(settings_value)
 
 
+async def _start_configured_cameras(
+    camera_manager: CameraManager, settings, process_size: tuple[int, int] | None,
+    services: SharedPipelineServices,
+) -> "CameraPipeline | None":
+    """Arranca TODAS las camaras `enabled=True` del catalogo (`CameraRepo`, Fase 36,
+    SCALE-05) en vez del unico `camera_manager.add("cam1", ...)` de antes.
+
+    "cam1" sigue siendo especial por compatibilidad hacia atras: la migracion v1->v2
+    siempre siembra su fila (backend/storage/migrations.py) pero sin `rtsp_url_ref`
+    (las credenciales siguen viniendo de `CAMERA_URL`/`RTSP_USER`/`RTSP_PASS`, nunca
+    se han escrito en la base de datos para ella) — el resto de camaras SI necesitan
+    su URL en el catalogo, no hay otro sitio de donde sacarla. Devuelve la pipeline de
+    "cam1" (o la primera arrancada si no hay "cam1") para que sea la fachada `rtsp_stream`
+    que consumen los endpoints v1, deliberadamente mono-camara (Fase 34).
+    """
+    primary: "CameraPipeline | None" = None
+    for camera in await CameraRepo(get_session_factory()).list(enabled=True):
+        rtsp_url = camera["rtsp_url"] or (build_rtsp_url(settings) if camera["id"] == "cam1" else None)
+        if not rtsp_url:
+            logger.warning("Camara %s sin rtsp_url configurada — omitida en el arranque", camera["id"])
+            continue
+        has_own_size = camera.get("process_w") and camera.get("process_h")
+        pipeline = await start_camera_pipeline(
+            camera_manager,
+            {
+                **camera, "rtsp_url": rtsp_url,
+                "process_w": camera["process_w"] if has_own_size else (process_size[0] if process_size else None),
+                "process_h": camera["process_h"] if has_own_size else (process_size[1] if process_size else None),
+            },
+            services,
+        )
+        if camera["id"] == "cam1" or primary is None:
+            primary = pipeline
+    return primary
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global rtsp_stream, camera_manager, notifier, event_bus, event_engine, rule_engine, latency_tracker
@@ -585,19 +622,14 @@ async def lifespan(app: FastAPI):
     from backend.api.v2 import cameras as cameras_v2_module
     cameras_v2_module.configure(camera_manager, pipeline_services)
 
-    pipeline = await start_camera_pipeline(
-        camera_manager,
-        {"id": "cam1", "rtsp_url": build_rtsp_url(settings), "process_w": process_size[0] if process_size else None,
-         "process_h": process_size[1] if process_size else None},
-        pipeline_services,
-    )
-    rtsp_stream = pipeline  # fachada consumida por los endpoints v1
+    pipeline = await _start_configured_cameras(camera_manager, settings, process_size, pipeline_services)
+    rtsp_stream = pipeline  # fachada consumida por los endpoints v1 (deliberadamente mono-camara)
     logger.info(
-        "Pipeline v2 arrancado (%s) — deteccion %.0f FPS objetivo",
-        mask_rtsp_url(build_rtsp_url(settings)), settings.detection_target_fps,
+        "Pipeline v2 arrancado — %d camara(s), deteccion %.0f FPS objetivo",
+        len(camera_manager.all()), settings.detection_target_fps,
     )
 
-    if settings.camera_driver == "tapo":
+    if settings.camera_driver == "tapo" and pipeline is not None:
         from backend.camera import set_refs as camera_set_refs
         camera_set_refs(pipeline, pipeline.tracker)
 

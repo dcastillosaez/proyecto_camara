@@ -168,11 +168,44 @@ qué cámara entre, es el comportamiento correcto, no un atajo.
   Suite completa: **814 passed, 2 skipped, 4m12s** (+13 sobre 36-02).
   Playwright completo: **11 passed, 21.2s** (mismo warning preexistente de
   `inf`, sin regresión).
-- [ ] **36-04** — Arranque dinámico desde la tabla `cameras`: `main.py` siembra
-  `cam1` una sola vez desde `settings` si la tabla está vacía (migración
-  desde variables de entorno, compatibilidad hacia atrás) y luego arranca
-  TODAS las cámaras `enabled=True` de `CameraRepo.list()` con la factoría de
-  36-02, en vez del único `camera_manager.add("cam1", ...)` de hoy.
+- [x] **36-04** — Arranque dinámico desde la tabla `cameras`. Hallazgo real
+  (no una suposición): la migración v1→v2 (`backend/storage/migrations.py:134`)
+  YA siembra la fila `cam1` en cada arranque desde hace fases — no hizo
+  falta añadir esa siembra, solo consumirla. `main.py` gana
+  `_start_configured_cameras()`: recorre `CameraRepo.list(enabled=True)` y
+  llama `start_camera_pipeline()` (36-03) por cada fila, en vez del único
+  `camera_manager.add("cam1", ...)` de antes.
+
+  Decisiones de compatibilidad, documentadas porque no eran obvias:
+  - `cam1` es la ÚNICA cámara cuyo `rtsp_url_ref` puede venir NULL en el
+    catálogo (la migración nunca lo escribe) — cuando es así, cae a
+    `build_rtsp_url(settings)` (`CAMERA_URL`/`RTSP_USER`/`RTSP_PASS`), igual
+    que siempre. Cualquier OTRA cámara sin `rtsp_url` propia se omite con
+    un `logger.warning` (no hay otro sitio de donde sacar su URL) — no
+    rompe el arranque de las demás.
+  - El tamaño de proceso (`process_w`/`process_h`) por cámara cae al
+    `process_size` global (`settings.process_width/height`) salvo que la
+    fila del catálogo tenga el suyo propio — ninguna cámara existente
+    pierde su configuración por defecto al pasar por este camino.
+  - La fachada `rtsp_stream` (v1, deliberadamente mono-cámara) sigue
+    apuntando a "cam1" si existe; si el operador la borró desde la UI, cae
+    a la primera cámara que arrancó con éxito — nunca se queda sin fachada
+    mientras haya al menos una cámara viva.
+
+  5 tests nuevos en `tests/test_stream.py` (arranque de N cámaras, cámara
+  sin `rtsp_url` omitida sin tumbar el arranque, catálogo vacío → `None`,
+  fallback de primaria sin "cam1", reparto de `process_size` por cámara).
+  Un fallo real de edición detectado y corregido antes de comitear: un
+  `old_string` corto en un fichero de tests denso hizo que `Edit`
+  empalmara mis tests nuevos ENCIMA de la última aserción de un test ya
+  existente (`TEST_tracks_broadcast_loop_sends_normalized_payload`),
+  dejándola huérfana — verificado con `git diff | grep '^-'` (debía no
+  mostrar nada, ya que el cambio es puramente aditivo) antes de dar la
+  sub-tarea por cerrada, y corregido restaurando la aserción en su sitio.
+
+  Suite completa: **819 passed, 2 skipped, 4m14s** (+5 sobre 36-03).
+  Playwright completo: **11 passed, 21.1s** (servidor real arrancando por
+  el camino nuevo, sin regresión).
 - [ ] **36-05** — Coste de CPU estimado por cámara: `estimated_cpu_pct` en
   `pipeline.stats()`/`GET /api/v2/cameras` (proxy `detection_fps ×
   latencia_media`, documentado como estimación, no medición de SO), umbral

@@ -162,3 +162,108 @@ async def TEST_tracks_broadcast_loop_sends_normalized_payload():
         "camera_id": "cam1",
         "tracks": tracks,
     })
+
+
+# ─── Fase 36 (SCALE-05): _start_configured_cameras arranca N camaras del catalogo ──
+def _fake_settings(camera_url="rtsp://env-cam1/stream"):
+    from types import SimpleNamespace
+    return SimpleNamespace(camera_url=camera_url, rtsp_user="", rtsp_pass="")
+
+
+async def TEST_start_configured_cameras_starts_every_enabled_camera():
+    import backend.main as main_module
+
+    rows = [
+        {"id": "cam1", "rtsp_url": None, "process_w": None, "process_h": None},
+        {"id": "cam2", "rtsp_url": "rtsp://cam2/stream", "process_w": None, "process_h": None},
+    ]
+    repo = MagicMock()
+    repo.list = AsyncMock(return_value=rows)
+    pipelines = {"cam1": MagicMock(), "cam2": MagicMock()}
+    start_mock = AsyncMock(side_effect=lambda manager, camera, services: pipelines[camera["id"]])
+
+    with patch.object(main_module, "CameraRepo", return_value=repo), \
+         patch.object(main_module, "start_camera_pipeline", start_mock):
+        primary = await main_module._start_configured_cameras(
+            MagicMock(), _fake_settings(), None, object(),
+        )
+
+    assert start_mock.await_count == 2
+    assert primary is pipelines["cam1"]
+    # cam1 sin rtsp_url propia cae al CAMERA_URL de settings (compatibilidad).
+    cam1_call = next(c for c in start_mock.await_args_list if c.args[1]["id"] == "cam1")
+    assert cam1_call.args[1]["rtsp_url"] == "rtsp://env-cam1/stream"
+
+
+async def TEST_start_configured_cameras_skips_camera_without_rtsp_url():
+    import backend.main as main_module
+
+    rows = [{"id": "cam2", "rtsp_url": None, "process_w": None, "process_h": None}]
+    repo = MagicMock()
+    repo.list = AsyncMock(return_value=rows)
+    start_mock = AsyncMock()
+
+    with patch.object(main_module, "CameraRepo", return_value=repo), \
+         patch.object(main_module, "start_camera_pipeline", start_mock):
+        primary = await main_module._start_configured_cameras(
+            MagicMock(), _fake_settings(), None, object(),
+        )
+
+    start_mock.assert_not_awaited()
+    assert primary is None
+
+
+async def TEST_start_configured_cameras_returns_none_with_zero_cameras():
+    import backend.main as main_module
+
+    repo = MagicMock()
+    repo.list = AsyncMock(return_value=[])
+
+    with patch.object(main_module, "CameraRepo", return_value=repo):
+        primary = await main_module._start_configured_cameras(
+            MagicMock(), _fake_settings(), None, object(),
+        )
+
+    assert primary is None
+
+
+async def TEST_start_configured_cameras_falls_back_to_first_pipeline_without_cam1():
+    """Si el operador borro 'cam1' desde la UI, la primaria pasa a ser la
+    primera camara que arranque con exito (no queda sin fachada v1)."""
+    import backend.main as main_module
+
+    rows = [{"id": "cam2", "rtsp_url": "rtsp://cam2/stream", "process_w": None, "process_h": None}]
+    repo = MagicMock()
+    repo.list = AsyncMock(return_value=rows)
+    cam2_pipeline = MagicMock()
+    start_mock = AsyncMock(return_value=cam2_pipeline)
+
+    with patch.object(main_module, "CameraRepo", return_value=repo), \
+         patch.object(main_module, "start_camera_pipeline", start_mock):
+        primary = await main_module._start_configured_cameras(
+            MagicMock(), _fake_settings(), None, object(),
+        )
+
+    assert primary is cam2_pipeline
+
+
+async def TEST_start_configured_cameras_uses_global_default_process_size_unless_overridden():
+    import backend.main as main_module
+
+    rows = [
+        {"id": "cam1", "rtsp_url": "rtsp://cam1/stream", "process_w": None, "process_h": None},
+        {"id": "cam2", "rtsp_url": "rtsp://cam2/stream", "process_w": 320, "process_h": 240},
+    ]
+    repo = MagicMock()
+    repo.list = AsyncMock(return_value=rows)
+    start_mock = AsyncMock(return_value=MagicMock())
+
+    with patch.object(main_module, "CameraRepo", return_value=repo), \
+         patch.object(main_module, "start_camera_pipeline", start_mock):
+        await main_module._start_configured_cameras(
+            MagicMock(), _fake_settings(), (1280, 720), object(),
+        )
+
+    by_id = {c.args[1]["id"]: c.args[1] for c in start_mock.await_args_list}
+    assert (by_id["cam1"]["process_w"], by_id["cam1"]["process_h"]) == (1280, 720)
+    assert (by_id["cam2"]["process_w"], by_id["cam2"]["process_h"]) == (320, 240)
