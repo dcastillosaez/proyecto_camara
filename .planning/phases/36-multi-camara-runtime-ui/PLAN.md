@@ -74,19 +74,68 @@ qué cámara entre, es el comportamiento correcto, no un atajo.
 
 ## Sub-tareas
 
-- [ ] **36-01** — `CameraRepo` CRUD (`list/create/update/delete`) +
+- [x] **36-01** — `CameraRepo` CRUD (`list/create/update/delete`) +
   `CameraManager.remove()`. Base de datos y gestor en memoria listos para
-  que 36-03 los use; sin endpoints todavía. Tests en `test_repositories.py`
-  y `test_stream.py`.
-- [ ] **36-02** — Factoría `backend/pipeline/factory.py::build_camera_pipeline()`
-  que extrae la construcción de una `CameraPipeline` completa (detector,
-  tracker, recording_config con `on_clip_ready` ligado al `camera_id` real,
-  identity/reid si aplica) de `main.py`, reutilizable para N cámaras.
-  Refactor de `main.py` para consumir la factoría en el arranque — sin
-  cambio de comportamiento observable, verificado por la suite completa.
-  Corrige los tres bugs de "cam1" hardcodeado (`_on_clip_ready`,
-  `_on_upload_failed`, `_recorder_hook` resuelto por `event.camera_id` vía
-  `camera_manager.get(...)`).
+  que 36-03 los use; sin endpoints todavía. `CameraManager.remove()` solo
+  hace `pop()`+`pipeline.stop()` — quien lo llame es responsable de borrar
+  también el catálogo (`CameraRepo.delete()`), simetría deliberada con
+  `add()` que tampoco toca la BD. Tests: 8 nuevos en `test_repositories.py`
+  (CRUD completo, sobre los 3 ya existentes de `default_camera_id`) y 3
+  nuevos en `test_manager.py` (con pipelines falsas — el patrón ya
+  establecido del fichero evita construir `CameraPipeline` real para no
+  levantar `CaptureWorker`/RTSP). 18 tests dirigidos verdes; no toca
+  `main.py`/wiring, sin relanzar la suite completa.
+- [x] **36-02** — Factoría `backend/pipeline/factory.py::build_camera_pipeline()`
+  que extrae de `main.py` la construcción completa de una `CameraPipeline`
+  (detector, tracker propios por cámara; `recording_config` con
+  `on_clip_ready`/`on_failure` ligados al `camera_id` real) detrás de un
+  `SharedPipelineServices` (recognizer, recording_repo, event_bus,
+  latency_tracker, active_classes, is_intrusion, on_identified, broadcast,
+  loop — los servicios que SÍ se comparten entre cámaras). `main.py` pasa a
+  consumir la factoría para "cam1"; el refactor es deliberadamente
+  comportamiento-preservado para el caso mono-cámara, verificado por la
+  suite completa sin ningún fallo.
+
+  De paso, el research había detectado (no una suposición: leído línea a
+  línea) que el propio arranque de "cam1" ya tenía **tres bugs latentes**
+  que habrían roto una segunda cámara real aunque la Fase 36 añadiera CRUD y
+  UI perfectos por encima — corregidos aquí, antes de construir nada nuevo
+  encima:
+  - `EventEngine` pasaba de ser un único objeto global con `camera_id="cam1"`
+    fijo (`main.py:425`, usado por CUALQUIER pipeline) a uno **por cámara**,
+    creado dentro de la factoría con el `camera_id` real — sin esto, todos
+    los eventos de detección/comportamiento de una segunda cámara se habrían
+    persistido con `camera_id="cam1"`.
+  - `_on_clip_ready` escribía `camera_id="cam1"` literal al persistir
+    grabaciones (`main.py:509` original) — ahora lo cierra la factoría sobre
+    el `camera_id` real de cada pipeline.
+  - `_recorder_hook` (dispara clips desde una regla) usaba siempre la
+    variable `pipeline` de la primera cámara (`main.py:719-728` original) —
+    ahora resuelve `camera_manager.get(event.camera_id)`.
+  - Bug relacionado, mismo origen: `UploadQueue.on_permanent_failure`
+    (`backend/gdrive.py`) solo recibía `(rec_id, message)`, así que
+    `_on_upload_failed` en `main.py` hardcodeaba `camera_id="cam1"` en el
+    evento `UPLOAD_FAILED` — `UploadQueue._process()` ya tenía la fila
+    `rec` completa (con su `camera_id` real) y simplemente no la pasaba;
+    ahora el callback recibe `(rec_id, camera_id, message)`. 2 tests nuevos
+    en `test_upload_queue.py` (uno confirma el camino feliz con "cam1",
+    otro fuerza una grabación de "cam2" y comprueba que el evento reporta
+    "cam2", no "cam1").
+
+  Alcance deliberadamente NO tocado (documentado, no un hueco): el watchdog
+  de `camera_offline`/`camera_recovered` (`main.py` línea ~284) y los
+  endpoints v1 (`/video_feed`, `/api/enroll_face`, heatmap, zonas v1...)
+  siguen atados a `rtsp_stream` = la cámara primaria — mismo patrón ya
+  establecido en la Fase 34 para los endpoints v1 que la UI real todavía usa
+  (deliberadamente mono-cámara, fuera del alcance de "multi-cámara en la
+  UI v2" que pide esta fase).
+
+  Suite completa: **801 passed, 2 skipped, 4m20s** (+1 sobre el cierre de
+  36-01: 8+3 de 36-01, +1 de los 2 tests nuevos de upload_queue que sustituye
+  al test existente modificado). Playwright completo: **11 passed, 24.4s**
+  (con un warning preexistente de `ValueError: Out of range float... inf` en
+  el log del servidor de tests, verificado con `git stash` que ya aparecía
+  ANTES de este cambio — no es una regresión, no se ha tocado).
 - [ ] **36-03** — Endpoints `POST/PUT/DELETE /api/v2/cameras` en
   `backend/api/v2/cameras.py`: crear arranca la pipeline en caliente
   (factoría de 36-02 + `camera_manager.add()` + `pipeline.start()`, zonas/

@@ -102,7 +102,7 @@ class UploadQueue:
         token_path: str = "data/token.json",
         max_attempts: int = 5,
         poll_secs: float = 30.0,
-        on_permanent_failure: Callable[[int, str], Awaitable[None]] | None = None,
+        on_permanent_failure: Callable[[int, str, str], Awaitable[None]] | None = None,
         max_workers: int = 2,
     ) -> None:
         self._repo = repo
@@ -158,7 +158,7 @@ class UploadQueue:
                 await self._repo.mark_upload(rec.id, UploadState.FAILED, error=str(exc))
                 if self._on_permanent_failure:
                     try:
-                        await self._on_permanent_failure(rec.id, str(exc))
+                        await self._on_permanent_failure(rec.id, rec.camera_id, str(exc))
                     except Exception:
                         logger.exception("UploadQueue: on_permanent_failure raised")
             else:

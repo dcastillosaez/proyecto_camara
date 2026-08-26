@@ -38,7 +38,6 @@ from backend.database import (
     purge_old_events,
     purge_old_recordings,
 )
-from backend.detector import PersonDetector
 from backend.events import actions as event_actions
 from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
@@ -50,6 +49,7 @@ from backend.observability.metrics import metrics as obs_metrics
 from backend.observability.sampler import MetricsSampler
 from backend.notifier import Notifier
 from backend.pipeline import CameraManager, CameraPipeline
+from backend.pipeline.factory import SharedPipelineServices, build_camera_pipeline
 from backend.recognizer import PersonRecognizer
 from backend.storage.repositories import (
     ConfigRepo,
@@ -60,8 +60,6 @@ from backend.storage.repositories import (
     RuleRepo,
     ZoneRepo,
 )
-from backend.tracker import PersonTracker
-
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 logger = logging.getLogger(__name__)
@@ -475,17 +473,8 @@ async def lifespan(app: FastAPI):
     persisted_classes = await ConfigRepo(get_session_factory()).get("yolo_classes")
     active_classes = _resolve_active_classes(persisted_classes, settings.yolo_classes)
 
-    detector = PersonDetector(
-        model_path=settings.yolo_model_path,
-        confidence=settings.yolo_confidence,
-        classes=active_classes,
-        label=settings.detection_label,
-        imgsz=settings.yolo_imgsz,
-    )
-    # Sin lineas iniciales: las lineas reales (N, persistidas) se cargan desde
-    # LineRepo justo despues de pipeline.start(), mismo punto/patron que las
-    # zonas (ver mas abajo, pipeline.set_lines()).
-    tracker = PersonTracker(frame_rate=settings.tracker_frame_rate)
+    # detector/tracker YA NO se construyen aqui: build_camera_pipeline() (Fase 36)
+    # crea un par nuevo por camara, nunca comparte un modelo YOLO entre pipelines.
     recognizer = PersonRecognizer(
         db_path=settings.db_path.replace("events.db", "persons.db"),
         match_threshold=settings.face_match_threshold,
@@ -502,32 +491,14 @@ async def lifespan(app: FastAPI):
     # Fase 20 — clip metadata persistence + Drive upload queue
     recording_repo = RecordingRepo(get_session_factory())
 
-    def _on_clip_ready(result) -> None:
-        """Called from the assembly thread when a clip is finalised (backend.pipeline.recording.ClipResult)."""
-        async def _persist():
-            rec_id = await recording_repo.create(
-                camera_id="cam1", filename=result.path, started_at=result.started_at,
-                reason=result.reason, trigger_event_id=result.trigger_event_id,
-                person_id=result.person_id, zone_id=result.zone_id,
-            )
-            await recording_repo.finalize(
-                rec_id, ended_at=result.ended_at, duration_s=result.duration_s,
-                size_bytes=result.size_bytes, sha256=result.sha256,
-                thumbnail_path=result.thumbnail_path, upload_state=result.upload_state,
-            )
-            await _broadcast({
-                "type": "recording_started",
-                "filename": Path(result.path).name,
-                "id": rec_id,
-            })
-
-        asyncio.run_coroutine_threadsafe(_persist(), loop)
-
-    async def _on_upload_failed(rec_id: int, message: str) -> None:
+    # on_clip_ready/on_failure YA NO se construyen aqui: build_camera_pipeline()
+    # (Fase 36) los liga al camera_id real de cada pipeline — antes las grabaciones
+    # de CUALQUIER camara se persistian con camera_id="cam1" a fuego.
+    async def _on_upload_failed(rec_id: int, camera_id: str, message: str) -> None:
         await _broadcast({"type": "recording_failed", "id": rec_id, "error": message})
         if event_bus is not None:
             await event_bus.publish(Event(
-                type=EventType.UPLOAD_FAILED, camera_id="cam1", ts=datetime.datetime.now(),
+                type=EventType.UPLOAD_FAILED, camera_id=camera_id, ts=datetime.datetime.now(),
                 payload={"reason": message, "recording_id": rec_id},
             ))
 
@@ -541,25 +512,6 @@ async def lifespan(app: FastAPI):
         on_permanent_failure=_on_upload_failed,
     )
     upload_queue.start()
-
-    def _on_recording_failure(message: str) -> None:
-        logger.error("RecordingWorker failure: %s", message)
-        if event_engine is not None:
-            event_engine.degraded_mode(datetime.datetime.now(), reason=message)
-
-    recording_config = {
-        "clips_dir": settings.clips_dir,
-        "thumbnails_dir": "data/thumbnails",
-        "fps": settings.recording_fps,
-        "pre_buffer_secs": settings.pre_buffer_secs,
-        "post_buffer_secs": settings.post_buffer_secs,
-        "pre_buffer_max_mb": settings.pre_buffer_max_mb,
-        "pre_buffer_jpeg_quality": settings.pre_buffer_jpeg_quality,
-        "codec": settings.recording_codec,
-        "upload_min_severity": settings.upload_min_severity,
-        "on_clip_ready": _on_clip_ready,
-        "on_failure": _on_recording_failure,
-    }
 
     def _is_in_schedule() -> bool:
         """True si la hora actual cae dentro del horario de acceso configurado."""
@@ -628,68 +580,21 @@ async def lifespan(app: FastAPI):
     from backend.api.v2 import rules as rules_v2_module
     rules_v2_module.configure(rule_engine)
 
-    pipeline = camera_manager.add(
-        "cam1",
-        build_rtsp_url(settings),
-        process_size=process_size,
-        detector=detector,
-        tracker=tracker,
-        recognizer=recognizer,
-        event_engine=event_engine,
-        latency_tracker=latency_tracker,
-        is_intrusion=lambda: not _is_in_schedule(),
-        recording_config=recording_config,
-        on_identified=_save_gallery_capture,
-        detection_fps=(
-            settings.detection_target_fps,
-            settings.detection_min_fps,
-            settings.detection_max_fps,
-        ),
-        recognition_fps=settings.recognition_target_fps,
-        identity_vote_window=settings.identity_vote_window,
-        identity_min_votes=settings.identity_min_votes,
-        identity_min_ratio=settings.identity_min_ratio,
-        identity_lost_ttl=settings.identity_lost_ttl_secs,
-        identity_revalidate_after=settings.identity_revalidate_after_secs,
-        identity_low_confidence=settings.face_confirm_threshold,
-        reid_enabled=settings.reid_enabled,
-        reid_model_path=settings.reid_model_path,
-        reid_inherit_window=settings.reid_inherit_window_secs,
-        reid_similarity_threshold=settings.reid_similarity_threshold,
-        reid_interval=settings.reid_interval_secs,
-        reid_inherit=settings.reid_inherit_identity,
-        reid_max_gallery_entries=settings.reid_max_gallery_entries,
-        behavior_enabled=settings.behavior_enabled,
-        loiter_secs=settings.loiter_secs,
-        loiter_radius_px=settings.loiter_radius_px,
-        loiter_require_zone=settings.loiter_require_zone,
-        run_speed_px_s=settings.run_speed_px_s,
-        run_window_secs=settings.run_window_secs,
-        immobile_secs=settings.immobile_secs,
-        immobile_radius_px=settings.immobile_radius_px,
-        crowd_threshold=settings.crowd_threshold,
-        behavior_max_tracks=settings.behavior_max_tracks,
-        objects_enabled=settings.objects_enabled,
-        object_class_ids=settings.object_class_ids,
-        object_left_secs=settings.object_left_secs,
-        object_still_radius_px=settings.object_still_radius_px,
-        object_person_radius_px=settings.object_person_radius_px,
-        object_person_radius_ratio=settings.object_person_radius_ratio,
-        object_warmup_secs=settings.object_warmup_secs,
-        object_gone_secs=settings.object_gone_secs,
-        object_person_window_secs=settings.object_person_window_secs,
-        object_max_tracks=settings.object_max_tracks,
+    pipeline_services = SharedPipelineServices(
+        settings=settings, event_bus=event_bus, latency_tracker=latency_tracker,
+        recognizer=recognizer, recording_repo=recording_repo, active_classes=active_classes,
+        is_intrusion=lambda: not _is_in_schedule(), on_identified=_save_gallery_capture,
+        broadcast=_broadcast, loop=loop,
     )
-    # Coherencia del reparto persona/objeto: el DetectionWorker recibe el conjunto de ids
-    # de objeto derivado de las clases realmente activas (que pueden venir de app_config),
-    # no solo del object_class_ids de settings — mismo patron que pipeline.set_zones(...)
-    # de mas abajo (cargar estado persistido justo despues de crear el pipeline).
-    pipeline.set_detection_classes(active_classes)
-    rtsp_stream = pipeline  # fachada consumida por los endpoints
+    pipeline = build_camera_pipeline(
+        camera_manager, "cam1", build_rtsp_url(settings), pipeline_services,
+        process_size=process_size,
+    )
+    rtsp_stream = pipeline  # fachada consumida por los endpoints v1
 
     if settings.camera_driver == "tapo":
         from backend.camera import set_refs as camera_set_refs
-        camera_set_refs(pipeline, tracker)
+        camera_set_refs(pipeline, pipeline.tracker)
 
     pipeline.start()
     logger.info(
@@ -717,8 +622,12 @@ async def lifespan(app: FastAPI):
     )
 
     async def _recorder_hook(event: Event, action, rule_name: str) -> None:
-        if pipeline.recording is not None:
-            pipeline.recording.request_clip(
+        # Resuelto por event.camera_id (Fase 36): antes usaba siempre la primera
+        # camara, asi que una regla disparada por una segunda camara habria
+        # grabado el clip de la camara equivocada.
+        target = camera_manager.get(event.camera_id)
+        if target is not None and target.recording is not None:
+            target.recording.request_clip(
                 reason=rule_name,
                 trigger_ts=event.ts,
                 trigger_event_id=event.id,
