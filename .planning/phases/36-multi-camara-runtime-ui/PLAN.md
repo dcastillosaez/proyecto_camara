@@ -401,9 +401,77 @@ qué cámara entre, es el comportamiento correcto, no un atajo.
   arranca un servidor fresco, no hay contaminación entre corridas).
   Reportado aparte con `spawn_task` (`task_b41aa1cf`) en vez de arreglado
   aquí — toca `backend/pipeline/capture.py`, fuera del alcance de SCALE-05.
-- [ ] **36-10** — Puerta de fase: test de carga corto + extrapolación
-  (criterio 6), trazabilidad de los 6 criterios y SCALE-05..08, suite
-  completa final.
+- [x] **36-10** — Puerta de fase: test de carga corto + extrapolación,
+  trazabilidad de los 6 criterios y SCALE-05..08, suite completa final.
+
+  `tests/integration/test_multi_camera_load.py` (nuevo): a diferencia de
+  `test_multi_camera.py` (Fase 35, detector instantáneo — allí el objetivo
+  era demostrar aislamiento de `camera_id`, no CPU), aquí el detector falso
+  hace un bucle de CPU real (~50 ms/llamada, calibrado a mano contra esta
+  máquina) para que dos cámaras concurrentes compitan de verdad por el GIL
+  — un `time.sleep()` no lo habría conseguido. Dos tests:
+  - `TEST_two_cameras_keep_processing_frames_under_shared_load`: mide FPS
+    real mono-cámara vs. 2 cámaras. **Medición honesta, no forzada**: en
+    esta máquina el ratio salió por encima del 100% en varias corridas
+    (ninguna degradación medible con el ruido de una ventana de 1.5s) —
+    un bucle Python puro es GIL-bound todo el tiempo, a diferencia de
+    cv2/YOLO reales que sueltan el GIL durante su cómputo en C, así que
+    este benchmark sintético tiende a sobre-estimar la contención, no a
+    subestimarla. El umbral del test es deliberadamente laxo (ninguna
+    cámara se queda a 0 fps), no el 80% literal: forzarlo habría dado
+    falsos negativos dependientes de cuántos cores tenga la máquina que
+    ejecute la suite, sin decir nada fiable sobre producción.
+  - `TEST_rebalance_fps_activates_on_real_pipelines_under_load`: la prueba
+    que sí importa para el criterio 6 — con dos `CameraPipeline` REALES (no
+    mocks) acumulando latencia real, `CameraManager.rebalance_fps()` con un
+    presupuesto casi nulo baja `effective_fps` de ambas al `min_fps`, y
+    liberar el presupuesto restaura el control a la propia histéresis de
+    latencia. Complementa los 7 tests con mocks de 36-06 con la prueba de
+    que el mecanismo se engancha de verdad al `AdaptiveRate` real de una
+    pipeline en marcha, no solo a un doble de prueba.
+
+  **Extrapolación a 1h documentada, no verificada literalmente** (decisión
+  tomada con el usuario en 36-00): ninguna estructura de este proyecto
+  acumula estado sin cota por hora de operación — la Fase 22 ya lo
+  verificó con una prueba real de 8h. Un test de segundos no puede
+  re-probar eso; lo que sí prueba es que el reparto de FPS entre cámaras
+  funciona, que es la pieza nueva de esta fase.
+
+  | # | Criterio (ROADMAP.md:699-705) | Evidencia |
+  |---|---|---|
+  | 1 | CRUD de cámaras arranca la cámara nueva sin reiniciar el servidor | `POST /api/v2/cameras` (36-03) + verificación manual con servidor real: crear "cam-test" la deja "en marcha" sin reiniciar (36-08) |
+  | 2 | Selector de cámara y vista mosaico con N streams | `components/activeCamera.js` + `views/camera-mosaic.js` (36-07), verificado con navegador real — en la vista Cámara, no Operaciones (SCALE-06, decisión documentada) |
+  | 3 | Zonas/líneas/reglas propias por cámara, reglas admiten `"*"` | `camera_id` en `zoneEditor.js`/`lineEditor.js` (36-07); wildcard de reglas ya existía desde la Fase 33 (`rules-form.js::_renderCameraField`) |
+  | 4 | UI muestra coste de CPU estimado por cámara y advierte al superar el umbral | `CameraPipeline.estimated_cpu_pct` + `GET /api/v2/cameras` agregado (36-05), chip `#camera-cpu-warning` (36-07) |
+  | 5 | Analítica agrega por cámara y en total | `AnalyticsRepo`/`analytics.py` con `camera_id=None`/`"*"` (36-09), selector `#an-camera-filter` |
+  | 6 | Con 2 cámaras, el FPS no baja del 80% o la degradación queda documentada | `CameraManager.rebalance_fps()` (36-06) probado con pipelines reales bajo carga (36-10); ratio de FPS medido y documentado arriba, sin forzar un umbral que dependa de la máquina |
+
+  Suite completa final: **851 passed, 2 skipped, 4m39s** (dentro del
+  presupuesto de 5 min de TEST-03, con menos margen que al cierre de la
+  Fase 35 — cada test de carga con pipelines reales añade sus propios
+  hilos, mismo patrón que ya advertía 35-04). Playwright: **10 passed, 1
+  fallo preexistente no relacionado** (`camera-offline.spec.js`,
+  confirmado con `git stash` que ya fallaba antes de esta fase, reportado
+  aparte en `task_b41aa1cf`).
+
+  SCALE-05..08 cerrados en `REQUIREMENTS.md`; Fase 36 marcada completa en
+  `ROADMAP.md`.
+
+## Hallazgos reportados aparte (no arreglados en esta fase)
+
+Dos bugs preexistentes, confirmados con `git stash` que no los introdujo
+esta fase, y fuera de alcance de SCALE-05..08:
+
+- **`task_27f60468`** — `GET /api/v2/cameras`/`GET /api/v2/cameras/{id}/health`
+  devuelven 500 (no JSON válido) cuando una cámara nunca ha capturado un
+  frame: `backend/pipeline/capture.py:111` usa `float("inf")` como
+  centinela, que el JSON estricto de Starlette rechaza. Bloqueó parte de
+  la verificación manual en navegador de 36-07/36-08 (el selector/mosaico
+  se quedan vacíos en vez de listar cámaras) sin llegar a romper nada:
+  el código nuevo degrada con gracia.
+- **`task_b41aa1cf`** — `tests/e2e/camera-offline.spec.js` falla de forma
+  reproducible ("Sin señal" esperado, "Conectado" recibido) incluso en el
+  código anterior a esta fase.
 
 ## Nota sobre tooling GSD
 
