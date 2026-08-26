@@ -1138,3 +1138,22 @@ class ConfigRepo:
                     await session.delete(row)
                     return True
         return False
+
+
+class CameraRepo:
+    """Catalogo de camaras (tabla `cameras`) — fuente de verdad para SCALE-03: el
+    default de camera_id de los endpoints v2 se resuelve contra las camaras
+    REGISTRADAS, no contra el CameraManager en memoria (que solo refleja pipelines
+    vivos y en muchos tests no esta cableado a proposito, p.ej. los que prueban
+    formato de CSV o matematica de buckets sin levantar un pipeline real)."""
+
+    def __init__(self, session_factory) -> None:
+        self._sf = session_factory
+
+    async def default_camera_id(self) -> str | None:
+        """La unica camara registrada, o None si hay 0 o mas de una — en ese caso
+        la eleccion es ambigua y quien llama debe pedir camera_id explicito."""
+        async with self._sf() as session:
+            result = await session.execute(select(models.Camera.id))
+            ids = result.scalars().all()
+        return ids[0] if len(ids) == 1 else None

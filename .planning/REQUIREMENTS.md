@@ -282,10 +282,10 @@
 
 ### Escalabilidad (SCALE)
 
-- [ ] **SCALE-01**: El pipeline de una cámara está encapsulado en una clase instanciable N veces
-- [ ] **SCALE-02**: `camera_id` está presente y es obligatorio en todas las tablas con dimensión de cámara
-- [ ] **SCALE-03**: Todos los endpoints v2 aceptan `camera_id`, con valor por defecto cuando solo hay una cámara
-- [ ] **SCALE-04**: Parar o reiniciar una cámara no afecta a las demás ni al servidor
+- [x] **SCALE-01**: El pipeline de una cámara está encapsulado en una clase instanciable N veces
+- [x] **SCALE-02**: `camera_id` está presente y es obligatorio en todas las tablas con dimensión de cámara
+- [x] **SCALE-03**: Todos los endpoints v2 aceptan `camera_id`, con valor por defecto cuando solo hay una cámara
+- [x] **SCALE-04**: Parar o reiniciar una cámara no afecta a las demás ni al servidor
 - [ ] **SCALE-05**: Se pueden añadir y configurar cámaras desde la interfaz sin reiniciar el servidor
 - [ ] **SCALE-06**: Existe vista mosaico multi-cámara y selector de cámara en la vista de operaciones
 - [ ] **SCALE-07**: Zonas, líneas y reglas son propias de cada cámara, con posibilidad de reglas globales

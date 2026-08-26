@@ -22,7 +22,7 @@ from backend.storage import models
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def _table_exists(conn: Connection, name: str) -> bool:
@@ -252,11 +252,47 @@ def _migrate_v4_to_v5(conn: Connection) -> None:
     _record_version(conn, 5)
 
 
+def _migrate_v5_to_v6(conn: Connection) -> None:
+    """camera_id NOT NULL en system_metrics (Fase 35, SCALE-02, criterio 2).
+
+    Ultima tabla del esquema con camera_id opcional -- el resto (events, tracks,
+    detection_stats, recordings, zones, lines) ya lo tenia NOT NULL desde la v2.
+    SQLite no soporta ALTER COLUMN ... SET NOT NULL: reconstruye la tabla (patron
+    estandar de SQLite para endurecer una columna existente), sin indices propios
+    que recrear (solo la PK autoincrement).
+
+    El backfill a 'cam1' es defensivo, no correctivo: system_metrics no tiene NI
+    UN escritor en todo el codebase (MetricsSampler solo alimenta gauges de
+    Prometheus en memoria, nunca persiste una fila aqui) -- no hay filas NULL
+    reales que migrar hoy, pero una tabla NOT NULL no puede dejar pasar las que
+    pudiera haber quedado de una edicion manual de la base.
+    """
+    if not _table_exists(conn, "system_metrics"):
+        _record_version(conn, 6)
+        return
+    conn.execute(text("UPDATE system_metrics SET camera_id = 'cam1' WHERE camera_id IS NULL"))
+    conn.execute(text(
+        "CREATE TABLE system_metrics_new ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "camera_id VARCHAR(50) NOT NULL REFERENCES cameras(id), "
+        "ts DATETIME NOT NULL, "
+        "metrics JSON NOT NULL)"
+    ))
+    conn.execute(text(
+        "INSERT INTO system_metrics_new (id, camera_id, ts, metrics) "
+        "SELECT id, camera_id, ts, metrics FROM system_metrics"
+    ))
+    conn.execute(text("DROP TABLE system_metrics"))
+    conn.execute(text("ALTER TABLE system_metrics_new RENAME TO system_metrics"))
+    _record_version(conn, 6)
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[Connection], None]]] = [
     (2, "esquema v2 completo", _migrate_v1_to_v2),
     (3, "indice compuesto de la linea temporal", _migrate_v2_to_v3),
     (4, "indice compuesto de analitica", _migrate_v3_to_v4),
     (5, "unificacion de zonas + siembra de linea de conteo", _migrate_v4_to_v5),
+    (6, "system_metrics.camera_id NOT NULL", _migrate_v5_to_v6),
 ]
 
 

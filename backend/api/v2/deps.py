@@ -17,7 +17,7 @@ caller requests.
 
 from __future__ import annotations
 
-from fastapi import Query
+from fastapi import HTTPException, Query
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -29,6 +29,34 @@ V2_RATE_LIMIT = "60/minute"
 def pagination_limit(default: int = 50, le: int = 200):
     """Query(...) factory for list endpoints — caps `limit` at *le* regardless of request."""
     return Query(default=default, ge=1, le=le)
+
+
+async def resolve_camera_id(camera_id: str | None, session_factory) -> str:
+    """Resuelve el camera_id efectivo de la peticion (Fase 35, SCALE-03).
+
+    Si el cliente ya lo mando, se respeta tal cual (ni siquiera se comprueba que
+    exista: los endpoints que llaman a esto ya toleran una camara desconocida,
+    p.ej. devolviendo listas vacias). Si no lo mando, cae al default SOLO cuando
+    hay exactamente una camara REGISTRADA en la tabla `cameras` -- nunca a un
+    literal "cam1" fijo, que dejaria de tener sentido en cuanto exista una
+    segunda camara (Fase 36). Se resuelve contra el catalogo persistido, no
+    contra el CameraManager en memoria: estos endpoints consultan historico en
+    BD, no estado de pipeline vivo, y el catalogo sigue existiendo aunque el
+    pipeline este parado. Con 0 o mas de una camara sin especificar cual, la
+    eleccion es ambigua: 400 en vez de adivinar y devolver datos de la camara
+    equivocada en silencio.
+    """
+    if camera_id is not None:
+        return camera_id
+    from backend.storage.repositories import CameraRepo
+
+    default = await CameraRepo(session_factory).default_camera_id()
+    if default is None:
+        raise HTTPException(
+            status_code=400,
+            detail="camera_id requerido: hay varias camaras registradas (o ninguna) y no hay una unica por defecto",
+        )
+    return default
 
 
 def snapshot_url(snapshot_path: str | None) -> str | None:

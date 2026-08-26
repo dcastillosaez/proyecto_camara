@@ -6,7 +6,6 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from dataclasses import asdict
 from pathlib import Path
 
 import cv2
@@ -22,7 +21,7 @@ from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from backend.api.v2.deps import V2_RATE_LIMIT, limiter as v2_limiter, snapshot_url
+from backend.api.v2.deps import snapshot_url
 from backend.auth import issue_ws_token, verify, verify_ws_token
 from backend.config import build_rtsp_url, get_settings, mask_rtsp_url
 from backend.database import (
@@ -602,6 +601,9 @@ async def lifespan(app: FastAPI):
     )
     camera_manager = CameraManager()
 
+    from backend.api.v2 import cameras as cameras_v2_module
+    cameras_v2_module.configure(camera_manager)
+
     from backend.api.v2 import context as context_v2_module
     context_v2_module.configure(camera_manager)
 
@@ -791,6 +793,9 @@ if _settings.camera_driver == "tapo":
 
 from backend.api.v2.recordings import router as recordings_v2_router
 app.include_router(recordings_v2_router)
+
+from backend.api.v2.cameras import router as cameras_v2_router
+app.include_router(cameras_v2_router)
 
 from backend.api.v2.metrics import router as metrics_v2_router
 app.include_router(metrics_v2_router)
@@ -1172,44 +1177,6 @@ async def api_heatmap():
     if not ok:
         raise HTTPException(status_code=500, detail="JPEG encoding failed")
     return Response(content=jpeg.tobytes(), media_type="image/jpeg")
-
-
-# ---------------------------------------------------------------------------
-# Phase 17: Pipeline v2 — FrameBroker + CaptureWorker health
-# ---------------------------------------------------------------------------
-
-@app.get("/api/v2/cameras")
-@v2_limiter.limit(V2_RATE_LIMIT)
-async def api_v2_cameras(request: Request):
-    """List cameras managed by pipeline v2, with their capture health."""
-    if camera_manager is None:
-        raise HTTPException(status_code=503, detail="Pipeline v2 no activo")
-    return {
-        "cameras": [
-            {**asdict(p.health), "workers": p.worker_status(), "degraded": p.degraded}
-            for p in camera_manager.all()
-        ]
-    }
-
-
-@app.get("/api/v2/cameras/{camera_id}/health")
-@v2_limiter.limit(V2_RATE_LIMIT)
-async def api_v2_camera_health(request: Request, camera_id: str):
-    """CaptureWorker health for one camera, plus FrameBroker subscriber stats."""
-    if camera_manager is None:
-        raise HTTPException(status_code=503, detail="Pipeline v2 no activo")
-    pipeline = camera_manager.get(camera_id)
-    if pipeline is None:
-        raise HTTPException(status_code=404, detail="Camera not found")
-    return {
-        **asdict(pipeline.health),
-        # capture_fps y detection_fps son deliberadamente distintos: esa
-        # diferencia ES la prueba de que el pipeline esta desacoplado.
-        "capture_fps": pipeline.get_fps(),
-        "detection_fps": pipeline.get_detection_fps(),
-        "broker_stats": pipeline.broker.stats(),
-        **pipeline.stats(),
-    }
 
 
 # ---------------------------------------------------------------------------
