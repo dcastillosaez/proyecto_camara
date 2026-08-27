@@ -293,7 +293,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 
 - [x] **Phase 35: CameraManager y camera_id transversal** — El código deja de asumir una única cámara (completed 2026-08-25; planificada y ejecutada a mano sin `gsd-sdk`, ver `.planning/phases/35-cameramanager-camera-id-transversal/PLAN.md`)
 - [x] **Phase 36: Multi-cámara en runtime y UI** — Añadir cámaras sin reiniciar; vista mosaico (completed 2026-08-26; planificada y ejecutada a mano sin `gsd-sdk`, ver `.planning/phases/36-multi-camara-runtime-ui/PLAN.md`)
-- [ ] **Phase 37: Backends opcionales — PostgreSQL y Redis** — Repositorios intercambiables, SQLite sigue siendo default
+- [x] **Phase 37: Backends opcionales — PostgreSQL y Redis** — Repositorios intercambiables, SQLite sigue siendo default (completed 2026-08-27; verificado contra postgres:16-alpine y redis:7-alpine reales via Docker, ver `.planning/phases/37-backends-opcionales-postgresql-redis/PLAN.md`)
 - [ ] **Phase 38: Worker de inferencia en GPU (opcional)** — Aprovechar GPU si existe, fallback limpio a CPU
 
 ## Phase Details v2.0
