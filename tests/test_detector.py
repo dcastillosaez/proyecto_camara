@@ -241,24 +241,38 @@ def TEST_multiclass_latency_under_15_percent(real_detector, bench_frame):
     jitter del planificador de Windows en esta maquina compartida haria flaky un assert
     sobre una muestra (misma metodologia que TEST_reid_latency_under_20ms).
 
+    Las dos configuraciones se miden INTERCALADAS (1 clase, 6 clases, 1 clase, ...) en
+    vez de en dos bloques seguidos. Medirlas en bloques hacia que cualquier deriva de
+    carga de la maquina durante el test (la suite completa levanta hilos y pipelines
+    reales en otros modulos) se sumara entera al bloque medido en segundo lugar — que
+    siempre era el de 6 clases — y sesgara el cociente en una unica direccion. Intercalar
+    reparte esa deriva por igual entre ambas muestras. `set_classes()` entre medidas es
+    un unico rebind de atributo, sin recarga de modelo, asi que su coste es despreciable
+    e identico para las dos.
+
     Medido en 27-RESEARCH.md Q8 con yolo26n.pt sobre bus.jpg a 1280x720: 38,90 ms con 1
     clase y 40,74 ms con 6 (+4,7 %, margen 3x sobre el criterio). El coste marginal es
     practicamente cero porque `classes=` es un filtro de post-proceso dentro de la NMS
     (predict.py:54-58) y yolo26n es NMS-free.
     """
-    def _measure(classes: list[int]) -> float:
+    one_class = [0]
+    six_classes = [0, 1, 2, 3, 24, 28]
+
+    for classes in (one_class, six_classes):
         real_detector.set_classes(classes)
         for _ in range(5):
             real_detector.detect_sv(bench_frame)
-        samples = []
-        for _ in range(30):
+
+    samples: dict[int, list[float]] = {1: [], 6: []}
+    for _ in range(30):
+        for classes in (one_class, six_classes):
+            real_detector.set_classes(classes)
             t0 = time.perf_counter()
             real_detector.detect_sv(bench_frame)
-            samples.append(time.perf_counter() - t0)
-        return statistics.median(samples)
+            samples[len(classes)].append(time.perf_counter() - t0)
 
-    p50_1 = _measure([0])
-    p50_6 = _measure([0, 1, 2, 3, 24, 28])
+    p50_1 = statistics.median(samples[1])
+    p50_6 = statistics.median(samples[6])
     assert p50_6 < 1.15 * p50_1, (
         f"criterio 6: p50 con 6 clases = {p50_6 * 1000:.2f} ms, con 1 clase = "
         f"{p50_1 * 1000:.2f} ms, se exige < 15% de subida "
