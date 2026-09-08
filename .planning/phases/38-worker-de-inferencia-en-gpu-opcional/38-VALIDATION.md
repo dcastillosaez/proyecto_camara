@@ -1,9 +1,9 @@
 ---
 phase: 38
 slug: worker-de-inferencia-en-gpu-opcional
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: planned
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-09-08
 ---
 
@@ -56,7 +56,19 @@ y esta fase no instala nada (decisión del usuario, ver `38-CONTEXT.md`). Por ta
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | Status |
 |---------|------|------|-------------|-----------|-------------------|--------|
-| *(lo rellena el planner: una fila por tarea, con el comando exacto)* | | | SCALE-11 / SCALE-12 | | | ⬜ pending |
+| 38-01 T1 — `Settings.inference_device` + `FieldDef` | 38-01 | 1 | SCALE-12 | unit | `.venv/Scripts/python.exe -m pytest tests/test_config_schema.py tests/test_config.py -q` | ⬜ pending |
+| 38-01 T2 — `resolve_device()` + sondas por familia | 38-01 | 1 | SCALE-11 | unit | `.venv/Scripts/python.exe -m pytest tests/test_inference_device.py -q` | ⬜ pending |
+| 38-02 T1 — `PersonDetector(device=...)` + warm-up CUDA | 38-02 | 2 | SCALE-11, SCALE-12 | unit | `.venv/Scripts/python.exe -m pytest tests/test_detector.py tests/test_architecture.py -q` | ⬜ pending |
+| 38-02 T2 — tests de ruta CPU intacta y fallback | 38-02 | 2 | SCALE-12 | unit | `.venv/Scripts/python.exe -m pytest tests/test_detector.py -q -m "not perf"` | ⬜ pending |
+| 38-03 T1 — `ReIDEngine(providers=...)` + efectivo | 38-03 | 2 | SCALE-11, SCALE-12 | unit | `.venv/Scripts/python.exe -m pytest tests/test_reid_engine.py -q` | ⬜ pending |
+| 38-03 T2 — `FaceEngine(providers=...)` + `ctx_id` derivado | 38-03 | 2 | SCALE-11, SCALE-12 | unit | `.venv/Scripts/python.exe -m pytest tests/test_face_engine.py -q` | ⬜ pending |
+| 38-03 T3 — `PersonRecognizer.face_providers` | 38-03 | 2 | SCALE-11 | unit | `.venv/Scripts/python.exe -m pytest tests/test_recognizer_orchestration.py tests/test_face_engine.py -q` | ⬜ pending |
+| 38-04 T1 — `manager.stats()['devices']` | 38-04 | 3 | SCALE-11 | unit | `.venv/Scripts/python.exe -m pytest tests/test_manager.py -q` | ⬜ pending |
+| 38-04 T2 — `factory` resuelve device + `DEGRADED_MODE` | 38-04 | 3 | SCALE-11 | unit | `.venv/Scripts/python.exe -m pytest tests/test_manager.py tests/test_architecture.py -q` | ⬜ pending |
+| 38-04 T3 — `main` cablea face + `/health` expone devices | 38-04 | 3 | SCALE-11, SCALE-12 | integración | `.venv/Scripts/python.exe -m pytest tests/test_cameras_api.py -q` | ⬜ pending |
+| 38-05 T1 — arnés de benchmark CPU vs CUDA | 38-05 | 4 | SCALE-11 | perf (skip) | `.venv/Scripts/python.exe -m pytest tests/test_inference_benchmark.py -q` | ⬜ pending |
+| 38-05 T2 — `38-GPU-NOTES.md` + nota en `REQUIREMENTS.md` | 38-05 | 4 | SCALE-11, SCALE-12 | documental | `.venv/Scripts/python.exe -m pytest tests/test_inference_benchmark.py -q` + grep de las cadenas exigidas en el plan | ⬜ pending |
+| 38-05 T3 — checkpoint: log de arranque por motor | 38-05 | 4 | SCALE-11 | manual | — (verificación humana, ver § Manual-Only Verifications) | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -77,8 +89,8 @@ y esta fase no instala nada (decisión del usuario, ver `38-CONTEXT.md`). Por ta
 
 ## Wave 0 Requirements
 
-- [ ] Fichero de test nuevo para el selector de dispositivo (a nombrar por el planner)
-- [ ] Registro del campo nuevo en `config_schema` — sin él, `tests/test_config_schema.py:24-26`
+- [x] `tests/test_inference_device.py` — creado por el plan 38-01, tarea 2 (ola 1)
+- [x] Registro del campo nuevo en `config_schema` — plan 38-01, tarea 1 (ola 1) — sin él, `tests/test_config_schema.py:24-26`
       se pone en rojo por desigualdad de conjuntos
 
 *El resto de infraestructura ya existe: `pytest.ini`, `conftest.py`, marcador `perf` y la
@@ -97,11 +109,11 @@ metodología de medición p50 de `tests/test_detector.py:216-269`.*
 
 ## Validation Sign-Off
 
-- [ ] Todas las tareas tienen verificación automatizada o dependencia declarada de Wave 0
-- [ ] Continuidad de muestreo: no hay 3 tareas seguidas sin verificación automatizada
-- [ ] Wave 0 cubre las referencias MISSING
-- [ ] Sin flags de watch-mode
-- [ ] Latencia de feedback < 25 s por tarea
-- [ ] `nyquist_compliant: true` en el frontmatter
+- [x] Todas las tareas tienen verificación automatizada o dependencia declarada de Wave 0
+- [x] Continuidad de muestreo: no hay 3 tareas seguidas sin verificación automatizada
+- [x] Wave 0 cubre las referencias MISSING (`tests/test_inference_device.py` y el `FieldDef` los crea el plan 38-01, ola 1)
+- [x] Sin flags de watch-mode
+- [x] Latencia de feedback < 25 s por tarea
+- [x] `nyquist_compliant: true` en el frontmatter
 
-**Approval:** pending
+**Approval:** aprobado por el planner (2026-09-08) — 12 de 13 tareas con verificación automatizada; la única manual es el checkpoint del log de arranque, declarado en § Manual-Only Verifications

@@ -729,6 +729,20 @@ Plans:
   5. Un fallo de inicialización de GPU cae a CPU automáticamente y emite DEGRADED_MODE
   6. El batching multi-cámara en GPU es opcional y desactivable
 **Spec**: SPEC_v2.md Phase 38
+**Plans:** 5 plans — `.planning/phases/38-worker-de-inferencia-en-gpu-opcional/`
+
+Plans:
+- [ ] 38-01-PLAN.md — Selector de dispositivo (`backend/inference/device.py`) y ajuste `inference_device`
+- [ ] 38-02-PLAN.md — Cableado a YOLO: `PersonDetector(device=...)`, warm-up solo CUDA, ruta CPU intacta
+- [ ] 38-03-PLAN.md — Cableado ONNX: providers en `ReIDEngine`/`FaceEngine` y `ctx_id` derivado
+- [ ] 38-04-PLAN.md — Wiring en factory/manager/main, `DEGRADED_MODE` deduplicado y `devices` en `/health`
+- [ ] 38-05-PLAN.md — Arnés de benchmark CPU vs CUDA, batching descartado y criterio 3 pendiente (checkpoint)
+
+Nota de alcance: los criterios 3 (≥3× FPS medido) y 6 (batching multi-cámara) NO se
+implementan en esta fase por decisión del usuario registrada en `38-CONTEXT.md`. El 3 queda
+pendiente de medición con el arnés listo; el 6 se cierra como "desactivado permanentemente"
+con justificación y condición de reapertura en `38-GPU-NOTES.md`. DirectML (criterio 1)
+queda fuera: solo CUDA + fallback CPU, con el selector extensible.
 
 ## Execution Order v2.0
 
