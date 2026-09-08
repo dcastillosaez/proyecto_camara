@@ -786,7 +786,13 @@ Directivas aplicables que el plan debe cumplir:
 | A5 | CUDA 13 mantiene el soporte de Turing (SM 7.5) | Standard Stack | Medio — si fuera falso, `onnxruntime-gpu` 1.28 no serviría en esta máquina y habría que fijar ORT ≤ 1.26 (CUDA 12.8). **Verificar antes de instalar nada** |
 | A6 | `onnxruntime` y `onnxruntime-gpu` conviven mal en el mismo entorno | State of the Art | Bajo — solo afecta al trabajo diferido; la doc oficial consultada no lo confirma |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Las cuatro quedaron cerradas antes de planificar: la 1 como decision de discrecion
+> del planner (`38-04-PLAN.md`, dispositivo facial duplicado en `stats()` por camara),
+> y las 2, 3 y 4 en `38-CONTEXT.md` § "Decisiones cerradas tras 38-RESEARCH.md"
+> (puntos 3, 4 y 5 respectivamente). Se conservan por su razonamiento, no como
+> pendientes.
 
 1. **¿Dónde reportar el dispositivo de `FaceEngine`?**
    - Lo que sabemos: `PersonRecognizer` (y su `FaceEngine`) es un servicio **compartido** entre cámaras (`factory.py:15-16`), pero el endpoint natural para exponer el dispositivo es por cámara.

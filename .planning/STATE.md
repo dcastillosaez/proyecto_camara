@@ -1049,9 +1049,12 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 35 — CameraManager | D | — Sin planificar | — | Depende de 34 |
 | 36 — Multi-cámara en runtime | D | — Sin planificar | — | Depende de 35 |
 | 37 — PostgreSQL y Redis | D | — Sin planificar | — | Depende de 36 |
-| 38 — Worker GPU (opcional) | D | — Sin planificar | — | Depende de 37 |
+| 38 — Worker GPU (opcional) | D | Planificada 2026-09-08 — 5 planes / 4 olas / 13 tareas | — | Depende de 37 (completa) |
 
-Las fases sin planificar (24-38) no tienen PLAN todavía. Generarlos con
+Las fases sin planificar (24-33) no tienen PLAN todavía. Las 34-37 están completas y
+la 38 está planificada (`.planning/phases/38-worker-de-inferencia-en-gpu-opcional/`:
+CONTEXT, RESEARCH, PATTERNS, VALIDATION y `38-01..38-05-PLAN.md`), lista para
+`/gsd:execute-phase 38`. Generarlos con
 `/gsd:plan-phase <N>` cuando llegue el momento, o pedirlos en Cowork como
 se hizo con el bloque A y la Fase 23.
 
