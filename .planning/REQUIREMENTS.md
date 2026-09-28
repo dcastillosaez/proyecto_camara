@@ -292,8 +292,8 @@
 - [x] **SCALE-08**: El presupuesto de CPU se reparte automáticamente entre cámaras y la interfaz advierte al superarlo
 - [x] **SCALE-09**: Todo el acceso a datos pasa por repositorios, permitiendo cambiar de SQLite a PostgreSQL sin tocar la lógica
 - [x] **SCALE-10**: El bus de eventos tiene implementación in-process por defecto y una alternativa distribuida opcional
-- [ ] **SCALE-11**: La GPU se detecta automáticamente y se usa si está disponible, con fallback limpio a CPU
-- [ ] **SCALE-12**: Sin GPU, el comportamiento del sistema es idéntico al de la ruta CPU
+- [x] **SCALE-11**: La GPU se detecta automáticamente y se usa si está disponible, con fallback limpio a CPU
+- [x] **SCALE-12**: Sin GPU, el comportamiento del sistema es idéntico al de la ruta CPU
   - *Nota (Fase 38):* la lógica de detección, selección, cableado y fallback está
     implementada y probada sin GPU. El criterio 3 del ROADMAP (FPS de detección ≥3×) queda
     **pendiente de medición**: requiere instalar `torch` con CUDA y `onnxruntime-gpu`, fuera

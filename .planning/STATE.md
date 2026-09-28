@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 37 COMPLETA (backends opcionales PostgreSQL/Redis) en rama feature/fase-36 (sin PR todavia), planificada y ejecutada a mano (sin gsd-sdk, no disponible en esta sesion -- ver .planning/phases/37-backends-opcionales-postgresql-redis/PLAN.md). SCALE-09/10 cerrados en REQUIREMENTS.md. Fase 32 sigue abierta aparte (7/8 planes, falta 32-08) -- no se toco en esta sesion.
-last_updated: "2026-08-26T19:40:00.000Z"
-last_activity: 2026-08-26 -- Fase 37 (Backends opcionales, PostgreSQL y Redis) completada de extremo a extremo, verificada contra motores reales via Docker (no solo teoria): postgres:16-alpine y redis:7-alpine temporales, con pytest.ini marker de integracion que se salta sin TEST_POSTGRES_URL/TEST_REDIS_URL. Plan y bitacora unica en .planning/phases/37-backends-opcionales-postgresql-redis/PLAN.md. database_url/redis_url nuevos en Settings (vacios = comportamiento identico a las Fases 1-36, sin cambios); backend/database.py ramifica init_db() por dialecto (Postgres arranca en fresco con el esquema v2 completo, sin las migraciones incrementales SQLite-only); EventRepo/AnalyticsRepo resuelven su dialecto una vez en el constructor (session_factory.kw["bind"].dialect.name) y ramifican el SQL especifico (json_each->jsonb, strftime/substr->to_char, el "+" unario, INDEXED BY) sin cambiar su firma publica ni tocar los ~15 call sites existentes. Verificar contra Postgres real encontro 2 bugs reales de portabilidad que SQLite dejaba pasar en silencio: GROUP BY sin z.name en AnalyticsRepo.occupancy() (GroupingError en Postgres) y HAVING referenciando un alias de SELECT en persons_ranking() (UndefinedColumnError en Postgres, SQLite lo permite como extension no estandar) -- ambos corregidos de forma portable, sin rama de dialecto. EventBus se separo en EventBusBase (contrato)/InProcessBus (comportamiento identico a las Fases 1-36, EventBus sigue siendo un alias suyo)/RedisBus nuevo (pub/sub real, verificado con fan-out entre dos instancias distintas simulando dos procesos); create_event_bus() es el unico punto de decision, main.py es el unico call site que cambio. tests/test_architecture.py gano un test permanente que protege el criterio 1 (todo el SQL crudo especifico de dialecto vive en storage/repositories.py o storage/migrations.py). Suite completa: 852 passed, 15 skipped (7 Postgres + 6 Redis sin las variables de entorno + 2 preexistentes), sin ninguna regresion contra SQLite (el default no cambia). Sin checkpoint manual pendiente (fase puramente backend, sin superficie visual nueva). Documentado "cuando migrar" (criterio 5) en el PLAN.md de la fase. NOTA para una sesion futura con gsd-sdk disponible: el bloque `progress` de abajo (total_plans/completed_plans/percent) sigue sin recalcularse a mano por el mismo motivo que en el cierre de las Fases 34/35 -- solo se actualizo completed_phases.
+stopped_at: Fase 38 COMPLETA (worker de inferencia en GPU, opcional) en rama feature/fase-38, ejecutada a mano sin gsd-sdk -- ver .planning/phases/38-worker-de-inferencia-en-gpu-opcional/38-SUMMARY.md. SCALE-11/12 cerrados. Criterio 3 (>=3x FPS) pendiente de medir al instalar torch CUDA + onnxruntime-gpu. Siguen abiertas las puertas manuales 28-09 y 32-08.
+last_updated: "2026-09-28T12:00:00.000Z"
+last_activity: 2026-09-28 -- Fase 38 completada: selector backend/inference/device.py (auto|cpu|cuda, disponibilidad por familia), device/providers cableados a YOLO, ArcFace y OSNet con fallback detectado por comparacion y DEGRADED_MODE una vez por motor, clave devices en /api/v2/cameras/{id}/health, arnes de benchmark que se salta sin GPU y batching descartado por escrito. El checkpoint con servidor real encontro y corrigio un bug previo (500 en /api/v2/cameras y /health por last_frame_age_s=inf antes del primer frame). Suite: 883 passed, 16 skipped.
 progress:
   total_phases: 32
-  completed_phases: 20
+  completed_phases: 21
   total_plans: 104
   completed_plans: 99
   percent: 95
@@ -1049,7 +1049,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 35 — CameraManager | D | — Sin planificar | — | Depende de 34 |
 | 36 — Multi-cámara en runtime | D | — Sin planificar | — | Depende de 35 |
 | 37 — PostgreSQL y Redis | D | — Sin planificar | — | Depende de 36 |
-| 38 — Worker GPU (opcional) | D | Planificada 2026-09-08 — 5 planes / 4 olas / 13 tareas | — | Depende de 37 (completa) |
+| 38 — Worker GPU (opcional) | D | ✓ Completa | 2026-09-28 | ⧗ Criterio 3 (≥3× FPS) pendiente de medir con el stack GPU instalado; log INFO del dispositivo invisible porque el proyecto no configura logging (ver `38-SUMMARY.md`) |
 
 Las fases sin planificar (24-33) no tienen PLAN todavía. Las 34-37 están completas y
 la 38 está planificada (`.planning/phases/38-worker-de-inferencia-en-gpu-opcional/`:
