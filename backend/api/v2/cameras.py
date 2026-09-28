@@ -14,6 +14,7 @@ limiter/valor compartidos de backend/api/v2/deps.py.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict
 from typing import Any
 
@@ -109,6 +110,22 @@ class CameraUpdate(BaseModel):
         return v
 
 
+def _health_dict(health: Any) -> dict[str, Any]:
+    """CaptureHealth serializable a JSON.
+
+    CaptureWorker.health publica last_frame_age_s=inf mientras la camara no ha
+    entregado ningun frame (capture.py): el sampler de Prometheus y el vigilante de
+    main.py dependen de ese inf, pero JSON no admite infinitos y el endpoint caia
+    con 500 justo cuando mas falta hace (camara que no responde). En la API se
+    publica como null: "todavia no hay frame".
+    """
+    out = asdict(health)
+    age = out.get("last_frame_age_s")
+    if isinstance(age, float) and not math.isfinite(age):
+        out["last_frame_age_s"] = None
+    return out
+
+
 @router.get("")
 @limiter.limit(V2_RATE_LIMIT)
 async def list_cameras(request: Request):
@@ -123,7 +140,7 @@ async def list_cameras(request: Request):
     return {
         "cameras": [
             {
-                **asdict(p.health), "workers": p.worker_status(), "degraded": p.degraded,
+                **_health_dict(p.health), "workers": p.worker_status(), "degraded": p.degraded,
                 "estimated_cpu_pct": p.estimated_cpu_pct,
             }
             for p in pipelines
@@ -144,7 +161,7 @@ async def camera_health(request: Request, camera_id: str):
     if pipeline is None:
         raise HTTPException(status_code=404, detail="Camera not found")
     return {
-        **asdict(pipeline.health),
+        **_health_dict(pipeline.health),
         # capture_fps y detection_fps son deliberadamente distintos: esa
         # diferencia ES la prueba de que el pipeline esta desacoplado.
         "capture_fps": pipeline.get_fps(),

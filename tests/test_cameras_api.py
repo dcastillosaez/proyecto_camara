@@ -391,3 +391,22 @@ async def TEST_catalog_masks_rtsp_url_and_reports_running_state():
     assert by_id["cam1"]["running"] is True
     assert by_id["cam2"]["running"] is False
     assert by_id["cam1"]["rtsp_url"] == "rtsp://***:***@10.0.0.5/stream"
+
+
+
+async def TEST_health_serializes_infinite_frame_age_as_null():
+    """Camara sin ningun frame todavia: CaptureHealth trae last_frame_age_s=inf, que
+    JSON no admite. Antes el endpoint (y GET /cameras) respondia 500 justo en ese caso."""
+    pipeline = _fake_pipeline("cam1")
+    pipeline.health = CaptureHealth(
+        camera_id="cam1", connected=True, fps=0.0, reconnects=0,
+        last_frame_age_s=float("inf"), native_resolution=None, frames_captured=0,
+    )
+    cameras_module.configure(_mock_manager(pipeline))
+    async with await _client() as client:
+        health = await client.get("/api/v2/cameras/cam1/health")
+        listing = await client.get("/api/v2/cameras")
+    assert health.status_code == 200
+    assert health.json()["last_frame_age_s"] is None
+    assert listing.status_code == 200
+    assert listing.json()["cameras"][0]["last_frame_age_s"] is None

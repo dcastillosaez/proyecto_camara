@@ -110,11 +110,13 @@ export async function loadRtspCard() {
     if (!healthRes.ok) throw new Error('health fetch failed');
     const h = await healthRes.json();
 
-    const state = !h.connected ? 'offline' : (h.last_frame_age_s >= 5 ? 'reconnecting' : 'connected');
+    // last_frame_age_s llega null mientras la camara no ha entregado ningun frame.
+    const age = h.last_frame_age_s;
+    const state = !h.connected ? 'offline' : (age == null || age >= 5 ? 'reconnecting' : 'connected');
     _paintRtspState(state);
 
     const lastFrame = document.getElementById('rtsp-last-frame');
-    if (lastFrame) lastFrame.textContent = `${h.last_frame_age_s.toFixed(1)} s`;
+    if (lastFrame) lastFrame.textContent = age == null ? '—' : `${age.toFixed(1)} s`;
     const reconnects = document.getElementById('rtsp-reconnects');
     if (reconnects) reconnects.textContent = `${h.reconnects}`;
     const [w, hh] = h.native_resolution || [0, 0];
