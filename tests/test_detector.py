@@ -1,6 +1,7 @@
 """Tests for PersonDetector — bounding-box detection and frame annotation."""
 from __future__ import annotations
 
+import os
 import statistics
 import time
 from pathlib import Path
@@ -278,3 +279,63 @@ def TEST_multiclass_latency_under_15_percent(real_detector, bench_frame):
         f"{p50_1 * 1000:.2f} ms, se exige < 15% de subida "
         f"(medido en el research: 38,90 ms con 1 clase, 40,74 ms con 6)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Fase 38 (SCALE-11/SCALE-12): dispositivo de inferencia de PersonDetector
+# ---------------------------------------------------------------------------
+
+def TEST_cpu_path_untouched_never_calls_to():
+    with patch("backend.detector.YOLO") as MockYOLO:
+        d = PersonDetector(model_path="yolov8n.pt", device=None)
+    assert MockYOLO.return_value.to.call_count == 0
+    assert MockYOLO.return_value.call_count == 0
+    assert d.device_requested == "cpu"
+    assert d.device_effective == "cpu"
+    assert d.fallback_reason is None
+
+
+def TEST_cpu_path_no_env_mutation():
+    before = os.environ.get("CUDA_VISIBLE_DEVICES")
+    with patch("backend.detector.YOLO"):
+        PersonDetector(model_path="yolov8n.pt", device=None)
+    assert os.environ.get("CUDA_VISIBLE_DEVICES") == before
+
+
+def TEST_cuda_path_moves_model_and_warms_up():
+    with patch("backend.detector.YOLO") as MockYOLO:
+        MockYOLO.return_value.device = "cuda:0"
+        d = PersonDetector(model_path="yolov8n.pt", device="cuda:0")
+    MockYOLO.return_value.to.assert_called_once_with("cuda:0")
+    assert d.device_effective == "cuda"
+    assert d.fallback_reason is None
+    assert MockYOLO.return_value.call_count >= 1
+
+
+def TEST_cuda_path_falls_back_when_to_raises():
+    with patch("backend.detector.YOLO") as MockYOLO:
+        MockYOLO.return_value.to.side_effect = AssertionError(
+            "Torch not compiled with CUDA enabled"
+        )
+        d = PersonDetector(model_path="yolov8n.pt", device="cuda:0")
+    assert d.device_requested == "cuda"
+    assert d.device_effective == "cpu"
+    assert "Torch not compiled" in d.fallback_reason
+
+
+def TEST_cuda_path_detects_silent_downgrade():
+    with patch("backend.detector.YOLO") as MockYOLO:
+        MockYOLO.return_value.device = "cpu"
+        d = PersonDetector(model_path="yolov8n.pt", device="cuda:0")
+    assert d.device_effective == "cpu"
+    assert "cpu" in d.fallback_reason
+
+
+def TEST_detect_never_passes_device_kwarg(detector, blank_frame):
+    detector._mock_model.return_value = []
+    detector.detect(blank_frame)
+    assert "device" not in detector._mock_model.call_args.kwargs
+    detector._mock_model.return_value = [MagicMock()]
+    with patch("backend.detector.sv.Detections.from_ultralytics", return_value=sv.Detections.empty()):
+        detector.detect_sv(blank_frame)
+    assert "device" not in detector._mock_model.call_args.kwargs

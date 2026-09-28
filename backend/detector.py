@@ -1,11 +1,14 @@
 """Object detection via a configurable YOLO model with bounding-box overlay."""
 
+import logging
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
 import supervision as sv
 from ultralytics import YOLO
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,12 +30,63 @@ class PersonDetector:
         classes: list[int] | None = None,
         label: str = "person",
         imgsz: int = 640,
+        device: str | None = None,
     ) -> None:
         self._model = YOLO(model_path)
         self._confidence = confidence
         self._classes = classes if classes is not None else [0]
         self._label = label
         self._imgsz = imgsz
+
+        # Fase 38 (SCALE-11/SCALE-12). device=None es la ruta CPU y debe quedar
+        # BYTE A BYTE como en la Fase 37: nada de .to("cpu") ni de device= en la
+        # inferencia. select_device("cpu") de Ultralytics escribe
+        # os.environ["CUDA_VISIBLE_DEVICES"]="" a nivel de PROCESO
+        # (ultralytics/utils/torch_utils.py) y cegaria tambien al CUDA EP de
+        # onnxruntime construido despues.
+        self.device_requested = "cuda" if (device or "").startswith("cuda") else "cpu"
+        self.device_effective = "cpu"
+        self.fallback_reason: str | None = None
+        if self.device_requested == "cuda":
+            try:
+                # .to() NO cambia id(self._model) (verificado en 38-RESEARCH.md Q1),
+                # asi que el contrato de set_classes en caliente sigue intacto.
+                self._model.to(device)
+                effective = str(getattr(self._model, "device", "cpu"))
+                self.device_effective = "cuda" if effective.startswith("cuda") else "cpu"
+                if self.device_effective != "cuda":
+                    self.fallback_reason = (
+                        f"ultralytics quedo en {effective!r} tras .to({device!r})"
+                    )
+                    logger.warning("PersonDetector: %s", self.fallback_reason)
+                else:
+                    self._warmup()
+            except Exception as exc:
+                # AssertionError por .to("cuda") sin CUDA, ValueError por select_device,
+                # ImportError si falta torch, y tambien un yolo_model_path .onnx
+                # (config.py lo permite y .to() lanza sobre un modelo no PyTorch).
+                self.fallback_reason = f"PersonDetector: .to({device!r}) fallo: {exc!r}"
+                logger.exception("PersonDetector: fallo al mover el modelo a %s", device)
+
+    def _warmup(self) -> None:
+        """Una inferencia sintetica para pagar el arranque en frio ANTES del worker.
+
+        Solo en la ruta CUDA. AdaptiveRate.observe() siembra la EMA con la primera
+        medida (rate.py): una primera inferencia lenta arrastraria el FPS objetivo
+        durante decenas de segundos. En CPU NO se hace, porque anadir un paso nuevo al
+        arranque cambiaria el comportamiento respecto a la Fase 37 (SCALE-12).
+
+        Se llama _warmup y no detect/embed a proposito: esos nombres estan en
+        INFERENCE_CALLS de tests/test_architecture.py.
+        """
+        try:
+            blank = np.zeros((self._imgsz, self._imgsz, 3), dtype=np.uint8)
+            self._model(
+                blank, classes=self._classes, conf=self._confidence,
+                imgsz=self._imgsz, verbose=False,
+            )
+        except Exception:
+            logger.exception("PersonDetector: warm-up fallido (no bloqueante)")
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         """Return bounding boxes for objects detected in *frame*."""
