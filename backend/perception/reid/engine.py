@@ -33,7 +33,22 @@ class ReIDEngine:
     _MEAN = np.array([0.485, 0.456, 0.406], np.float32).reshape(3, 1, 1)
     _STD = np.array([0.229, 0.224, 0.225], np.float32).reshape(3, 1, 1)
 
-    def __init__(self, model_path: str, intra_op_threads: int = 1) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        intra_op_threads: int = 1,
+        providers: tuple[str, ...] | list[str] | None = None,
+    ) -> None:
+        # Fase 38 (SCALE-11/SCALE-12). providers=None => exactamente lo de la Fase 37:
+        # ["CPUExecutionProvider"], lista de UN elemento. El orden importa: onnxruntime
+        # descarta en silencio el provider que no puede usar y sigue con el siguiente,
+        # asi que CPUExecutionProvider va SIEMPRE al final.
+        self._providers = list(providers) if providers else ["CPUExecutionProvider"]
+        self.device_requested = (
+            "cuda" if self._providers[0] == "CUDAExecutionProvider" else "cpu"
+        )
+        self.device_effective = "cpu"
+        self.fallback_reason: str | None = None
         self._available = False
         self._sess = None
         try:
@@ -46,10 +61,23 @@ class ReIDEngine:
             so.intra_op_num_threads = intra_op_threads
             so.inter_op_num_threads = intra_op_threads
             self._sess = ort.InferenceSession(
-                model_path, sess_options=so, providers=["CPUExecutionProvider"]
+                model_path, sess_options=so, providers=self._providers
             )
             self._in = self._sess.get_inputs()[0].name
             self._out = self._sess.get_outputs()[0].name
+            effective = self._sess.get_providers()[0]
+            self.device_effective = (
+                "cuda" if effective == "CUDAExecutionProvider" else "cpu"
+            )
+            if self.device_effective != self.device_requested:
+                # ONNXRuntime NO lanza cuando falta el provider: emite UserWarning, lo
+                # descarta y sigue. Comparar get_providers() con lo pedido es la UNICA
+                # senal fiable (verificado en 38-RESEARCH.md Q2).
+                self.fallback_reason = (
+                    f"ONNXRuntime descarto {self._providers[0]}: activo={effective}, "
+                    f"disponibles={ort.get_available_providers()}"
+                )
+                logger.warning("ReIDEngine: %s", self.fallback_reason)
             batch_dim = self._sess.get_inputs()[0].shape[0]
             if isinstance(batch_dim, int) and batch_dim != 1:
                 # El export publico viene con batch FIJO 16: una inferencia
@@ -62,6 +90,11 @@ class ReIDEngine:
                 )
                 return
             self._available = True
+            if self.device_effective == "cuda":
+                # Solo en GPU: la primera inferencia en frio hundiria el AdaptiveRate
+                # del RecognitionWorker. En CPU NO se calienta — anadir un paso al
+                # arranque cambiaria el comportamiento de la Fase 37 (SCALE-12).
+                self.embed(np.zeros((*self.INPUT_HW, 3), dtype=np.uint8))
         except Exception:
             logger.exception("ReIDEngine: fallo al cargar %s", model_path)
 

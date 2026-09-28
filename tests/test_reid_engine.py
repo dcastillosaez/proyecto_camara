@@ -95,3 +95,86 @@ def TEST_reid_engine_rejects_fixed_batch(monkeypatch):
 
     monkeypatch.setattr(engine_module.ort, "InferenceSession", _FakeSession)
     assert ReIDEngine("cualquier.onnx").available is False
+
+
+# ---------------------------------------------------------------------------
+# Fase 38 (SCALE-11/SCALE-12): providers de onnxruntime en ReIDEngine
+# ---------------------------------------------------------------------------
+
+def _fake_session_cls(active: list[str], record: dict):
+    class _FakeIO:
+        def __init__(self, name, shape):
+            self.name, self.shape = name, shape
+
+    class _FakeSession:
+        def __init__(self, path, sess_options=None, providers=None):
+            record["providers"] = providers
+            record["runs"] = 0
+
+        def get_inputs(self):
+            return [_FakeIO("input", ["batch", 3, 256, 128])]
+
+        def get_outputs(self):
+            return [_FakeIO("output", ["batch", 512])]
+
+        def get_providers(self):
+            return list(active)
+
+        def run(self, outputs, feeds):
+            record["runs"] += 1
+            return [np.ones((1, 512), np.float32)]
+
+    return _FakeSession
+
+
+def TEST_reid_device_defaults_to_cpu_providers(monkeypatch):
+    import backend.perception.reid.engine as engine_module
+
+    rec: dict = {}
+    monkeypatch.setattr(
+        engine_module.ort, "InferenceSession",
+        _fake_session_cls(["CPUExecutionProvider"], rec),
+    )
+    eng = ReIDEngine("cualquier.onnx")
+    assert rec["providers"] == ["CPUExecutionProvider"]
+    assert eng.available is True
+    assert (eng.device_requested, eng.device_effective) == ("cpu", "cpu")
+    assert eng.fallback_reason is None
+    assert rec["runs"] == 0  # sin warm-up en CPU
+
+
+def TEST_reid_device_cuda_active_warms_up(monkeypatch):
+    import backend.perception.reid.engine as engine_module
+
+    rec: dict = {}
+    active = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    monkeypatch.setattr(engine_module.ort, "InferenceSession", _fake_session_cls(active, rec))
+    eng = ReIDEngine("cualquier.onnx", providers=tuple(active))
+    assert rec["providers"] == active
+    assert eng.device_effective == "cuda"
+    assert eng.fallback_reason is None
+    assert rec["runs"] == 1
+
+
+def TEST_reid_device_detects_silent_cpu_fallback(monkeypatch):
+    import backend.perception.reid.engine as engine_module
+
+    rec: dict = {}
+    monkeypatch.setattr(
+        engine_module.ort, "InferenceSession",
+        _fake_session_cls(["CPUExecutionProvider"], rec),
+    )
+    eng = ReIDEngine(
+        "cualquier.onnx", providers=("CUDAExecutionProvider", "CPUExecutionProvider")
+    )
+    assert eng.device_requested == "cuda"
+    assert eng.device_effective == "cpu"
+    assert "CUDAExecutionProvider" in eng.fallback_reason
+    assert eng.available is True
+    assert rec["runs"] == 0
+
+
+def TEST_reid_device_missing_model_still_degrades():
+    eng = ReIDEngine("no/existe.onnx", providers=("CUDAExecutionProvider", "CPUExecutionProvider"))
+    assert eng.available is False
+    assert eng.embed(np.zeros((256, 128, 3), np.uint8)) is None

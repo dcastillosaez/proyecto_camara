@@ -56,21 +56,59 @@ class FaceEngine:
     # Task 4): ~300ms vs ~15-40ms per detect() on this CPU for the same image.
     _ALLOWED_MODULES = ["detection", "recognition"]
 
-    def __init__(self, model_name: str = "buffalo_s", det_size: tuple[int, int] = (320, 320)) -> None:
+    def __init__(
+        self,
+        model_name: str = "buffalo_s",
+        det_size: tuple[int, int] = (320, 320),
+        providers: tuple[str, ...] | list[str] | None = None,
+    ) -> None:
         self._available = False
         self._app = None
+        # Fase 38 (SCALE-11/SCALE-12). providers=None => la ruta CPU de la Fase 37.
+        # ctx_id se DERIVA de providers y no es parametro: con ctx_id < 0,
+        # ArcFaceONNX.prepare y SCRFD.prepare hacen set_providers(['CPUExecutionProvider'])
+        # y deshacen la eleccion en silencio (arcface_onnx.py:61-63, retinaface.py:133-135).
+        # Pedir CUDA y olvidar el ctx_id es el bug que esta derivacion hace imposible.
+        self._providers = list(providers) if providers else ["CPUExecutionProvider"]
+        self.device_requested = (
+            "cuda" if self._providers[0] == "CUDAExecutionProvider" else "cpu"
+        )
+        self.device_effective = "cpu"
+        self.fallback_reason: str | None = None
+        ctx_id = 0 if self.device_requested == "cuda" else -1
         if FaceAnalysis is None:
             logger.warning("insightface not installed — face recognition disabled")
             return
         try:
             self._app = FaceAnalysis(
-                name=model_name, providers=["CPUExecutionProvider"],
+                name=model_name, providers=self._providers,
                 allowed_modules=self._ALLOWED_MODULES,
             )
-            self._app.prepare(ctx_id=-1, det_size=det_size)
+            self._app.prepare(ctx_id=ctx_id, det_size=det_size)
             self._available = True
+            effective = self._effective_provider()
+            self.device_effective = (
+                "cuda" if effective == "CUDAExecutionProvider" else "cpu"
+            )
+            if self.device_effective != self.device_requested:
+                self.fallback_reason = (
+                    f"insightface quedo en {effective}: pedido={self._providers[0]}"
+                )
+                logger.warning("FaceEngine: %s", self.fallback_reason)
         except Exception:
             logger.exception("FaceEngine: failed to load %s", model_name)
+
+    def _effective_provider(self) -> str:
+        """Provider realmente activo en el sub-modelo de reconocimiento.
+
+        ONNXRuntime no lanza cuando descarta un provider (38-RESEARCH.md Q2): leerlo
+        de la sesion es la unica forma fiable de saber donde quedo el motor.
+        """
+        try:
+            model = self._app.models.get("recognition") or self._app.models.get("detection")
+            return model.session.get_providers()[0]
+        except Exception:
+            return "CPUExecutionProvider"
 
     @property
     def available(self) -> bool:

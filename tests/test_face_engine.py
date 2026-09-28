@@ -73,3 +73,61 @@ def TEST_engine_unavailable_degrades_gracefully(monkeypatch):
     assert broken.available is False
     assert broken.detect(np.zeros((10, 10, 3), dtype=np.uint8)) == []
     assert broken.embed(np.zeros((10, 10, 3), dtype=np.uint8), cand=None) is None
+
+
+# ---------------------------------------------------------------------------
+# Fase 38 (SCALE-11/SCALE-12): providers y ctx_id en FaceEngine
+# ---------------------------------------------------------------------------
+
+def _fake_face_analysis(active: str, record: dict):
+    class _Sess:
+        def get_providers(self):
+            return [active]
+
+    class _Model:
+        session = _Sess()
+
+    class _FakeFA:
+        def __init__(self, **kwargs):
+            record["init"] = kwargs
+            self.models = {"detection": _Model(), "recognition": _Model()}
+
+        def prepare(self, **kwargs):
+            record["prepare"] = kwargs
+
+    return _FakeFA
+
+
+def TEST_face_engine_device_defaults_to_cpu_providers(monkeypatch):
+    import backend.perception.face.engine as engine_module
+
+    rec: dict = {}
+    monkeypatch.setattr(engine_module, "FaceAnalysis", _fake_face_analysis("CPUExecutionProvider", rec))
+    eng = FaceEngine()
+    assert rec["init"]["providers"] == ["CPUExecutionProvider"]
+    assert rec["prepare"]["ctx_id"] == -1
+    assert (eng.device_requested, eng.device_effective) == ("cpu", "cpu")
+    assert eng.fallback_reason is None
+
+
+def TEST_face_engine_device_cuda_sets_ctx_id_zero(monkeypatch):
+    import backend.perception.face.engine as engine_module
+
+    rec: dict = {}
+    monkeypatch.setattr(engine_module, "FaceAnalysis", _fake_face_analysis("CUDAExecutionProvider", rec))
+    eng = FaceEngine(providers=("CUDAExecutionProvider", "CPUExecutionProvider"))
+    assert rec["init"]["providers"] == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    assert rec["prepare"]["ctx_id"] == 0
+    assert eng.device_effective == "cuda"
+    assert eng.fallback_reason is None
+
+
+def TEST_face_engine_device_detects_silent_cpu_fallback(monkeypatch):
+    import backend.perception.face.engine as engine_module
+
+    rec: dict = {}
+    monkeypatch.setattr(engine_module, "FaceAnalysis", _fake_face_analysis("CPUExecutionProvider", rec))
+    eng = FaceEngine(providers=("CUDAExecutionProvider", "CPUExecutionProvider"))
+    assert eng.available is True
+    assert eng.device_effective == "cpu"
+    assert eng.fallback_reason

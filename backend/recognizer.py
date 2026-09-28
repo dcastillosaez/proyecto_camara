@@ -83,6 +83,7 @@ class PersonRecognizer:
         min_face_size_px: int = 60,
         max_blur: float = 100.0,
         max_yaw_deg: float = 40.0,
+        face_providers: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         self._lock = threading.Lock()
         # tracker_id → (person_id, name)  — populated once face is matched
@@ -95,7 +96,7 @@ class PersonRecognizer:
         self._match_threshold = match_threshold
         self._confirm_threshold = confirm_threshold  # umbral de confianza de identidad usado por IdentityStateMachine (Fase 24)
 
-        self._engine = FaceEngine()
+        self._engine = FaceEngine(providers=face_providers)
         self._quality = FaceQualityAssessor(
             min_size_px=min_face_size_px, max_blur=max_blur, max_yaw_deg=max_yaw_deg
         )
@@ -120,6 +121,16 @@ class PersonRecognizer:
     @property
     def available(self) -> bool:
         return self._available
+
+    @property
+    def face_device(self) -> str:
+        """Dispositivo realmente activo en el motor facial: 'cuda' o 'cpu' (Fase 38)."""
+        return self._engine.device_effective
+
+    @property
+    def face_fallback_reason(self) -> str | None:
+        """Motivo del fallback GPU->CPU del motor facial, o None si no lo hubo."""
+        return self._engine.fallback_reason
 
     def get_cached(self, tracker_id: int) -> tuple[int, str | None] | None:
         """Return (person_id, name) if this tracker_id is already identified."""
