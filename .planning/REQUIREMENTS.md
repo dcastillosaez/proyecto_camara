@@ -294,6 +294,12 @@
 - [x] **SCALE-10**: El bus de eventos tiene implementación in-process por defecto y una alternativa distribuida opcional
 - [ ] **SCALE-11**: La GPU se detecta automáticamente y se usa si está disponible, con fallback limpio a CPU
 - [ ] **SCALE-12**: Sin GPU, el comportamiento del sistema es idéntico al de la ruta CPU
+  - *Nota (Fase 38):* la lógica de detección, selección, cableado y fallback está
+    implementada y probada sin GPU. El criterio 3 del ROADMAP (FPS de detección ≥3×) queda
+    **pendiente de medición**: requiere instalar `torch` con CUDA y `onnxruntime-gpu`, fuera
+    del alcance de la fase por decisión de alcance. Arnés listo en
+    `tests/test_inference_benchmark.py`; detalle en
+    `.planning/phases/38-worker-de-inferencia-en-gpu-opcional/38-GPU-NOTES.md`.
 
 ### Fuera de alcance v2.0 (backlog v2.1)
 
