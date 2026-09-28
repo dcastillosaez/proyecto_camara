@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
@@ -59,6 +60,12 @@ class Settings(BaseSettings):
     detection_label: str = "person"
     # YOLO inference size (imgsz). Fixed value = predictable CPU cost.
     yolo_imgsz: int = 640
+    # Dispositivo de inferencia para los tres motores (YOLO, ArcFace, OSNet).
+    # "auto" (default): detecta CUDA por familia de motor y cae a CPU si no la hay —
+    #   en una maquina sin GPU el comportamiento es identico al de la Fase 37 (SCALE-12).
+    # "cpu": fuerza CPU sin sondear nada.
+    # "cuda": exige GPU y aborta el arranque si ninguna familia puede usarla (diagnostico).
+    inference_device: Literal["auto", "cpu", "cuda"] = "auto"
     # FPS inicial que se pasa a ByteTrack; DetectionWorker lo re-sincroniza
     # en caliente con el FPS efectivo de AdaptiveRate (set_frame_rate).
     tracker_frame_rate: int = 15

@@ -225,6 +225,16 @@ ALL_SECTIONS: tuple[Section, ...] = (
                         type="int", default=640, min=320, max=1280, step=32,
                         applies="restart_camera",
                     ),
+                    FieldDef(
+                        key="inference_device", env="INFERENCE_DEVICE",
+                        label="Dispositivo de inferencia",
+                        hint="'auto' detecta la GPU y cae a CPU si no está disponible; "
+                             "'cpu' fuerza CPU; 'cuda' exige GPU y falla el arranque si no "
+                             "la hay (para diagnóstico). Afecta a YOLO, ArcFace y OSNet.",
+                        type="enum", default="auto",
+                        enum_values=("auto", "cpu", "cuda"),
+                        applies="restart_server",
+                    ),
                 ),
             ),
             Group(
