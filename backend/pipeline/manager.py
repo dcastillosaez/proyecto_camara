@@ -66,6 +66,7 @@ class CameraPipeline:
         identity_low_confidence: float = 0.55,
         reid_enabled: bool = True,
         reid_model_path: str = "models/reid/osnet_x0_25_msmt17_dyn.onnx",
+        reid_providers: tuple[str, ...] | list[str] | None = None,
         reid_inherit_window: float = 15.0,
         reid_similarity_threshold: float = 0.7,
         reid_interval: float = 2.0,
@@ -91,12 +92,14 @@ class CameraPipeline:
         object_gone_secs: float = 3.0,
         object_person_window_secs: float = 10.0,
         object_max_tracks: int = 256,
+        inference_device_mode: str = "auto",
     ) -> None:
         self.camera_id = camera_id
         self.broker = FrameBroker()
         self.registry = TrackRegistry()
         self.tracker = tracker
         self.detector = detector
+        self._inference_device_mode = inference_device_mode
         self.recognizer = recognizer
 
         self._process_size = process_size
@@ -223,7 +226,7 @@ class CameraPipeline:
                 # del worker, y construirlos dentro vaciaria la galeria de apariencia
                 # (perdiendo la continuidad de identidad justo tras un reinicio) y
                 # recargaria el ONNX cada vez.
-                self.reid_engine = ReIDEngine(reid_model_path)
+                self.reid_engine = ReIDEngine(reid_model_path, providers=reid_providers)
                 self.reid_gallery = TrackGallery(
                     inherit_window=reid_inherit_window,
                     similarity_threshold=reid_similarity_threshold,
@@ -421,6 +424,41 @@ class CameraPipeline:
         )
         self.capture.start()
 
+    def device_stats(self) -> dict[str, Any]:
+        """Dispositivo de inferencia efectivo por motor (Fase 38, SCALE-11).
+
+        Se lee de los atributos que cada motor publica tras construirse, nunca se
+        recalcula: una sola fuente de verdad para el log de arranque, el evento
+        DEGRADED_MODE y este endpoint.
+
+        `face` sale del PersonRecognizer, que es COMPARTIDO entre camaras
+        (factory.py): con N camaras el mismo dato aparece N veces. Es deliberado —
+        evita una segunda superficie de observabilidad de proceso.
+        """
+        def _entry(engine: Any) -> dict[str, Any] | None:
+            if engine is None:
+                return None
+            return {
+                "effective": getattr(engine, "device_effective", "cpu"),
+                "fallback_reason": getattr(engine, "fallback_reason", None),
+            }
+
+        # getattr con default: tests/test_manager.py construye pipelines con
+        # object.__new__(CameraPipeline) sin pasar por __init__.
+        out: dict[str, Any] = {
+            "requested": getattr(self, "_inference_device_mode", "auto"),
+            "yolo": _entry(getattr(self, "detector", None)),
+            "reid": _entry(getattr(self, "reid_engine", None)),
+            "face": None,
+        }
+        recognizer = getattr(self, "recognizer", None)
+        if recognizer is not None:
+            out["face"] = {
+                "effective": getattr(recognizer, "face_device", "cpu"),
+                "fallback_reason": getattr(recognizer, "face_fallback_reason", None),
+            }
+        return out
+
     def stats(self) -> dict:
         out: dict[str, Any] = {
             "workers": self.worker_status(),
@@ -433,6 +471,7 @@ class CameraPipeline:
             out["streaming"] = self.streaming.stats
         if self.recognition:
             out["recognition"] = self.recognition.stats
+        out["devices"] = self.device_stats()
         return out
 
 

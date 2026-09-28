@@ -42,7 +42,15 @@ def _fake_pipeline(camera_id="cam1", connected=True, degraded=False, estimated_c
     pipeline.get_fps.return_value = 12.5
     pipeline.get_detection_fps.return_value = 8.0
     pipeline.broker.stats.return_value = {"subscribers": 2}
-    pipeline.stats.return_value = {"detection": {"effective_fps": 8.0}}
+    pipeline.stats.return_value = {
+        "detection": {"effective_fps": 8.0},
+        "devices": {
+            "requested": "auto",
+            "yolo": {"effective": "cpu", "fallback_reason": None},
+            "reid": None,
+            "face": None,
+        },
+    }
     return pipeline
 
 
@@ -150,6 +158,19 @@ async def TEST_health_includes_capture_and_detection_fps_distinct():
     assert body["capture_fps"] == 25.0
     assert body["detection_fps"] == 8.0
     assert body["camera_id"] == "cam1"
+
+
+
+async def TEST_health_includes_devices():
+    """Fase 38: el dispositivo efectivo por motor sale en health sin tocar la capa web."""
+    cameras_module.configure(_mock_manager(_fake_pipeline("cam1")))
+    async with await _client() as client:
+        resp = await client.get("/api/v2/cameras/cam1/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["devices"]["yolo"]["effective"] == "cpu"
+    assert body["devices"]["requested"] == "auto"
+    assert {"capture_fps", "detection_fps", "broker_stats"} <= body.keys()
 
 
 async def TEST_health_body_matches_capture_health_fields():

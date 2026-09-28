@@ -240,3 +240,50 @@ def TEST_rebalance_skips_cameras_without_detection_worker():
 def TEST_rebalance_with_zero_cameras_does_nothing():
     manager = CameraManager()
     manager.rebalance_fps(budget_pct=200.0)  # no debe lanzar excepcion
+
+
+# ---------------------------------------------------------------------------
+# Fase 38 (SCALE-11): dispositivo de inferencia efectivo en stats()
+# ---------------------------------------------------------------------------
+
+def _engine(effective: str = "cpu", reason: str | None = None) -> SimpleNamespace:
+    return SimpleNamespace(device_effective=effective, fallback_reason=reason)
+
+
+def TEST_device_stats_reports_cpu_by_default():
+    p = _bare_pipeline()
+    p.detector = _engine()
+    p.reid_engine = _engine()
+    p.recognizer = SimpleNamespace(face_device="cpu", face_fallback_reason=None)
+    devices = p.device_stats()
+    assert devices["requested"] == "auto"
+    for name in ("yolo", "reid", "face"):
+        assert devices[name] == {"effective": "cpu", "fallback_reason": None}
+
+
+def TEST_device_stats_surfaces_fallback_reason():
+    p = _bare_pipeline()
+    p.detector = _engine("cpu", "motivo real")
+    devices = p.device_stats()
+    assert devices["yolo"]["fallback_reason"] == "motivo real"
+
+
+def TEST_device_stats_tolerates_missing_engines():
+    p = _bare_pipeline()
+    p.detector = _engine()
+    devices = p.device_stats()
+    assert devices["reid"] is None
+    assert devices["face"] is None
+
+
+def TEST_stats_includes_devices_key():
+    p = _bare_pipeline()
+    p.detector = _engine()
+    p.reid_engine = None
+    p.recognizer = None
+    p.detection = p.streaming = p.recognition = None
+    p.supervisor = SimpleNamespace(degraded=False, status=lambda: {})
+    p.broker = SimpleNamespace(stats=lambda: {"subscribers": 0})
+    out = p.stats()
+    assert {"workers", "degraded", "broker", "devices"} <= out.keys()
+    assert out["devices"]["yolo"]["effective"] == "cpu"

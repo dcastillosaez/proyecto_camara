@@ -32,6 +32,7 @@ from backend.database import get_session_factory
 from backend.detector import PersonDetector
 from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
+from backend.inference.device import resolve_device
 from backend.observability.latency import LatencyTracker
 from backend.pipeline.manager import CameraManager, CameraPipeline
 from backend.recognizer import PersonRecognizer
@@ -39,6 +40,12 @@ from backend.storage.repositories import LineRepo, RecordingRepo, ZoneRepo
 from backend.tracker import PersonTracker
 
 logger = logging.getLogger(__name__)
+
+# Fase 38: el fallback GPU->CPU es una condicion GLOBAL del proceso, no de una camara.
+# EventEngine.degraded_mode() no tiene latch (a diferencia de camera_offline), asi que
+# con N camaras se emitirian N eventos identicos en el arranque. Este set deduplica por
+# nombre de motor, una vez por proceso.
+_DEVICE_FALLBACK_REPORTED: set[str] = set()
 
 
 @dataclass
@@ -69,6 +76,9 @@ def build_camera_pipeline(
     para `.start()`. No arranca la pipeline ni carga zonas/lineas — eso lo decide
     quien llama (el arranque y el alta en caliente lo hacen en momentos distintos)."""
     settings = services.settings
+    # Punto UNICO de traduccion configuracion -> dispositivo (Fase 38, SCALE-11).
+    # Cacheado por proceso: las N camaras ven exactamente la misma decision.
+    device = resolve_device(settings.inference_device)
 
     detector = PersonDetector(
         model_path=settings.yolo_model_path,
@@ -76,6 +86,7 @@ def build_camera_pipeline(
         classes=services.active_classes,
         label=settings.detection_label,
         imgsz=settings.yolo_imgsz,
+        device=device.torch_device,
     )
     tracker = PersonTracker(frame_rate=settings.tracker_frame_rate)
     event_engine = EventEngine(services.event_bus, camera_id=camera_id, latency_tracker=services.latency_tracker)
@@ -145,6 +156,7 @@ def build_camera_pipeline(
         identity_low_confidence=settings.face_confirm_threshold,
         reid_enabled=settings.reid_enabled,
         reid_model_path=settings.reid_model_path,
+        reid_providers=device.onnx_providers,
         reid_inherit_window=settings.reid_inherit_window_secs,
         reid_similarity_threshold=settings.reid_similarity_threshold,
         reid_interval=settings.reid_interval_secs,
@@ -170,9 +182,37 @@ def build_camera_pipeline(
         object_gone_secs=settings.object_gone_secs,
         object_person_window_secs=settings.object_person_window_secs,
         object_max_tracks=settings.object_max_tracks,
+        inference_device_mode=device.mode,
     )
+    _report_device_fallbacks(pipeline, event_engine)
     pipeline.set_detection_classes(services.active_classes)
     return pipeline
+
+
+def _report_device_fallbacks(pipeline: CameraPipeline, event_engine: EventEngine) -> None:
+    """Log por motor + DEGRADED_MODE si el dispositivo efectivo no es el pedido.
+
+    Los motores no conocen el sistema de eventos (siguen siendo adaptadores finos):
+    publican device_effective/fallback_reason como atributos y quien los construye
+    decide que hacer. Mismo molde que _on_recording_failure.
+
+    El motor facial NO se reporta aqui: PersonRecognizer es de proceso y main.py
+    lo reporta una sola vez al construirlo.
+    """
+    engines: list[tuple[str, Any]] = [
+        ("yolo", pipeline.detector),
+        ("reid", getattr(pipeline, "reid_engine", None)),
+    ]
+    for name, engine in engines:
+        if engine is None:
+            continue
+        logger.info("Motor %s en %s", name, engine.device_effective)
+        reason = engine.fallback_reason
+        if not reason or name in _DEVICE_FALLBACK_REPORTED:
+            continue
+        _DEVICE_FALLBACK_REPORTED.add(name)
+        logger.error("Fallback de dispositivo (%s): %s", name, reason)
+        event_engine.degraded_mode(datetime.datetime.now(), reason=f"{name}: {reason}")
 
 
 async def start_camera_pipeline(

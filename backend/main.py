@@ -474,6 +474,9 @@ async def lifespan(app: FastAPI):
     await event_bus.start()
     latency_tracker = LatencyTracker()
     event_engine = EventEngine(event_bus, camera_id="cam1", latency_tracker=latency_tracker)
+    # Fase 38 (SCALE-11): misma decision cacheada que ve factory.py.
+    from backend.inference.device import resolve_device
+    inference_choice = resolve_device(settings.inference_device)
 
     from backend.api.v2 import metrics as metrics_v2_module
     metrics_v2_module.configure(latency_tracker)
@@ -535,7 +538,16 @@ async def lifespan(app: FastAPI):
         min_face_size_px=settings.face_min_size_px,
         max_blur=settings.face_max_blur,
         max_yaw_deg=settings.face_max_yaw_deg,
+        face_providers=inference_choice.onnx_providers,
     )
+    # El motor facial es de proceso (compartido entre camaras): se reporta aqui una
+    # sola vez; YOLO y ReID los reporta factory._report_device_fallbacks por camara.
+    logger.info("Motor face en %s", recognizer.face_device)
+    if recognizer.face_fallback_reason:
+        logger.error("Fallback de dispositivo (face): %s", recognizer.face_fallback_reason)
+        event_engine.degraded_mode(
+            datetime.datetime.now(), reason=f"face: {recognizer.face_fallback_reason}"
+        )
 
     # Ensure gallery directory exists
     import os as _os
