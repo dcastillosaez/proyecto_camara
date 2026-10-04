@@ -285,7 +285,7 @@ El orden de construcción va de dentro hacia fuera: primero se desacopla el pipe
 - [x] **Phase 29: Vista de operaciones** — Centro de operaciones que responde en 3 segundos (completed 2026-08-20; checkpoint visual de Task 3 de 29-03-PLAN.md — criterios de éxito 1/4/5/6 — pendiente de verificación en persona)
 - [x] **Phase 30: Event Timeline y centro de alertas** — Línea temporal accionable con miniaturas (completed 2026-08-21; checkpoint visual de Task 2 de 30-12-PLAN.md — criterios de éxito 3/4/5 del ROADMAP y el ciclo completo de silenciado — diferido por falta de cámara real)
 - [x] **Phase 31: Vista de analítica** — Ocupación, heatmap, ranking de personas, tendencias (completed 2026-08-23; checkpoint visual de Task 3 de 31-11-PLAN.md aprobado tras corregir una regresión real de Chart.js en carga directa de `#analitica`; lo que exige actividad de cámara real en heatmap/ranking queda diferido como 12º checkpoint manual)
-- [ ] **Phase 32: Vista de cámara y configuración visual** — Operar y configurar sin tocar .env
+- [x] **Phase 32: Vista de cámara y configuración visual** — Operar y configurar sin tocar .env (completed 2026-10-04; la puerta 32-08 encontró y corrigió que Ajustes no podía guardar, ver `32-08-SUMMARY.md`)
 - [x] **Phase 33: Editores visuales de zonas, líneas y reglas** — Dibujar sobre el vídeo, componer reglas por formulario
 - [x] **Phase 34: Tests E2E e integración del pipeline** — Playwright + pipeline completo con fuente sintética (completed 2026-08-25; planificada y ejecutada a mano sin `gsd-sdk`, ver `.planning/phases/34-tests-e2e-integracion-pipeline/PLAN.md`; el job de CI `e2e` queda sin verificar en una ejecución real de GitHub Actions, pendiente del primer PR)
 

@@ -255,11 +255,11 @@
 - [x] **OPS-13**: La analítica muestra ranking de personas por visitas y tendencia frente al periodo anterior
 - [x] **OPS-14**: Las agregaciones se calculan en base de datos, no en el navegador
 - [x] **OPS-15**: La analítica es exportable a CSV y JSON en el rango visible
-- [ ] **OPS-16**: Existe una vista de cámara con live view y salud en tiempo real (FPS, latencia, CPU, RAM, estado RTSP)
-- [ ] **OPS-17**: Los ajustes rápidos de detección y grabación son accesibles desde la vista de cámara
-- [ ] **OPS-18**: La configuración se edita desde la interfaz mediante un árbol de secciones
-- [ ] **OPS-19**: Los parámetros que requieren reinicio están claramente señalizados frente a los que se aplican en caliente
-- [ ] **OPS-20**: Cada sección de configuración permite restaurar los valores por defecto
+- [x] **OPS-16**: Existe una vista de cámara con live view y salud en tiempo real (FPS, latencia, CPU, RAM, estado RTSP)
+- [x] **OPS-17**: Los ajustes rápidos de detección y grabación son accesibles desde la vista de cámara
+- [x] **OPS-18**: La configuración se edita desde la interfaz mediante un árbol de secciones
+- [x] **OPS-19**: Los parámetros que requieren reinicio están claramente señalizados frente a los que se aplican en caliente
+- [x] **OPS-20**: Cada sección de configuración permite restaurar los valores por defecto
 - [x] **OPS-21**: Las zonas se dibujan, editan y borran directamente sobre el vídeo con coordenadas independientes de la resolución *(cerrado en Fase 33, checkpoint 33-14)*
 - [x] **OPS-22**: Las líneas de conteo se dibujan sobre el vídeo con indicación visual de dirección *(cerrado en Fase 33, checkpoint 33-14)*
 - [x] **OPS-23**: Las zonas tienen tipo (conteo, restringida, exclusión) y horario propio *(cerrado en Fase 33, checkpoint 33-14)*

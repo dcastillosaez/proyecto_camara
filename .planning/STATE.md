@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: La v1.2 resolvió el pipeline funcional completo
 status: executing
-stopped_at: Fase 38 COMPLETA (worker de inferencia en GPU, opcional) en rama feature/fase-38, ejecutada a mano sin gsd-sdk -- ver .planning/phases/38-worker-de-inferencia-en-gpu-opcional/38-SUMMARY.md. SCALE-11/12 cerrados. Criterio 3 (>=3x FPS) pendiente de medir al instalar torch CUDA + onnxruntime-gpu. Siguen abiertas las puertas manuales 28-09 y 32-08.
-last_updated: "2026-09-28T12:00:00.000Z"
-last_activity: 2026-09-28 -- Fase 38 completada: selector backend/inference/device.py (auto|cpu|cuda, disponibilidad por familia), device/providers cableados a YOLO, ArcFace y OSNet con fallback detectado por comparacion y DEGRADED_MODE una vez por motor, clave devices en /api/v2/cameras/{id}/health, arnes de benchmark que se salta sin GPU y batching descartado por escrito. El checkpoint con servidor real encontro y corrigio un bug previo (500 en /api/v2/cameras y /health por last_frame_age_s=inf antes del primer frame). Suite: 883 passed, 16 skipped.
+stopped_at: Fases 32 y 38 COMPLETAS (2026-10-04). Unica puerta abierta: 28-09 (verificacion manual del refactor del frontend). Pendiente de decision: rate limit v2 (60/min) agotable por el propio dashboard, ver 32-08-SUMMARY.md.
+last_updated: "2026-10-04T23:30:00.000Z"
+last_activity: 2026-10-04 -- Puerta 32-08 cerrada con checkpoint visual en navegador real. Corregidos: Ajustes sin barra de guardado (no se podia guardar), Ajustes reescribiendo el hash de otras vistas y BD de E2E que no se reiniciaba entre ejecuciones. Nuevo tests/e2e/settings.spec.js. pytest 883 passed / 16 skipped; Playwright 14/14.
 progress:
   total_phases: 32
-  completed_phases: 21
+  completed_phases: 22
   total_plans: 104
   completed_plans: 99
   percent: 95
@@ -1043,7 +1043,7 @@ riesgos de las fases aún no planificadas, `SPEC_v2.md` §9.
 | 29 — Vista de operaciones | C | ✓ Completa (código) | 2026-08-20 | ⧗ Checkpoint visual Task 3 de 29-03 (criterios éxito 1/4/5/6 del ROADMAP) |
 | 30 — Event Timeline y alertas | C | ✓ Completa (código) | 2026-08-21 | ⧗ Cuatro puntos del checkpoint visual 30-12 Task 2 que exigen cámara real (criterios 3, 4 y 5 del ROADMAP y el ciclo completo de silenciado) |
 | 31 — Vista de analítica | C | ✓ Completa | 2026-08-23 | ⧗ Lo que exige actividad de cámara real (heatmap con datos genuinos, ranking con personas reconocidas) — 12º checkpoint manual |
-| 32 — Vista de cámara y config visual | C | — Sin planificar | — | Depende de 31 |
+| 32 — Vista de cámara y config visual | C | ✓ Completa | 2026-10-04 | ⧗ Vídeo en directo sin comprobar con imagen real (cámara sin señal en el checkpoint); rate limit v2 agotable por el propio dashboard, pendiente de decisión (ver `32-08-SUMMARY.md`) |
 | 33 — Editores visuales | C | — Sin planificar | — | Depende de 32 |
 | 34 — Tests E2E | C | — Sin planificar | — | Depende de 33 |
 | 35 — CameraManager | D | — Sin planificar | — | Depende de 34 |
