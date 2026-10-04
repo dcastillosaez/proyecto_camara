@@ -103,7 +103,7 @@ function _renderBool(field, controlWrap, sectionKey) {
   btn.addEventListener('click', () => {
     const next = btn.getAttribute('aria-checked') !== 'true';
     btn.setAttribute('aria-checked', String(next));
-    trackChange(sectionKey, field.key, next);
+    trackChange(sectionKey, field.key, next, field.value);
   });
   controlWrap.appendChild(btn);
 }
@@ -119,7 +119,7 @@ function _renderNumber(field, controlWrap, sectionKey) {
   input.value = field.value ?? '';
   input.addEventListener('blur', () => {
     const n = field.type === 'int' ? parseInt(input.value, 10) : parseFloat(input.value);
-    if (!Number.isNaN(n)) trackChange(sectionKey, field.key, n);
+    if (!Number.isNaN(n)) trackChange(sectionKey, field.key, n, field.value);
   });
   controlWrap.appendChild(input);
 }
@@ -132,7 +132,7 @@ function _renderStr(field, controlWrap, sectionKey) {
   input.type = 'text';
   input.className = 'filter-input w-full';
   input.value = field.value ?? '';
-  input.addEventListener('blur', () => trackChange(sectionKey, field.key, input.value));
+  input.addEventListener('blur', () => trackChange(sectionKey, field.key, input.value, field.value));
   controlWrap.appendChild(input);
 }
 
@@ -146,7 +146,7 @@ function _renderEnum(field, controlWrap, sectionKey) {
     if (v === field.value) opt.selected = true;
     select.appendChild(opt);
   }
-  select.addEventListener('change', () => trackChange(sectionKey, field.key, select.value));
+  select.addEventListener('change', () => trackChange(sectionKey, field.key, select.value, field.value));
   controlWrap.appendChild(select);
 }
 
@@ -155,7 +155,7 @@ function _renderTime(field, controlWrap, sectionKey) {
   input.type = 'time';
   input.className = 'filter-input w-[96px]';
   input.value = field.value ?? '';
-  input.addEventListener('change', () => trackChange(sectionKey, field.key, input.value));
+  input.addEventListener('change', () => trackChange(sectionKey, field.key, input.value, field.value));
   controlWrap.appendChild(input);
 }
 
@@ -181,7 +181,7 @@ function _renderListInt(field, controlWrap, sectionKey) {
       chip.setAttribute('aria-pressed', String(next));
       chip.classList.toggle('active', next);
       const values = [...wrap.querySelectorAll('[aria-pressed="true"]')].map((c) => Number(c.dataset.value));
-      trackChange(sectionKey, field.key, values);
+      trackChange(sectionKey, field.key, values, field.value);
     });
     wrap.appendChild(chip);
   }
@@ -197,7 +197,7 @@ function _renderListStr(field, controlWrap, sectionKey) {
   input.value = (field.value ?? []).join(', ');
   input.addEventListener('blur', () => {
     const values = input.value.split(',').map((s) => s.trim()).filter(Boolean);
-    trackChange(sectionKey, field.key, values);
+    trackChange(sectionKey, field.key, values, field.value);
   });
   box.append(input, _span('text-xs text-slate-500', 'sepáralos con comas'));
   controlWrap.appendChild(box);

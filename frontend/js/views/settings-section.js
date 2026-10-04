@@ -12,7 +12,19 @@
 // [data-cfg-action="save"|"restore"] en los botones.
 
 import { renderField } from './settings-field.js';
-import { trackChange, pendingCount, discardChanges, saveSection, restoreSection } from './settings-save.js';
+import {
+  pendingCount, discardChanges, saveSection, restoreSection, setOnPendingChange,
+} from './settings-save.js';
+
+let _current = null;   // { section, sectionKey } pintada ahora mismo en #settings-panel
+
+// Cada cambio de campo repinta solo la barra de guardado, nunca la seccion entera (eso
+// perderia el foco y lo tecleado en el campo siguiente).
+setOnPendingChange((sectionKey) => {
+  if (_current?.sectionKey !== sectionKey) return;
+  _panel()?.querySelector('.cfg-savebar')?.remove();
+  _renderSaveBar(sectionKey, _current.section);
+});
 
 function _panel() {
   return document.getElementById('settings-panel');
@@ -24,6 +36,7 @@ export function renderSection(section, sectionKey, requiresRestart = []) {
   panel.replaceChildren();   // limpiar sin innerHTML=''
   panel.dataset.cfgSection = sectionKey;
   panel.dataset.sectionLabel = section.label;
+  _current = { section, sectionKey };
 
   for (const group of section.groups) {
     if (group.external_source) {

@@ -24,13 +24,35 @@ export function setOnSectionSaved(cb) {
   _onSectionSaved = cb;
 }
 
+let _onPendingChange = null;    // callback(sectionKey) inyectado por settings-section.js
+
+export function setOnPendingChange(cb) {
+  _onPendingChange = cb;
+}
+
 function _mapFor(sectionKey) {
   if (!_pending.has(sectionKey)) _pending.set(sectionKey, new Map());
   return _pending.get(sectionKey);
 }
 
-export function trackChange(sectionKey, fieldKey, value) {
-  _mapFor(sectionKey).set(fieldKey, value);
+// Los arrays se comparan sin orden: los chips se leen en orden de pantalla, no de la BD.
+function _same(a, b) {
+  const norm = (v) => (Array.isArray(v) ? [...v].map(String).sort() : v);
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+// Registra el cambio Y lo refleja: fila .dirty y barra de guardado. Antes solo lo apuntaba
+// en memoria, asi que la barra "Guardar cambios" (que solo se pintaba al renderizar la
+// seccion) nunca aparecia y no habia forma de guardar desde Ajustes. Volver al valor
+// original, o pasar el foco sin tocar nada, deja la fila limpia.
+export function trackChange(sectionKey, fieldKey, value, original) {
+  const pending = _mapFor(sectionKey);
+  const dirty = !_same(value, original);
+  if (dirty) pending.set(fieldKey, value);
+  else pending.delete(fieldKey);
+  const row = _panel(sectionKey)?.querySelector(`.cfg-row[data-field-key="${fieldKey}"]`);
+  if (row) markFieldDirty(row, dirty);
+  _onPendingChange?.(sectionKey);
 }
 
 export function pendingCount(sectionKey) {

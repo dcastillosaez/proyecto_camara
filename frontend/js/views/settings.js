@@ -33,6 +33,12 @@ export async function initSettings() {
   });
   await _loadSchema();
   _bootFromHashOrDefault();
+  // El hash solo se leia al arrancar: una URL #ajustes/{seccion} pegada en la misma
+  // pestana o atras/adelante del historial no abrian la seccion pedida.
+  window.addEventListener('hashchange', () => {
+    const key = _sectionFromHash();
+    if (key && key !== _activeSection) _openSection(key);
+  });
 }
 
 async function _loadSchema() {
@@ -187,7 +193,12 @@ function _openSection(key, requiresRestart = []) {
   }
   if (isCameras) renderCamerasSection();
   else renderSection(section, key, requiresRestart);
-  history.replaceState(null, '', `#ajustes/${key}`);
+  // Solo si Ajustes es la vista visible: initSettings() arranca en segundo plano con
+  // cualquier hash, y reescribirlo dejaba #camara (u otra vista) como #ajustes/camara,
+  // de modo que recargar o guardar el marcador llevaba a Ajustes.
+  if ((location.hash || '').startsWith('#ajustes')) {
+    history.replaceState(null, '', `#ajustes/${key}`);
+  }
 }
 
 // Se recalcula tras cada saveSection/discardChanges exitoso -- el callback vive aqui,
