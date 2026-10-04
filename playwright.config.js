@@ -10,6 +10,7 @@
 // El ejecutable de Python cambia entre este equipo (venv en .venv/, Windows)
 // y GitHub Actions (ubuntu-latest, `pip install` contra el Python del runner,
 // sin venv) -- de ahi la deteccion por plataforma en vez de una ruta fija.
+const fs = require('fs');
 const path = require('path');
 const { defineConfig, devices } = require('@playwright/test');
 
@@ -18,6 +19,20 @@ const PYTHON = process.platform === 'win32'
   : 'python';
 const PORT = 8011;
 const DB_PATH = 'data/e2e-events.db';
+
+// Cada ejecucion arranca con las BD de E2E vacias, como en CI. Antes se reutilizaban
+// entre ejecuciones locales y acumulaban eventos (CAMERA_OFFLINE de cada arranque,
+// CONFIG_CHANGED de settings.spec.js): con unas decenas en la linea temporal, los specs
+// que inyectan un evento en vivo (clips, live-event) dejaban de encontrar su fila.
+// Solo en el proceso principal: los workers tambien cargan este fichero, y para
+// entonces el webServer ya tiene la BD abierta.
+if (!process.env.TEST_WORKER_INDEX) {
+  for (const base of [DB_PATH, DB_PATH.replace('events.db', 'persons.db')]) {
+    for (const suffix of ['', '-wal', '-shm']) {
+      fs.rmSync(path.resolve(__dirname, base + suffix), { force: true });
+    }
+  }
+}
 
 module.exports = defineConfig({
   testDir: './tests/e2e',
