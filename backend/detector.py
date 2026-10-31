@@ -25,7 +25,7 @@ class PersonDetector:
 
     def __init__(
         self,
-        model_path: str = "yolov8n.pt",
+        model_path: str = "yolo26n.pt",
         confidence: float = 0.45,
         classes: list[int] | None = None,
         label: str = "person",

@@ -9,64 +9,35 @@ Prioridades: **baja latencia, estabilidad, CPU moderada y simplicidad**.
 
 ## Reglas de trabajo
 
-- Respuestas **breves y directas**; resultado primero.
-- No repetir código, diffs, logs ni contexto ya visible.
-- En tests: solo resultado (`176/176`, `OK`, etc.), salvo fallos relevantes.
-- Explicar solo decisiones no obvias, riesgos, trade-offs o lo pedido.
+- Reportar los tests solo con el resultado (`176/176`, `OK`), salvo fallos relevantes.
+- Verificar código y tests antes de modificar arquitectura. No inventar APIs, rutas, variables ni comportamiento.
 - No añadir dependencias, frameworks o infraestructura sin necesidad.
-- Verificar código/tests antes de modificar arquitectura.
-- No inventar APIs, rutas, variables, archivos o comportamiento.
-- Windows 11 + Python 3.12.
-- Nunca exponer credenciales RTSP en código, logs, commits o respuestas.
+- Windows 11 + Python 3.12; venv en `.venv/`.
+- Nunca exponer credenciales RTSP en código, logs, commits o respuestas. Usar `CAMERA_URL` desde configuración.
+- Trabajar siempre en la raíz del repositorio, nunca en `.claude/worktrees/*`, y no crear worktrees nuevos: no comparten `.env` ni `.venv/`, y el backend arranca sin imagen. Las ramas se usan con normalidad.
 
-### Entorno de trabajo (sin worktrees)
+### Planificación
 
-Trabajar siempre desde la raíz del repositorio (`F:\Documentos\IA\Proyecto_Camara`),
-nunca desde `.claude/worktrees/*`. Se pueden crear y cambiar ramas con normalidad,
-pero siempre en la raíz — no crear worktrees nuevos.
+GSD ya no es obligatorio. `.planning/` se conserva como documentación: al cerrar trabajo relevante, actualizar `STATE.md` a mano. Los subagentes `gsd-*` están en `~/.claude/_desactivado/agents-gsd-proyecto-camara/` por si vuelve un milestone grande.
 
-Motivo: un git worktree no comparte los ficheros no versionados de la raíz
-(`.env`, `.venv/`), así que cada worktree nuevo arranca sin credenciales RTSP
-reales ni entorno virtual propio. Esto causó un fallo real: el backend arrancaba
-"online" pero sin imagen, porque `camera_url` caía al valor por defecto de
-`backend/config.py` al no encontrar `.env`. Trabajar siempre en la raíz evita
-esta clase de problema de entorno.
+Para el estado del proyecto, leer `.planning/STATE.md`, la única fuente de qué está completo y qué falta. `ROADMAP.md`, `REQUIREMENTS.md`, `propuesta_mejora/SPEC_v2.md` y `.planning/STATE-archive.md` (historial) solo se abren si hace falta un detalle concreto, y este último con Grep.
 
-### GSD
-
-Antes de editar, usar:
-- `/gsd:quick` → cambios pequeños/documentación.
-- `/gsd:debug` → bugs/investigación.
-- `/gsd:execute-phase` → trabajo planificado.
-
-No editar fuera de GSD salvo petición explícita.
-
-Para contexto de planificación, leer primero `.planning/STATE.md` — es la
-única fuente de qué está completo y qué falta (fases, checkpoints,
-pendientes). `ROADMAP.md`, `REQUIREMENTS.md` y `propuesta_mejora/SPEC_v2.md`
-tienen cada uno un rol propio sin solapar y solo hace falta abrirlos si
-STATE.md remite a ellos para un detalle concreto.
-
-## Stack / restricciones
+## Stack
 
 | Área | Decisión |
 |---|---|
-| Runtime | Python 3.12 |
 | Backend | FastAPI + Uvicorn |
 | Captura | OpenCV / `cv2.VideoCapture` |
 | Detección | Ultralytics YOLO26n |
-| Tracking | supervision + ByteTrack |
-| Conteo | `LineZone` / cruce de línea |
-| DB | SQLite + SQLAlchemy 2 async + aiosqlite |
-| Config | pydantic-settings |
-| Streaming | MJPEG HTTP |
-| Tiempo real | WebSocket |
-| Frontend | HTML + JS vanilla |
-| Gráficas | Chart.js CDN |
+| Tracking y conteo | supervision: ByteTrack + `LineZone` |
+| DB | SQLite + SQLAlchemy 2 async + aiosqlite (PostgreSQL y Redis opcionales con `database_url` y `redis_url`) |
+| Config | pydantic-settings (`backend/config.py`), sin `python-dotenv` |
+| Tiempo real | MJPEG HTTP + WebSocket |
+| Frontend | HTML + JS vanilla (módulos ES), sin build step; Chart.js y Tailwind por CDN |
 | Red | LAN; no exposición pública |
-| GPU | No asumir GPU dedicada |
+| GPU | No asumir GPU dedicada; `inference_device` cae a CPU |
 
-No introducir WebRTC, Docker, PostgreSQL, React/Vue, bundlers ni capas equivalentes sin decisión explícita.
+No introducir WebRTC, React/Vue, bundlers ni capas equivalentes sin decisión explícita. SQLite sigue siendo el backend por defecto.
 
 ## Arquitectura
 
@@ -92,146 +63,56 @@ FrameBroker (latest-frame, 1 slot/suscriptor)
 
 1. La captura **nunca espera a la IA**.
 2. Cada worker consume del broker a su ritmo.
-3. Se descartan frames antes que acumular latencia.
-4. `dropped` creciente en `/api/v2/cameras/{id}/health` puede ser normal.
-5. Ningún hilo hace `await`.
-6. Ninguna corrutina ejecuta inferencia.
-7. Tracks compartidos → `TrackRegistry`.
-8. RTSP debe reconectar con backoff.
-9. Conteo = tracking/cruce, no suma de detecciones por frame.
-10. Los tests de arquitectura deben proteger estas reglas.
+3. Se descartan frames antes que acumular latencia; `dropped` creciente en `/api/v2/cameras/{id}/health` puede ser normal.
+4. Ningún hilo hace `await`.
+5. Ninguna corrutina ejecuta inferencia ni CPU pesada.
+6. Tracks compartidos → `TrackRegistry`.
+7. RTSP perdido → reconexión con backoff.
+8. Conteo = tracking/cruce, no suma de detecciones por frame.
+9. `tests/test_architecture.py` protege estas reglas.
 
 ## Estructura
 
 ```text
 backend/
-  main.py
-  config.py
-  detector.py
-  tracker.py
-  recognizer.py
-  recorder.py
-  database.py
-  pipeline/
-    broker.py capture.py detection.py streaming.py
-    recording.py recognition.py tracking.py rate.py
-    supervisor.py manager.py
-frontend/
-  index.html app.js
-tests/
+  main.py config.py detector.py tracker.py recognizer.py recorder.py database.py
+  api/v2/         routers REST
+  pipeline/       workers, broker, supervisor y manager (N cámaras)
+  events/         motor de eventos, reglas y acciones
+  perception/     comportamiento, objetos, rostro y ReID
+  inference/      selección de dispositivo
+  observability/  métricas y latencia
+  storage/        modelos, migraciones y repositorios
+frontend/         index.html, css/, js/ (views/, components/)
+tests/            tests/e2e = Playwright
 data/
 ```
 
-Responsabilidades:
-
-- `broker.py`: fan-out del último frame.
-- `capture.py`: RTSP, captura, resize y publicación.
-- `detection.py`: YOLO, tracking, zonas/heatmap.
-- `streaming.py`: overlay + JPEG + MJPEG.
-- `recording.py`: alimentación del grabador.
-- `recognition.py`: reconocimiento a su propio ritmo.
-- `tracking.py`: estado compartido.
-- `rate.py`: FPS adaptativo por latencia.
-- `supervisor.py`: reinicio/mode degradado.
-- `manager.py`: `CameraPipeline` + N cámaras.
-
-## API
-
-| Método | Ruta | Uso |
-|---|---|---|
-| GET | `/` | Dashboard |
-| GET | `/video_feed` | MJPEG |
-| WS | `/ws` | Eventos |
-| GET | `/api/stats` | Estadísticas |
-| GET | `/api/v2/cameras/{id}/health` | Salud del pipeline |
-
-Evento:
-
-```json
-{
-  "type": "detection",
-  "timestamp": "2026-04-16T18:30:00",
-  "total_today": 42,
-  "last_hour": 7
-}
-```
-
-`health` distingue `capture_fps` y `detection_fps` por diseño.
-
-## Configuración
-
-```text
-CAMERA_URL
-YOLO_CONFIDENCE=0.45
-DB_PATH=data/events.db
-HOST=0.0.0.0
-PORT=8000
-```
-
-- `backend/config.py`: `pydantic-settings` + `BaseSettings` + `@lru_cache`.
-- No usar `python-dotenv`.
-- No hardcodear credenciales.
-- Preferir `stream2` para detección cuando sea suficiente.
-- Mantener bajo el buffer de captura para evitar frames antiguos.
+Las rutas se localizan en `backend/main.py` y `backend/api/v2/`; los parámetros y sus valores por defecto, en `backend/config.py`. `/api/v2/cameras/{id}/health` distingue `capture_fps` y `detection_fps` por diseño.
 
 ## Comandos
-
-Desde la raíz del proyecto:
 
 ```bash
 .venv/Scripts/python.exe -m pip install -r requirements.txt
 
-.venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
-
 .venv/Scripts/python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
-.venv/Scripts/python.exe -m pytest tests/ -v
-
-.venv/Scripts/python.exe -m pytest tests/test_detector.py -v
+.venv/Scripts/python.exe -m pytest tests/ -q
 ```
 
-Para RTSP, usar `CAMERA_URL` desde configuración; no copiar credenciales al comando/chat.
+## Código
 
-## Código y rendimiento
-
-- Python 3.12 obligatorio; venv en `.venv/`.
-- `requirements.txt`: `>=`, no pins exactos salvo necesidad.
-- No `databases` (encode), Docker, pre-commit ni `pyproject.toml` antes de la fase prevista.
-- Módulos placeholder: docstring de una línea e importables.
-- Mantener workers desacoplados.
-- Preferir cambios pequeños y verificables.
-- No colas ilimitadas de frames.
-- Evitar copias de imágenes innecesarias.
-- Detector puede ir a menor FPS que captura.
-- Streaming/grabación no bloquean detección.
-- Medir latencia/FPS reales antes de optimizar.
-- RTSP perdido → backoff + reconexión recuperable.
-- No ejecutar CPU pesado en el event loop.
-- No crear estado global oculto.
-
-## Frontend
-
-HTML + JS vanilla, sin build step. Chart.js por CDN. WebSocket para eventos y MJPEG para vídeo. Priorizar vídeo, personas, actividad y salud. Evitar dependencias visuales innecesarias.
+- `requirements.txt`: `>=`, sin pins exactos salvo necesidad.
+- Workers desacoplados; sin colas de frames ilimitadas ni estado global oculto.
+- Evitar copias de imágenes innecesarias. Preferir `stream2` para detección y mantener bajo el buffer de captura.
+- Medir latencia y FPS reales antes de optimizar.
+- Sin abstracciones prematuras ni dependencias nuevas para funciones pequeñas.
 
 ## Tests
 
-Durante la iteración: solo el fichero o `-k <patrón>` afectado por el cambio
-en curso. No relanzar `pytest tests/` completo en cada paso — es ~90 s y
-cientos de líneas de salida que no aportan nada hasta que el cambio esté
-terminado.
+Durante la iteración, solo el fichero o `-k <patrón>` afectado: la suite completa tarda minutos y no aporta nada hasta terminar el cambio.
 
-Antes de terminar:
-1. Tests afectados.
-2. Suite completa si toca pipeline, arquitectura, API o configuración.
-3. Corregir fallos, no ocultarlos.
-4. Mantener `tests/test_architecture.py` como barrera contra `await`/inferencia en workers y acoplamiento captura↔IA.
-5. Reportar solo el resultado relevante.
-
-## Criterios de diseño
-
-**Preferir:** simplicidad, desacoplamiento, latest-frame, degradación controlada, configuración explícita, observabilidad y tests de invariantes.
-
-**Evitar:** overengineering, abstracciones prematuras, dependencias nuevas por funciones pequeñas, buffers que añadan latencia, CPU pesada en el event loop, estado global oculto y lógica duplicada.
+Antes de terminar, pasar los tests afectados, y la suite completa si el cambio toca pipeline, arquitectura, API o configuración. Corregir los fallos, no ocultarlos.
 
 ## Jerarquía de fuentes
 
@@ -241,7 +122,7 @@ Antes de terminar:
 4. Documentación/GSD.
 5. Conocimiento externo.
 
-Si hay contradicción, verificar antes de asumir. Actualizar este documento cuando el código haya cambiado de forma relevante.
+Si hay contradicción, verificar antes de asumir. Actualizar este documento cuando el código cambie de forma relevante.
 
 ## Regla final
 
