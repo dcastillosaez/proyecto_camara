@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     # "cpu": fuerza CPU sin sondear nada.
     # "cuda": exige GPU y aborta el arranque si ninguna familia puede usarla (diagnostico).
     inference_device: Literal["auto", "cpu", "cuda"] = "auto"
+    # DET-01: hilos de PyTorch para YOLO en CPU; 0 deja el valor de Ultralytics
+    # (min(8, nucleos - 1)). Medido en el i7-9700K: 3 hilos = 42 ms y 1 nucleo a 8 FPS,
+    # frente a 37 ms y 1,9 nucleos con 7.
+    inference_threads: int = 3
     # FPS inicial que se pasa a ByteTrack; DetectionWorker lo re-sincroniza
     # en caliente con el FPS efectivo de AdaptiveRate (set_frame_rate).
     tracker_frame_rate: int = 15
@@ -413,6 +417,13 @@ class Settings(BaseSettings):
         if self.context_min_sample_days < 1:
             raise ValueError("context_min_sample_days debe ser >= 1")
         return self
+
+    @field_validator("inference_threads")
+    @classmethod
+    def validate_inference_threads(cls, v: int) -> int:
+        if not 0 <= v <= 64:
+            raise ValueError("inference_threads debe estar en [0, 64] (0 = valor de Ultralytics)")
+        return v
 
     @model_validator(mode="after")
     def validate_retention_params(self) -> "Settings":

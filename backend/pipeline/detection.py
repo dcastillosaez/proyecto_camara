@@ -87,6 +87,7 @@ class DetectionWorker:
         self._running = False
         self._thread: threading.Thread | None = None
         self._last_effective_fps: float | None = None
+        self._lost_ids: set[int] = set()   # DET-02: tracks perdidos aun recuperables
         self._frames_processed = 0
         self._exceptions = 0
 
@@ -249,6 +250,7 @@ class DetectionWorker:
                 # personas de la Fase 4, que esta en produccion.
                 person_dets, object_dets = self._split_by_class(sv_dets)
                 tracked, crossings = self._tracker.update(person_dets)
+                self._lost_ids = self._tracker_lost_ids()
                 obj_tracked = (
                     self._object_tracker.update(object_dets)
                     if self._object_tracker is not None
@@ -279,6 +281,10 @@ class DetectionWorker:
             self._emit_crossings(crossings, frame.captured_at, now)
             self._emit_track_lifecycle(tracked, frame.captured_at, now)
             self._registry.prune(now)
+
+    def _tracker_lost_ids(self) -> set[int]:
+        lost_ids = getattr(self._tracker, "lost_ids", None)
+        return set(lost_ids()) if callable(lost_ids) else set()
 
     def _split_by_class(self, dets: sv.Detections) -> tuple[sv.Detections, sv.Detections]:
         """Separa personas y objetos. El slicing preserva data["class_name"] (verificado
@@ -472,7 +478,9 @@ class DetectionWorker:
         if self._event_engine is None:
             return
         wall_now = datetime.datetime.now()
-        self._event_engine.process_tracks(active_ids, wall_now, captured_at, processed_at)
+        self._event_engine.process_tracks(
+            active_ids, wall_now, captured_at, processed_at, lost_track_ids=self._lost_ids,
+        )
         confidences = list(tracked.confidence) if tracked.confidence is not None else []
         self._event_engine.accumulate_detections(wall_now, active_ids, confidences)
 
@@ -541,6 +549,9 @@ class DetectionWorker:
                 if ids is not None and len(mask)
                 else set()
             )
+            # DET-02: mismo parpadeo que PERSON_EXITED. Un track perdido pero aun
+            # recuperable conserva su pertenencia a la zona hasta que expire.
+            inside |= st["inside"] & self._lost_ids
             with self._lock:
                 st["entries"] += len(inside - st["inside"])
                 st["inside"] = inside

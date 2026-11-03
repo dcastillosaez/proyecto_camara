@@ -31,8 +31,15 @@ class PersonDetector:
         label: str = "person",
         imgsz: int = 640,
         device: str | None = None,
+        inference_threads: int = 0,
     ) -> None:
         self._model = YOLO(model_path)
+        # DET-01: hilos de PyTorch para la inferencia en CPU (0 = no tocar). Ultralytics
+        # pone OMP_NUM_THREADS=1 al importarse y select_device() lo sube a
+        # min(8, nucleos - 1) en la PRIMERA inferencia, sin que nadie lo haya decidido.
+        # Por eso se aplica justo despues de esa primera llamada (_apply_threads).
+        self._inference_threads = inference_threads
+        self._threads_applied = inference_threads <= 0
         self._confidence = confidence
         self._classes = classes if classes is not None else [0]
         self._label = label
@@ -88,12 +95,28 @@ class PersonDetector:
         except Exception:
             logger.exception("PersonDetector: warm-up fallido (no bloqueante)")
 
+    def _apply_threads(self) -> None:
+        """Fija torch.set_num_threads tras la primera inferencia (DET-01). Es global del
+        proceso: con varias camaras todas aplican el mismo valor de configuracion."""
+        self._threads_applied = True
+        if self.device_effective != "cpu":
+            return
+        try:
+            import torch
+
+            torch.set_num_threads(self._inference_threads)
+            logger.info("PersonDetector: inferencia en CPU con %d hilo(s)", self._inference_threads)
+        except Exception:
+            logger.exception("PersonDetector: no se pudo fijar inference_threads")
+
     def detect(self, frame: np.ndarray) -> list[Detection]:
         """Return bounding boxes for objects detected in *frame*."""
         results = self._model(
             frame, classes=self._classes, conf=self._confidence,
             imgsz=self._imgsz, verbose=False,
         )
+        if not self._threads_applied:
+            self._apply_threads()
         detections: list[Detection] = []
         for r in results:
             for box in r.boxes:
@@ -108,6 +131,8 @@ class PersonDetector:
             frame, classes=self._classes, conf=self._confidence,
             imgsz=self._imgsz, verbose=False,
         )
+        if not self._threads_applied:
+            self._apply_threads()
         return sv.Detections.from_ultralytics(results[0])
 
     def set_classes(self, classes: list[int]) -> None:

@@ -235,6 +235,13 @@ ALL_SECTIONS: tuple[Section, ...] = (
                         enum_values=("auto", "cpu", "cuda"),
                         applies="restart_server",
                     ),
+                    FieldDef(
+                        key="inference_threads", env="INFERENCE_THREADS",
+                        label="Hilos de inferencia en CPU",
+                        hint="Hilos de PyTorch para YOLO en CPU; 0 deja el valor de Ultralytics "
+                             "(núcleos - 1). Menos hilos: algo más de latencia y mucha menos CPU.",
+                        type="int", default=3, min=0, max=64, applies="restart_server",
+                    ),
                 ),
             ),
             Group(

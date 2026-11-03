@@ -112,10 +112,17 @@ class EventEngine:
         now: datetime.datetime,
         captured_at: float | None = None,
         processed_at: float | None = None,
+        lost_track_ids: set[int] | None = None,
     ) -> None:
-        """Diff against the last known set of active tracks; emit only on transitions."""
+        """Diff against the last known set of active tracks; emit only on transitions.
+
+        DET-02: *lost_track_ids* son los tracks que ByteTrack aun puede recuperar. No
+        cuentan como salida: PERSON_EXITED se emite cuando el track expira, no en el
+        primer frame en que falla la deteccion (antes, cada fallo breve generaba una
+        salida y una entrada falsas con el mismo id)."""
+        lost = lost_track_ids or set()
         entered = active_track_ids - self._known_tracks
-        exited = self._known_tracks - active_track_ids
+        exited = self._known_tracks - active_track_ids - lost
         for track_id in entered:
             self._publish(
                 EventType.PERSON_ENTERED, ts=now, captured_at=captured_at,
@@ -126,7 +133,7 @@ class EventEngine:
                 EventType.PERSON_EXITED, ts=now, captured_at=captured_at,
                 processed_at=processed_at, track_id=track_id,
             )
-        self._known_tracks = set(active_track_ids)
+        self._known_tracks = (self._known_tracks | active_track_ids) - exited
 
     # ------------------------------------------------------------------
     # Zone membership

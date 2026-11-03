@@ -87,6 +87,7 @@ def build_camera_pipeline(
         label=settings.detection_label,
         imgsz=settings.yolo_imgsz,
         device=device.torch_device,
+        inference_threads=settings.inference_threads,
     )
     tracker = PersonTracker(frame_rate=settings.tracker_frame_rate)
     event_engine = EventEngine(services.event_bus, camera_id=camera_id, latency_tracker=services.latency_tracker)
