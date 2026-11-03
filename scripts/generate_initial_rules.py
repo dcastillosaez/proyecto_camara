@@ -1,9 +1,8 @@
-"""One-shot: translate the legacy .env alert_* settings into config/rules.yaml.
+"""Genera config/rules.yaml con las reglas por defecto (DIR-01).
 
-Run once when upgrading from v1 (Notifier decided everything). Re-run any time
-after changing ALERT_* variables in .env to regenerate the file — it always
-overwrites config/rules.yaml, so hand edits made after the first run are lost
-on re-run.
+config/rules.yaml solo se lee al arrancar con la tabla `rules` vacia; en cuanto se
+crea una regla desde la API, la fuente de verdad es la base de datos. Volver a
+ejecutar este script SOBRESCRIBE cualquier edicion manual del fichero.
 """
 
 from __future__ import annotations
@@ -18,41 +17,37 @@ from backend.config import Settings, get_settings
 
 
 def build_rules(settings: Settings) -> dict[str, Any]:
-    rules: list[dict[str, Any]] = []
+    """Reglas por defecto (DIR-01): intrusion y persona desconocida avisan y GRABAN.
 
-    if settings.alert_on_intrusion:
-        rules.append({
+    Antes solo avisaban (notify), asi que una instalacion limpia no grababa nunca.
+    OBJECT_LEFT no graba por defecto hasta calibrar object_person_radius_px: un radio
+    mal ajustado llenaria el disco y la cuota de Drive. Los alert_on_* de v1 se
+    retiraron (no hacian nada en tiempo de ejecucion)."""
+    debounce = settings.alert_cooldown_secs
+    rules: list[dict[str, Any]] = [
+        {
+            # INTRUSION: cruce fuera del horario de acceso o entrada en zona restricted.
             "name": "intrusion",
             "enabled": True,
-            "when": {"event": "LINE_CROSSED", "payload": {"is_intrusion": True}},
-            "debounce_secs": settings.alert_cooldown_secs,
-            "actions": [{"type": "notify"}],
-        })
-
-    if settings.alert_on_unknown:
-        rules.append({
+            "when": {"event": "INTRUSION"},
+            "debounce_secs": debounce,
+            "actions": [{"type": "notify"}, {"type": "record"}],
+        },
+        {
             "name": "persona_desconocida",
             "enabled": True,
-            "when": {"event": "LINE_CROSSED", "person": "unknown"},
-            "debounce_secs": settings.alert_cooldown_secs,
-            "actions": [{"type": "notify"}],
-        })
-
-    if settings.alert_on_detection:
-        rules.append({
-            "name": "deteccion_persona",
-            "enabled": True,
-            "when": {"event": "LINE_CROSSED"},
-            "debounce_secs": settings.alert_cooldown_secs,
-            "actions": [{"type": "notify"}],
-        })
+            "when": {"event": "UNKNOWN_PERSON"},
+            "debounce_secs": debounce,
+            "actions": [{"type": "notify"}, {"type": "record"}],
+        },
+    ]
 
     if settings.alert_count_threshold > 0:
         rules.append({
             "name": "aglomeracion",
             "enabled": True,
             "when": {"event": "CROWD_DETECTED"},
-            "debounce_secs": settings.alert_cooldown_secs,
+            "debounce_secs": debounce,
             "actions": [{"type": "notify"}],
         })
 
@@ -65,8 +60,9 @@ def main(output_path: str = "config/rules.yaml") -> None:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     header = (
-        "# Generado por scripts/generate_initial_rules.py a partir de las variables\n"
-        "# ALERT_* de .env — reproduce el comportamiento de alertas de v1.\n"
+        "# Generado por scripts/generate_initial_rules.py: reglas por defecto (DIR-01).\n"
+        "# Intrusion y persona desconocida avisan y graban; OBJECT_LEFT no graba hasta\n"
+        "# calibrar object_person_radius_px. Solo se lee con la tabla `rules` vacia.\n"
         "#\n"
         "# Este fichero es editable a mano: anade, desactiva o ajusta reglas libremente.\n"
         "# Volver a ejecutar el script SOBRESCRIBE cualquier edicion manual.\n"

@@ -59,7 +59,9 @@ class Action(BaseModel):
     pre_secs: float | None = None
     post_secs: float | None = None
     template: str | None = None
-    url_ref: str | None = None
+    # DIR-02: `url_ref` se retiro: nunca se leia (el webhook usa siempre
+    # alert_webhook_url). Una regla antigua que lo traiga se sigue cargando: Pydantic
+    # ignora los campos desconocidos.
 
     @field_validator("template")
     @classmethod

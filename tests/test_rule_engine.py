@@ -27,7 +27,6 @@ SPEC_RULES_YAML = textwrap.dedent("""
           - type: telegram
             template: "Intrusion en {zone_id} a las {ts:%H:%M:%S}"
           - type: webhook
-            url_ref: alert_webhook_url
 
       - name: persona_desconocida
         when:

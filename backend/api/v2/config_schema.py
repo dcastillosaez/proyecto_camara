@@ -714,24 +714,6 @@ ALL_SECTIONS: tuple[Section, ...] = (
                 label="Disparadores",
                 fields=(
                     FieldDef(
-                        key="alert_on_intrusion", env="ALERT_ON_INTRUSION",
-                        label="Avisar en intrusión",
-                        hint="Avisa cuando se detecta una intrusión.",
-                        type="bool", default=True, applies="restart_server",
-                    ),
-                    FieldDef(
-                        key="alert_on_unknown", env="ALERT_ON_UNKNOWN",
-                        label="Avisar en desconocido",
-                        hint="Avisa cuando se detecta una persona desconocida.",
-                        type="bool", default=True, applies="restart_server",
-                    ),
-                    FieldDef(
-                        key="alert_on_detection", env="ALERT_ON_DETECTION",
-                        label="Avisar en cada detección",
-                        hint="Avisa en cada detección; ruidoso, desactivado por defecto.",
-                        type="bool", default=False, applies="restart_server",
-                    ),
-                    FieldDef(
                         key="alert_cooldown_secs", env="ALERT_COOLDOWN_SECS",
                         label="Segundos entre avisos repetidos",
                         hint="Segundos mínimos entre avisos repetidos de la misma regla.",
@@ -772,10 +754,26 @@ ALL_SECTIONS: tuple[Section, ...] = (
                         type="float", default=15.0, min=1, max=30, applies="restart_camera",
                     ),
                     FieldDef(
-                        key="recording_tail_secs", env="RECORDING_TAIL_SECS",
-                        label="Cola tras última detección (s)",
-                        hint="Segundos de grabación tras la última detección.",
-                        type="float", default=5.0, min=0, max=60, applies="restart_camera",
+                        key="recording_max_clip_secs", env="RECORDING_MAX_CLIP_SECS",
+                        label="Duración máxima de un clip (s)",
+                        hint="El clip se cierra al llegar aquí aunque sigan llegando eventos; "
+                             "0 = sin límite.",
+                        type="float", default=300.0, min=0, max=3600, applies="restart_camera",
+                    ),
+                    FieldDef(
+                        key="recording_min_free_mb", env="RECORDING_MIN_FREE_MB",
+                        label="Espacio libre mínimo para grabar (MB)",
+                        hint="Por debajo de este espacio libre en disco no se graba y se emite "
+                             "DEGRADED_MODE; 0 = no comprobar.",
+                        type="int", default=1024, min=0, max=1048576, applies="restart_camera",
+                    ),
+                    FieldDef(
+                        key="clips_max_total_mb", env="CLIPS_MAX_TOTAL_MB",
+                        label="Tamaño máximo de los clips locales (MB)",
+                        hint="La retención borra los clips locales más antiguos (ya subidos o "
+                             "descartados, nunca pendientes) por encima de este total; 0 = sin "
+                             "cota.",
+                        type="int", default=20480, min=0, max=10485760, applies="restart_server",
                     ),
                     FieldDef(
                         key="recording_codec", env="RECORDING_CODEC", label="Códec de vídeo",

@@ -165,7 +165,7 @@ _snapshot_last: dict[tuple[str, int], float] = {}
 _SNAPSHOT_STATE_CAP = 256
 
 
-async def _capture_event_snapshot(event: Event) -> str | None:
+async def _capture_event_snapshot(event: Event, force: bool = False) -> str | None:
     """Recorta el bbox del ultimo frame y lo escribe como JPEG (Fase 30, OPS-07/08).
 
     Devuelve la ruta relativa en disco o None. El imwrite va SIEMPRE en
@@ -173,12 +173,12 @@ async def _capture_event_snapshot(event: Event) -> str | None:
     y un imwrite sincrono ahi produce micro-pausas en MJPEG y WS.
     """
     settings = get_settings()
-    if not settings.snapshot_enabled or event.bbox is None:
+    if not force and (not settings.snapshot_enabled or event.bbox is None):
         return None
     key = (event.camera_id, event.track_id if event.track_id is not None else -1)
     now = time.monotonic()
     last = _snapshot_last.get(key)
-    if last is not None and (now - last) < settings.snapshot_min_interval_secs:
+    if not force and last is not None and (now - last) < settings.snapshot_min_interval_secs:
         return None
     pipeline = camera_manager.get(event.camera_id) if camera_manager is not None else None
     frame = pipeline.get_frame() if pipeline is not None else None
@@ -191,7 +191,7 @@ async def _capture_event_snapshot(event: Event) -> str | None:
     _snapshot_last[key] = now
 
     h, w = frame.shape[:2]
-    x1, y1, x2, y2 = (int(v) for v in event.bbox)
+    x1, y1, x2, y2 = (int(v) for v in event.bbox) if event.bbox is not None else (0, 0, w, h)
     x1 = max(0, min(x1, w - 1))
     y1 = max(0, min(y1, h - 1))
     x2 = max(x1 + 1, min(x2, w))
@@ -358,6 +358,85 @@ async def _purge_local_clip_files(retention_days: int) -> int:
     return len(expired)
 
 
+async def _reconcile_clips(clips_dir: str) -> dict[str, int]:
+    """BUG-08: al arrancar, pone de acuerdo el disco y la tabla recordings.
+
+    - *.part.mp4: clips que el proceso no llego a cerrar. Sin el indice final del
+      contenedor no se pueden reproducir, asi que se borran.
+    - filas con local_path cuyo fichero no existe: si estaban pendientes de subir
+      pasan a failed (la cola fallaria en cada intento); si no, se limpia local_path.
+    - clip_*.mp4 sin fila: se avisan en el log, no se borran.
+    """
+    from backend.pipeline.recording import PART_SUFFIX
+    from backend.storage.repositories import UploadState
+
+    base = Path(clips_dir)
+    counts = {"partial_removed": 0, "missing_failed": 0, "missing_cleared": 0, "orphans": 0}
+    if base.is_dir():
+        for part in base.glob(f"*{PART_SUFFIX}"):
+            try:
+                part.unlink()
+                counts["partial_removed"] += 1
+            except OSError as exc:
+                logger.warning("No se pudo borrar el clip interrumpido %s: %s", part, exc)
+    repo = RecordingRepo(get_session_factory())
+    known: set[str] = set()
+    for rec in await repo.with_local_files():
+        path = Path(rec.local_path)
+        known.add(path.resolve().as_posix())
+        if path.exists():
+            continue
+        if rec.upload_state in (UploadState.PENDING.value, UploadState.UPLOADING.value):
+            await repo.mark_upload(rec.id, UploadState.FAILED, error="fichero local ausente al arrancar")
+            counts["missing_failed"] += 1
+        else:
+            counts["missing_cleared"] += 1
+        await repo.clear_local_path(rec.id)
+    if base.is_dir():
+        counts["orphans"] = sum(
+            1 for f in base.glob("clip_*.mp4")
+            if not f.name.endswith(PART_SUFFIX) and f.resolve().as_posix() not in known
+        )
+    if any(counts.values()):
+        logger.warning(
+            "Reconciliacion de clips: %d interrumpidos borrados, %d pendientes sin fichero "
+            "marcados failed, %d filas sin fichero, %d ficheros sin fila",
+            counts["partial_removed"], counts["missing_failed"], counts["missing_cleared"],
+            counts["orphans"],
+        )
+    return counts
+
+
+async def _purge_clips_over_size(max_total_mb: int) -> int:
+    """BUG-11: si los clips locales ocupan mas de *max_total_mb*, borra los mas antiguos
+    hasta quedar por debajo. Nunca pending/uploading. Devuelve cuantos borro."""
+    import os
+
+    from backend.storage.repositories import UploadState
+
+    repo = RecordingRepo(get_session_factory())
+    rows = await repo.with_local_files()
+    sizes = {r.id: (os.path.getsize(r.local_path) if os.path.exists(r.local_path) else 0) for r in rows}
+    total = sum(sizes.values())
+    limit = max_total_mb * 1024 * 1024
+    removed = 0
+    for rec in rows:
+        if total <= limit:
+            break
+        if rec.upload_state in (UploadState.PENDING.value, UploadState.UPLOADING.value):
+            continue
+        for path in (rec.local_path, rec.thumbnail_path):
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError as exc:
+                    logger.warning("No se pudo borrar %s: %s", path, exc)
+        await repo.clear_local_path(rec.id)
+        total -= sizes[rec.id]
+        removed += 1
+    return removed
+
+
 async def _housekeeping_loop(interval: float = 60.0) -> None:
     """Centralized periodic prune() for every per-camera pipeline (Fase 22 — PIPE-07).
 
@@ -430,6 +509,8 @@ async def _run_retention(settings) -> dict[str, int]:
         fichero si quedaba, nunca pending/uploading.
       - clips locales: el fichero (no la fila) pasado local_retention_days, salvo
         pending/uploading.
+      - clips locales por tamano (BUG-11): los mas antiguos, si el total supera
+        clips_max_total_mb, salvo pending/uploading.
       - snapshots de evento: directorios YYYYMMDD anteriores a snapshot_retention_days.
       - galeria: capturas (fila e imagen) anteriores a captures_retention_days.
       - personas anonimas de una sola visita sin ver en persons_retention_days.
@@ -444,6 +525,9 @@ async def _run_retention(settings) -> dict[str, int]:
 
     async def _local_clips():
         return await _purge_local_clip_files(settings.local_retention_days)
+
+    async def _clips_size():
+        return await _purge_clips_over_size(settings.clips_max_total_mb)
 
     async def _snapshots():
         return await _purge_old_snapshots(settings.snapshot_retention_days)
@@ -462,6 +546,7 @@ async def _run_retention(settings) -> dict[str, int]:
         ("events", settings.events_retention_days, _events),
         ("recordings", settings.recordings_retention_days, _recordings),
         ("local_clips", settings.local_retention_days, _local_clips),
+        ("clips_size", settings.clips_max_total_mb, _clips_size),
         ("snapshots", settings.snapshot_retention_days, _snapshots),
         ("captures", settings.captures_retention_days, _captures),
         ("persons", settings.persons_retention_days, _persons),
@@ -672,6 +757,13 @@ async def lifespan(app: FastAPI):
                 payload={"reason": message, "recording_id": rec_id},
             ))
 
+    async def _on_upload_paused(reason: str) -> None:
+        """DIR-03: la pausa de Drive se ve en el dashboard (DEGRADED_MODE en la linea
+        temporal y aviso por /ws) y en GET /api/v2/recordings/upload-status."""
+        await _broadcast({"type": "upload_paused", "reason": reason})
+        if event_engine is not None:
+            event_engine.degraded_mode(datetime.datetime.now(), reason=f"Drive en pausa: {reason}")
+
     upload_queue = UploadQueue(
         recording_repo,
         folder_id=settings.gdrive_folder_id,
@@ -680,7 +772,14 @@ async def lifespan(app: FastAPI):
         max_attempts=settings.max_upload_attempts,
         poll_secs=settings.upload_poll_secs,
         on_permanent_failure=_on_upload_failed,
+        on_paused=_on_upload_paused,
     )
+    from backend.api.v2 import recordings as recordings_v2_module
+    recordings_v2_module.configure(upload_queue)
+    try:
+        await _reconcile_clips(settings.clips_dir)   # BUG-08, antes de que la cola lea filas
+    except Exception:
+        logger.exception("Reconciliacion de clips fallida (se continua el arranque)")
     upload_queue.start()
 
     def _is_in_schedule() -> bool:
@@ -771,7 +870,7 @@ async def lifespan(app: FastAPI):
         telegram_chat_id=settings.alert_telegram_chat_id,
     )
 
-    async def _recorder_hook(event: Event, action, rule_name: str) -> None:
+    def _request_clip(event: Event, action, rule_name: str, *, force_upload: bool = False) -> None:
         # Resuelto por event.camera_id (Fase 36): antes usaba siempre la primera
         # camara, asi que una regla disparada por una segunda camara habria
         # grabado el clip de la camara equivocada.
@@ -784,9 +883,33 @@ async def lifespan(app: FastAPI):
                 person_id=event.person_id,
                 zone_id=event.zone_id,
                 severity=event.severity.value,
+                pre_secs=getattr(action, "pre_secs", None),     # DIR-02: por regla
+                post_secs=getattr(action, "post_secs", None),
+                force_upload=force_upload,
             )
 
-    event_actions.configure(notifier=notifier, emit=event_bus.publish, recorder_hook=_recorder_hook)
+    async def _recorder_hook(event: Event, action, rule_name: str) -> None:
+        _request_clip(event, action, rule_name)
+
+    async def _upload_hook(event: Event, action, rule_name: str) -> None:
+        """DIR-02: upload_drive graba (o extiende) el clip del evento y lo marca para
+        subir a Drive aunque su severidad no llegue a upload_min_severity."""
+        _request_clip(event, action, rule_name, force_upload=True)
+
+    async def _snapshot_hook(event: Event, action, rule_name: str) -> None:
+        """DIR-02: la accion snapshot garantiza una imagen del evento aunque el
+        snapshot automatico este desactivado, no haya bbox o lo frenara el throttle."""
+        if event.snapshot_path:
+            return
+        path = await _capture_event_snapshot(event, force=True)
+        if path:
+            event.snapshot_path = path
+            await EventRepo(get_session_factory()).set_snapshot_path(event.id, path)
+
+    event_actions.configure(
+        notifier=notifier, emit=event_bus.publish, recorder_hook=_recorder_hook,
+        upload_hook=_upload_hook, snapshot_hook=_snapshot_hook,
+    )
 
     watchdog_task = asyncio.create_task(_camera_watchdog())
     purge_task = asyncio.create_task(_purge_loop())
@@ -834,11 +957,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
+        # SEC-09: sin hosts externos. Tailwind, Chart.js y las fuentes viven en
+        # frontend/vendor/ (DEBT-01). 'unsafe-inline' sigue en style-src porque el
+        # runtime de Tailwind inyecta su <style>; en script-src lo usan atributos inline.
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' https://cdn.tailwindcss.com https://cdn.jsdelivr.net 'unsafe-inline'; "
-            "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
-            "font-src 'self' https://fonts.gstatic.com; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self'; "
             "img-src 'self' blob: data:; "
             "connect-src 'self' wss:;"
         )
@@ -1279,7 +1405,7 @@ async def api_alerts_config():
     """Return current alert configuration (tokens masked).
 
     Deprecado (Fase 34, criterio 6): refleja el notifier global de la Fase <18
-    (alert_webhook_url/alert_on_*), superado por las acciones por-regla del
+    (alert_webhook_url; los alert_on_* se retiraron en DIR-02), superado por las acciones por-regla del
     RuleEngine (Fase 30, GET/POST /api/v2/rules — tipos "webhook"/"telegram"/
     "notify" en backend/events/actions.py). Sin consumidores en el frontend
     vigente; se conserva sin retirar por compatibilidad hacia atras.
@@ -1288,9 +1414,6 @@ async def api_alerts_config():
     return {
         "webhook_url": s.alert_webhook_url,
         "telegram_configured": bool(s.alert_telegram_token and s.alert_telegram_chat_id),
-        "alert_on_intrusion": s.alert_on_intrusion,
-        "alert_on_unknown": s.alert_on_unknown,
-        "alert_on_detection": s.alert_on_detection,
         "cooldown_secs": s.alert_cooldown_secs,
         "count_threshold": s.alert_count_threshold,
         "active_channels": notifier.active_channels if notifier else [],

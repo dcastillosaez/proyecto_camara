@@ -104,6 +104,7 @@ async def TEST_event_goes_once_its_recording_row_is_purged(db, tmp_path):
     settings = SimpleNamespace(
         events_retention_days=30, recordings_retention_days=30, local_retention_days=0,
         snapshot_retention_days=0, captures_retention_days=0, persons_retention_days=0,
+        clips_max_total_mb=0,
     )
     # Orden de _run_retention: eventos primero (se conserva), grabaciones despues.
     first = await main_module._run_retention(settings)
@@ -157,6 +158,7 @@ def _all_days(days=30):
     return SimpleNamespace(
         events_retention_days=days, recordings_retention_days=days, local_retention_days=days,
         snapshot_retention_days=days, captures_retention_days=days, persons_retention_days=days,
+        clips_max_total_mb=days,
     )
 
 
@@ -169,7 +171,7 @@ async def TEST_a_failing_step_does_not_stop_the_others(db):
     assert done["events"] == -1
     assert done["recordings"] == 2
     recs.assert_awaited_once_with(30)
-    assert {"local_clips", "snapshots", "captures", "persons"} <= set(done)
+    assert {"local_clips", "clips_size", "snapshots", "captures", "persons"} <= set(done)
 
 
 async def TEST_zero_days_disables_every_step(db):
@@ -203,3 +205,48 @@ async def TEST_purge_loop_runs_retention_at_startup():
         with pytest.raises(asyncio.CancelledError):
             await main_module._purge_loop()
     assert len(calls) == 1   # antes de la primera espera, no a las 24 h
+
+
+# ─── BUG-11: retención por tamaño ────────────────────────────────────────────
+async def TEST_size_cap_removes_oldest_finished_clips_first(db, tmp_path):
+    big = b"x" * (600 * 1024)
+    ids = []
+    for i, (age, state) in enumerate([(5, UploadState.DONE), (4, UploadState.PENDING),
+                                      (3, UploadState.SKIPPED), (1, UploadState.DONE)]):
+        rec_id, clip, _ = await _recording(db, tmp_path, NOW - datetime.timedelta(days=age), state,
+                                           name=f"c{i}.mp4")
+        clip.write_bytes(big)
+        ids.append((rec_id, clip))
+    # 4 x 600 KB = 2,4 MB; con cota de 1 MB hay que quitar hasta bajar de ella.
+    removed = await main_module._purge_clips_over_size(1)
+    assert removed == 3
+    assert not ids[0][1].exists() and not ids[2][1].exists() and not ids[3][1].exists()
+    assert ids[1][1].exists()                  # pendiente de subir: nunca se toca
+
+
+async def TEST_size_cap_under_limit_removes_nothing(db, tmp_path):
+    _, clip, _ = await _recording(db, tmp_path, OLD, UploadState.DONE)
+    assert await main_module._purge_clips_over_size(1024) == 0
+    assert clip.exists()
+
+
+# ─── BUG-08: reconciliación disco/BD al arrancar ─────────────────────────────
+async def TEST_reconcile_clips(db, tmp_path):
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    (clips / "clip_20260101_000000.part.mp4").write_bytes(b"incompleto")
+    orphan = clips / "clip_20260101_000001.mp4"
+    orphan.write_bytes(b"sin fila")
+    pending_id, pending_clip, _ = await _recording(db, clips, RECENT, UploadState.PENDING, name="p.mp4")
+    done_id, done_clip, _ = await _recording(db, clips, RECENT, UploadState.DONE, name="d.mp4")
+    ok_id, ok_clip, _ = await _recording(db, clips, RECENT, UploadState.DONE, name="ok.mp4")
+    pending_clip.unlink()
+    done_clip.unlink()
+
+    counts = await main_module._reconcile_clips(str(clips))
+    assert counts == {"partial_removed": 1, "missing_failed": 1, "missing_cleared": 1, "orphans": 1}
+    repo = RecordingRepo(db)
+    assert (await repo.get(pending_id))["upload_state"] == UploadState.FAILED.value
+    assert orphan.exists() and ok_clip.exists()
+    remaining = {r.id for r in await repo.with_local_files()}
+    assert remaining == {ok_id}

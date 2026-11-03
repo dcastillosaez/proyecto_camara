@@ -111,7 +111,20 @@ def build_camera_pipeline(
                 "id": rec_id,
             })
 
-        asyncio.run_coroutine_threadsafe(_persist(), services.loop)
+        # BUG-08: antes el futuro se descartaba y un fallo de la BD se perdia en
+        # silencio: el clip quedaba en disco sin fila. Ahora se registra, y la
+        # reconciliacion del arranque (main._reconcile_clips) avisa de esos huerfanos.
+        future = asyncio.run_coroutine_threadsafe(_persist(), services.loop)
+
+        def _log_failure(fut) -> None:
+            exc = fut.exception()
+            if exc is not None:
+                logger.error("No se pudo registrar el clip %s de %s: %r", result.path, camera_id, exc)
+                event_engine.degraded_mode(
+                    datetime.datetime.now(), reason=f"clip sin registrar en BD: {Path(result.path).name}",
+                )
+
+        future.add_done_callback(_log_failure)
 
     def _on_recording_failure(message: str) -> None:
         logger.error("RecordingWorker failure (%s): %s", camera_id, message)
@@ -127,6 +140,8 @@ def build_camera_pipeline(
         "pre_buffer_jpeg_quality": settings.pre_buffer_jpeg_quality,
         "codec": settings.recording_codec,
         "upload_min_severity": settings.upload_min_severity,
+        "max_clip_secs": settings.recording_max_clip_secs,
+        "min_free_mb": settings.recording_min_free_mb,
         "on_clip_ready": _on_clip_ready,
         "on_failure": _on_recording_failure,
     }

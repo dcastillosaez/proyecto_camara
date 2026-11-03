@@ -31,19 +31,38 @@ RETRY_DELAYS = [30, 120, 600, 1800, 3600]
 QUOTA_MULTIPLIER = 4
 
 
-def load_credentials(credentials_path: str, token_path: str):
-    """Return valid OAuth2 credentials, launching browser flow on first run."""
+class DriveAuthRequired(RuntimeError):
+    """No hay token valido y hace falta autorizar a mano (scripts/gdrive_auth.py)."""
+
+
+def load_credentials(credentials_path: str, token_path: str, interactive: bool = False):
+    """Return valid OAuth2 credentials.
+
+    DIR-03: el flujo de navegador (run_local_server) SOLO corre con interactive=True,
+    desde scripts/gdrive_auth.py. Antes se lanzaba dentro del hilo de subida: sin nadie
+    delante, ese hilo quedaba esperando a un navegador para siempre. Sin token valido,
+    y si no se puede refrescar, se lanza DriveAuthRequired."""
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
 
     creds = None
     if os.path.exists(token_path):
         creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except Exception as exc:
+                if not interactive:
+                    raise DriveAuthRequired(f"token de Drive no renovable: {exc}") from exc
+                creds = None
+        if not creds or not creds.valid:
+            if not interactive:
+                raise DriveAuthRequired(
+                    "Drive sin autorizar: ejecuta scripts/gdrive_auth.py en el equipo del servidor"
+                )
+            from google_auth_oauthlib.flow import InstalledAppFlow
+
             flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
             creds = flow.run_local_server(port=0)
         Path(token_path).parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +89,8 @@ def upload_file(local_path: str, folder_id: str, credentials_path: str, token_pa
 
 def classify_error(exc: Exception) -> str:
     """'quota' | 'auth' | 'network' — determines the backoff applied on retry."""
+    if isinstance(exc, DriveAuthRequired):
+        return "auth"
     msg = str(exc).lower()
     if "quota" in msg or "ratelimitexceeded" in msg or "429" in msg:
         return "quota"
@@ -104,6 +125,8 @@ class UploadQueue:
         poll_secs: float = 30.0,
         on_permanent_failure: Callable[[int, str, str], Awaitable[None]] | None = None,
         max_workers: int = 2,
+        on_paused: Callable[[str], Awaitable[None]] | None = None,
+        auth_retry_secs: float = 600.0,
     ) -> None:
         self._repo = repo
         self._folder_id = folder_id
@@ -114,6 +137,54 @@ class UploadQueue:
         self._on_permanent_failure = on_permanent_failure
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drive-upload")
         self._task: asyncio.Task | None = None
+        # DIR-03: un error de autorizacion PAUSA la cola en vez de consumir intentos:
+        # reintentar con un token caducado acabaria marcando FAILED todos los clips.
+        self._on_paused = on_paused
+        self._auth_retry_secs = auth_retry_secs
+        self._paused_reason: str | None = None
+        self._paused_since: datetime | None = None
+        self._token_mtime = self._mtime(token_path)
+
+    @staticmethod
+    def _mtime(path: str) -> float | None:
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return None
+
+    @property
+    def status(self) -> dict:
+        return {
+            "paused": self._paused_reason is not None,
+            "reason": self._paused_reason,
+            "since": self._paused_since.isoformat() if self._paused_since else None,
+        }
+
+    def _should_resume(self) -> bool:
+        """Reanuda al cambiar el token (alguien ejecuto gdrive_auth.py) o pasado el plazo."""
+        if self._paused_reason is None:
+            return True
+        mtime = self._mtime(self._token_path)
+        waited = (datetime.now() - self._paused_since).total_seconds() if self._paused_since else 0
+        if mtime != self._token_mtime or waited >= self._auth_retry_secs:
+            logger.info("UploadQueue: se reintenta la autorizacion de Drive")
+            self._token_mtime = mtime
+            self._paused_reason = None
+            self._paused_since = None
+            return True
+        return False
+
+    async def _pause(self, reason: str) -> None:
+        if self._paused_reason is not None:
+            return
+        self._paused_reason = reason
+        self._paused_since = datetime.now()
+        logger.error("UploadQueue: subidas a Drive en pausa — %s", reason)
+        if self._on_paused is not None:
+            try:
+                await self._on_paused(reason)
+            except Exception:
+                logger.exception("UploadQueue: on_paused raised")
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop())
@@ -139,6 +210,8 @@ class UploadQueue:
 
     async def run_once(self) -> None:
         """Fetch due pending uploads and fire each off in the background."""
+        if not self._should_resume():
+            return
         pending = await self._repo.next_pending(limit=5)
         for rec in pending:
             asyncio.create_task(self._process(rec))
@@ -147,7 +220,7 @@ class UploadQueue:
         from backend.storage.repositories import UploadState
 
         # BUG-09: reclamo atomico. Si otro sondeo ya la tiene en curso, no se repite.
-        if not await self._repo.claim_for_upload(rec.id):
+        if self._paused_reason is not None or not await self._repo.claim_for_upload(rec.id):
             return
         loop = asyncio.get_running_loop()
         local_path = rec.local_path or rec.filename
@@ -161,6 +234,11 @@ class UploadQueue:
         except Exception as exc:
             kind = classify_error(exc)
             _metrics.upload_failures_total.labels(reason=kind).inc()
+            if kind == "auth":
+                # DIR-03: el clip vuelve a pending SIN gastar un intento y la cola se pausa.
+                await self._repo.release_claim(rec.id)
+                await self._pause(str(exc))
+                return
             attempts = rec.upload_attempts + 1
             if attempts >= self._max_attempts:
                 logger.error("UploadQueue: recording %s failed permanently after %d attempts: %s", rec.id, attempts, exc)

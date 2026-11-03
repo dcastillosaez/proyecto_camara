@@ -576,7 +576,7 @@ class DetectionWorker:
             if self._event_engine is not None:
                 self._event_engine.process_zone(
                     st["id"], inside, datetime.datetime.now(), captured_at, processed_at,
-                    now_monotonic=processed_at,
+                    now_monotonic=processed_at, kind=st.get("kind"),
                 )
 
         if len(tracked) == 0:

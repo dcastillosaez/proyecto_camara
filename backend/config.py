@@ -134,7 +134,13 @@ class Settings(BaseSettings):
     gdrive_credentials_path: str = "credentials.json"
     gdrive_token_path: str = "data/token.json"
     recording_fps: float = 15.0
-    recording_tail_secs: float = 5.0
+    # BUG-11: un clip nunca dura mas que esto aunque los eventos lo sigan extendiendo
+    # (0 = sin limite); por debajo de recording_min_free_mb libres no se graba (0 = sin
+    # comprobar); y la retencion borra los clips locales mas antiguos (ya subidos o
+    # descartados, nunca pendientes) cuando ocupan mas de clips_max_total_mb (0 = sin cota).
+    recording_max_clip_secs: float = 300.0
+    recording_min_free_mb: int = 1024
+    clips_max_total_mb: int = 20480
     # OpenCV VideoWriter fourcc string. "mp4v" is reliable on Windows; use "avc1" for H.264.
     recording_codec: str = "mp4v"
 
@@ -144,6 +150,9 @@ class Settings(BaseSettings):
     pre_buffer_max_mb: int = 48
     pre_buffer_jpeg_quality: int = 85
     local_retention_days: int = 7
+    # Severidad minima del evento para subir su clip a Drive. Solo se graba lo que
+    # pide una regla con accion record/upload_drive (DIR-01: por defecto, intrusion y
+    # persona desconocida; OBJECT_LEFT no graba hasta calibrar object_person_radius_px).
     upload_min_severity: str = "warning"  # info | warning | critical
     max_upload_attempts: int = 5
     upload_poll_secs: float = 30.0
@@ -228,10 +237,10 @@ class Settings(BaseSettings):
     #     manual de 27-11.
     # (b) OJO, AL REVES QUE EL BLOQUE DE LA FASE 26: OBJECT_LEFT sale con
     #     Severity.WARNING por defecto del catalogo (types.py:55), asi que cruza
-    #     upload_min_severity="warning" (config.py:115 -> recording.py:309) y SUBE CLIPS A
-    #     GOOGLE DRIVE desde el primer evento. Es intencional (un objeto abandonado es lo
-    #     que quieres grabado), pero un radio mal calibrado consume cuota de Drive.
-    #     Valvula de escape sin tocar codigo: subir upload_min_severity a "critical".
+    #     upload_min_severity="warning": si una regla con accion `record` lo graba, su
+    #     clip se sube a Google Drive. Las reglas por defecto (DIR-01) NO graban
+    #     OBJECT_LEFT: un radio mal calibrado consumiria disco y cuota de Drive. Antes de
+    #     anadir esa regla hay que calibrar object_person_radius_px.
     # (c) yolo_classes=[] CIEGA el sistema en silencio: verificado, classes=[] devuelve 0
     #     detecciones (no las 80, que es lo que hace classes=None). Por eso el endpoint
     #     PUT la rechaza con 400 y el arranque trata una fila vacia de app_config como
@@ -317,9 +326,6 @@ class Settings(BaseSettings):
     alert_webhook_url: str = ""
     alert_telegram_token: str = ""
     alert_telegram_chat_id: str = ""
-    alert_on_intrusion: bool = True
-    alert_on_unknown: bool = True
-    alert_on_detection: bool = False
     alert_cooldown_secs: float = 60.0
     alert_count_threshold: int = 0  # 0 = disabled
 
@@ -445,7 +451,8 @@ class Settings(BaseSettings):
         if not 0 <= self.retention_hour <= 23:
             raise ValueError("retention_hour debe estar en [0, 23]")
         for name in ("events_retention_days", "recordings_retention_days", "local_retention_days",
-                     "captures_retention_days", "persons_retention_days"):
+                     "captures_retention_days", "persons_retention_days",
+                     "recording_max_clip_secs", "recording_min_free_mb", "clips_max_total_mb"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} debe ser >= 0 (0 = sin purga)")
         return self

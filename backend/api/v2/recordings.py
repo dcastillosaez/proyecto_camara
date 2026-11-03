@@ -26,6 +26,27 @@ def _recording_repo() -> RecordingRepo:
     return RecordingRepo(get_session_factory())
 
 
+_upload_queue = None
+
+
+def configure(upload_queue) -> None:
+    """Liga la UploadQueue del proceso (main.lifespan) para exponer su estado."""
+    global _upload_queue
+    _upload_queue = upload_queue
+
+
+@router.get("/upload-status")
+@limiter.limit(V2_RATE_LIMIT)
+async def upload_status(request: Request):
+    """DIR-03: estado de la cola de Drive. `paused` indica que falta autorizacion
+    (ejecutar scripts/gdrive_auth.py); los clips siguen en pending, no se pierden."""
+    pending = await _recording_repo().count_by_upload_state(UploadState.PENDING)
+    status = _upload_queue.status if _upload_queue is not None else {
+        "paused": False, "reason": None, "since": None,
+    }
+    return {**status, "pending": pending}
+
+
 @router.get("")
 @limiter.limit(V2_RATE_LIMIT)
 async def list_recordings(

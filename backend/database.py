@@ -326,7 +326,9 @@ async def get_recent_recordings(limit: int = 20) -> list[dict[str, Any]]:
                 "filename": r.filename,
                 "gdrive_id": r.gdrive_id,
                 "upload_status": r.upload_status,
-                "created_at": r.created_at.isoformat(),
+                # Las filas de la v2 (RecordingRepo) no escriben created_at: sin esta
+                # guarda el primer clip real daba 500 en /api/recordings.
+                "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in result.scalars().all()
         ]

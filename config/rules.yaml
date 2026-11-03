@@ -1,5 +1,6 @@
-# Generado por scripts/generate_initial_rules.py a partir de las variables
-# ALERT_* de .env — reproduce el comportamiento de alertas de v1.
+# Generado por scripts/generate_initial_rules.py: reglas por defecto (DIR-01).
+# Intrusion y persona desconocida avisan y graban; OBJECT_LEFT no graba hasta
+# calibrar object_person_radius_px. Solo se lee con la tabla `rules` vacia.
 #
 # Este fichero es editable a mano: anade, desactiva o ajusta reglas libremente.
 # Volver a ejecutar el script SOBRESCRIBE cualquier edicion manual.
@@ -15,17 +16,16 @@ rules:
 - name: intrusion
   enabled: true
   when:
-    event: LINE_CROSSED
-    payload:
-      is_intrusion: true
+    event: INTRUSION
   debounce_secs: 60.0
   actions:
   - type: notify
+  - type: record
 - name: persona_desconocida
   enabled: true
   when:
-    event: LINE_CROSSED
-    person: unknown
+    event: UNKNOWN_PERSON
   debounce_secs: 60.0
   actions:
   - type: notify
+  - type: record

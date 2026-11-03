@@ -142,7 +142,10 @@ async def _action_notify(event: Event, action: Action, rule_name: str) -> None:
     """Unifies whatever channels are configured (Web Push + telegram + webhook)."""
     if _notifier is None:
         return
-    text = f"{event.type.value} en {event.camera_id} ({event.severity.value})"
+    # El formulario de reglas ofrece plantilla para notify: se respeta si la hay.
+    text = _interpolate(action.template, event) if action.template else (
+        f"{event.type.value} en {event.camera_id} ({event.severity.value})"
+    )
     if "telegram" in _notifier.active_channels:
         await _notifier.send_telegram(text)
     if "webhook" in _notifier.active_channels:

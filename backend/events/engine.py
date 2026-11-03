@@ -88,6 +88,16 @@ class EventEngine:
     def emit_line_crossing(
         self, crossing: dict[str, Any], captured_at: float | None = None, processed_at: float | None = None
     ) -> None:
+        if crossing.get("is_intrusion"):
+            # DIR-02: INTRUSION estaba en el catalogo y nunca se emitia. Un cruce fuera del
+            # horario de acceso es una intrusion: se publica como evento propio (CRITICAL
+            # por catalogo) ademas del LINE_CROSSED, que sigue contando para el conteo.
+            self._publish(
+                EventType.INTRUSION, ts=crossing["timestamp"], captured_at=captured_at,
+                processed_at=processed_at, track_id=crossing.get("tracker_id"),
+                payload={"source": "line", "line_id": crossing.get("line_id"),
+                         "direction": crossing["direction"]},
+            )
         self._publish(
             EventType.LINE_CROSSED,
             ts=crossing["timestamp"],
@@ -147,6 +157,7 @@ class EventEngine:
         captured_at: float | None = None,
         processed_at: float | None = None,
         now_monotonic: float | None = None,
+        kind: str | None = None,
     ) -> None:
         previous = self._zone_inside.get(zone_id, set())
         entered = inside_track_ids - previous
@@ -159,6 +170,14 @@ class EventEngine:
                 EventType.ZONE_ENTERED, ts=now, captured_at=captured_at,
                 processed_at=processed_at, track_id=track_id, zone_id=zone_id,
             )
+            if kind == "restricted":
+                # DIR-02: las zonas `restricted` no hacian nada distinto de una zona
+                # normal. Entrar en una (dentro de su horario, si lo tiene) es INTRUSION.
+                self._publish(
+                    EventType.INTRUSION, ts=now, captured_at=captured_at,
+                    processed_at=processed_at, track_id=track_id, zone_id=zone_id,
+                    payload={"source": "zone"},
+                )
         for track_id in exited:
             t0 = entry_at.pop(track_id, None)  # el pop ES la politica de limpieza (T-26-08)
             payload: dict[str, Any] = {}

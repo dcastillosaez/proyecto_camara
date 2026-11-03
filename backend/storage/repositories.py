@@ -359,6 +359,14 @@ class EventRepo:
                     await session.delete(row)
         return len(rows)
 
+    async def set_snapshot_path(self, event_id: str, path: str) -> None:
+        """DIR-02: la accion snapshot captura despues del INSERT y completa la fila."""
+        async with self._sf() as session:
+            async with session.begin():
+                await session.execute(
+                    update(models.Event).where(models.Event.id == event_id).values(snapshot_path=path)
+                )
+
     async def purge_before(self, cutoff: datetime.datetime) -> int:
         """BUG-02: retencion de TODOS los tipos de evento anteriores a *cutoff*, salvo
         los que disparan una grabacion que sigue en `recordings`: esos siguen al clip
@@ -618,6 +626,19 @@ class RecordingRepo:
                 )
         return (result.rowcount or 0) == 1
 
+    async def release_claim(self, rec_id: int) -> None:
+        """DIR-03: devuelve un clip reclamado a pending sin contar el intento."""
+        async with self._sf() as session:
+            async with session.begin():
+                await session.execute(
+                    update(models.Recording)
+                    .where(
+                        models.Recording.id == rec_id,
+                        models.Recording.upload_state == UploadState.UPLOADING.value,
+                    )
+                    .values(upload_state=UploadState.PENDING.value)
+                )
+
     async def recover_interrupted_uploads(self) -> int:
         """BUG-09: al arrancar, un `uploading` es una subida que murio con el proceso.
         Vuelve a `pending` para que la cola la reintente. Devuelve cuantas recupero."""
@@ -701,6 +722,19 @@ class RecordingRepo:
                 for row in rows:
                     await session.delete(row)
         return paths
+
+    async def with_local_files(self) -> list[models.Recording]:
+        """Filas que aun apuntan a un fichero local, de la mas antigua a la mas nueva
+        (BUG-08 reconciliacion, BUG-11 retencion por tamano)."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(models.Recording)
+                .where(models.Recording.local_path.is_not(None))
+                .order_by(models.Recording.started_at)
+            )
+            rows = list(result.scalars().all())
+            session.expunge_all()
+            return rows
 
     async def clear_local_path(self, rec_id: int) -> None:
         """Null local_path after purging the file on disk — the row survives for history."""
