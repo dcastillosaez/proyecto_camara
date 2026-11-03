@@ -347,17 +347,23 @@ class PersonRecognizer:
 
     def list_persons(self) -> list[dict]:
         """Return all known persons ordered by most-recently seen."""
+        return self.list_persons_page(None, 0)[0]
+
+    def list_persons_page(self, limit: int | None, offset: int = 0) -> tuple[list[dict], int]:
+        """Una pagina de personas (mas recientes primero) y el total (PERF-01)."""
         if not self._available:
-            return []
+            return [], 0
         with self._lock:
+            total = self._conn.execute("SELECT COUNT(*) FROM persons").fetchone()[0]
             cur = self._conn.execute(
                 "SELECT p.id, p.name, p.first_seen, p.last_seen, p.visit_count, "
                 "COUNT(fe.id) as sample_count "
                 "FROM persons p "
                 "LEFT JOIN face_encodings fe ON fe.person_id = p.id "
-                "GROUP BY p.id ORDER BY p.last_seen DESC"
+                "GROUP BY p.id ORDER BY p.last_seen DESC LIMIT ? OFFSET ?",
+                (-1 if limit is None else limit, offset),
             )
-            return [
+            rows = [
                 {
                     "id": r[0],
                     "name": r[1] or f"Person {r[0]}",
@@ -368,6 +374,7 @@ class PersonRecognizer:
                 }
                 for r in cur.fetchall()
             ]
+            return rows, total
 
     def prune(self, active_tracker_ids: set[int]) -> None:
         """

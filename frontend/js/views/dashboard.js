@@ -1,5 +1,6 @@
 // frontend/js/views/dashboard.js
 import { updateChart, hourlyToArray } from './dashboard-events.js';
+import { poll } from '../poll.js';
 
 // ── Clock ─────────────────────────────────────────────
 const clockEl = document.getElementById('clock');
@@ -69,7 +70,7 @@ export async function loadPipelineHealth() {
   }
   computeHeaderState();
 }
-setInterval(loadPipelineHealth, 4000);
+poll(loadPipelineHealth, 4000);   // DIR-04: estado de cabecera, cualquier vista
 
 function computeHeaderState() {
   // D-11: un WS caido mas de 1 ciclo de reconexion (>=2 intentos fallidos, _wsCloseCount > 1)
@@ -108,7 +109,7 @@ async function fetchCounts() {
     updateStat('stat-out',   d.out   ?? 0);
   } catch {}
 }
-setInterval(fetchCounts, 2000);
+poll(fetchCounts, 2000, { view: 'operaciones' });
 fetchCounts();
 
 // ── Detections polling (/detections) ──────────────────
@@ -120,7 +121,7 @@ async function fetchDetections() {
     document.getElementById('det-num').textContent = d.live_count ?? (d.detections ?? []).length;
   } catch {}
 }
-setInterval(fetchDetections, 2000);
+poll(fetchDetections, 2000, { view: 'operaciones' });
 fetchDetections();
 
 // ── Initial data load ──────────────────────────────────

@@ -1,5 +1,6 @@
 """Centralized configuration via pydantic-settings."""
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -66,6 +67,17 @@ class Settings(BaseSettings):
     # "cpu": fuerza CPU sin sondear nada.
     # "cuda": exige GPU y aborta el arranque si ninguna familia puede usarla (diagnostico).
     inference_device: Literal["auto", "cpu", "cuda"] = "auto"
+    # DET-01: hilos de PyTorch para YOLO en CPU; 0 deja el valor de Ultralytics
+    # (min(8, nucleos - 1)). Medido en el i7-9700K: 3 hilos = 42 ms y 1 nucleo a 8 FPS,
+    # frente a 37 ms y 1,9 nucleos con 7.
+    inference_threads: int = 3
+    # DET-09: puerta de movimiento. Sin tracks ni cambios en una miniatura de 160x90,
+    # la deteccion baja a motion_gate_idle_fps (nunca a cero). Desactivada por defecto:
+    # el riesgo de ver tarde a una persona inmovil solo se mide con la camara real.
+    motion_gate_enabled: bool = False
+    motion_gate_idle_fps: float = 2.0
+    # Fraccion de pixeles de la miniatura que deben cambiar para contar como movimiento.
+    motion_gate_min_changed: float = 0.005
     # FPS inicial que se pasa a ByteTrack; DetectionWorker lo re-sincroniza
     # en caliente con el FPS efectivo de AdaptiveRate (set_frame_rate).
     tracker_frame_rate: int = 15
@@ -122,7 +134,13 @@ class Settings(BaseSettings):
     gdrive_credentials_path: str = "credentials.json"
     gdrive_token_path: str = "data/token.json"
     recording_fps: float = 15.0
-    recording_tail_secs: float = 5.0
+    # BUG-11: un clip nunca dura mas que esto aunque los eventos lo sigan extendiendo
+    # (0 = sin limite); por debajo de recording_min_free_mb libres no se graba (0 = sin
+    # comprobar); y la retencion borra los clips locales mas antiguos (ya subidos o
+    # descartados, nunca pendientes) cuando ocupan mas de clips_max_total_mb (0 = sin cota).
+    recording_max_clip_secs: float = 300.0
+    recording_min_free_mb: int = 1024
+    clips_max_total_mb: int = 20480
     # OpenCV VideoWriter fourcc string. "mp4v" is reliable on Windows; use "avc1" for H.264.
     recording_codec: str = "mp4v"
 
@@ -132,6 +150,9 @@ class Settings(BaseSettings):
     pre_buffer_max_mb: int = 48
     pre_buffer_jpeg_quality: int = 85
     local_retention_days: int = 7
+    # Severidad minima del evento para subir su clip a Drive. Solo se graba lo que
+    # pide una regla con accion record/upload_drive (DIR-01: por defecto, intrusion y
+    # persona desconocida; OBJECT_LEFT no graba hasta calibrar object_person_radius_px).
     upload_min_severity: str = "warning"  # info | warning | critical
     max_upload_attempts: int = 5
     upload_poll_secs: float = 30.0
@@ -216,10 +237,10 @@ class Settings(BaseSettings):
     #     manual de 27-11.
     # (b) OJO, AL REVES QUE EL BLOQUE DE LA FASE 26: OBJECT_LEFT sale con
     #     Severity.WARNING por defecto del catalogo (types.py:55), asi que cruza
-    #     upload_min_severity="warning" (config.py:115 -> recording.py:309) y SUBE CLIPS A
-    #     GOOGLE DRIVE desde el primer evento. Es intencional (un objeto abandonado es lo
-    #     que quieres grabado), pero un radio mal calibrado consume cuota de Drive.
-    #     Valvula de escape sin tocar codigo: subir upload_min_severity a "critical".
+    #     upload_min_severity="warning": si una regla con accion `record` lo graba, su
+    #     clip se sube a Google Drive. Las reglas por defecto (DIR-01) NO graban
+    #     OBJECT_LEFT: un radio mal calibrado consumiria disco y cuota de Drive. Antes de
+    #     anadir esa regla hay que calibrar object_person_radius_px.
     # (c) yolo_classes=[] CIEGA el sistema en silencio: verificado, classes=[] devuelve 0
     #     detecciones (no las 80, que es lo que hace classes=None). Por eso el endpoint
     #     PUT la rechaza con 400 y el arranque trata una fila vacia de app_config como
@@ -305,9 +326,6 @@ class Settings(BaseSettings):
     alert_webhook_url: str = ""
     alert_telegram_token: str = ""
     alert_telegram_chat_id: str = ""
-    alert_on_intrusion: bool = True
-    alert_on_unknown: bool = True
-    alert_on_detection: bool = False
     alert_cooldown_secs: float = 60.0
     alert_count_threshold: int = 0  # 0 = disabled
 
@@ -317,6 +335,10 @@ class Settings(BaseSettings):
     # Personas anónimas de paso (sin nombre, 1 sola visita): días hasta
     # borrarlas de persons.db. Las personas con nombre nunca se tocan.
     persons_retention_days: int = 30
+    # BUG-02: recortes de la galeria (tabla captures + imagenes de data/gallery/).
+    captures_retention_days: int = 30
+    # Hora local (0-23) de la purga diaria; ademas se purga siempre al arrancar.
+    retention_hour: int = 3
 
     # env_file anclado a la raíz del proyecto: si fuese la ruta relativa ".env",
     # arrancar uvicorn desde otro directorio dejaría las credenciales vacías
@@ -409,6 +431,32 @@ class Settings(BaseSettings):
             raise ValueError("context_min_sample_days debe ser >= 1")
         return self
 
+    @field_validator("inference_threads")
+    @classmethod
+    def validate_inference_threads(cls, v: int) -> int:
+        if not 0 <= v <= 64:
+            raise ValueError("inference_threads debe estar en [0, 64] (0 = valor de Ultralytics)")
+        return v
+
+    @model_validator(mode="after")
+    def validate_motion_gate(self) -> "Settings":
+        if not 0.5 <= self.motion_gate_idle_fps <= 30.0:
+            raise ValueError("motion_gate_idle_fps debe estar en [0.5, 30]: la puerta nunca para la detección")
+        if not 0.0 < self.motion_gate_min_changed <= 1.0:
+            raise ValueError("motion_gate_min_changed debe estar en (0, 1]")
+        return self
+
+    @model_validator(mode="after")
+    def validate_retention_params(self) -> "Settings":
+        if not 0 <= self.retention_hour <= 23:
+            raise ValueError("retention_hour debe estar en [0, 23]")
+        for name in ("events_retention_days", "recordings_retention_days", "local_retention_days",
+                     "captures_retention_days", "persons_retention_days",
+                     "recording_max_clip_secs", "recording_min_free_mb", "clips_max_total_mb"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} debe ser >= 0 (0 = sin purga)")
+        return self
+
     @model_validator(mode="after")
     def validate_snapshot_params(self) -> "Settings":
         """Rangos del snapshot de evento — cota de disco y de CPU (T-30-13)."""
@@ -430,26 +478,38 @@ def get_settings() -> Settings:
     return Settings()
 
 
+# Caracteres que rompen la URL si aparecen sin codificar en usuario o contraseña
+# (":", "/", "?", "#", "@", "[", "]", "%", espacios...). Los sub-delims de RFC 3986
+# se dejan tal cual para no cambiar credenciales que ya funcionaban.
+_USERINFO_SAFE = "!$&'()*+,;="
+
+
 def build_rtsp_url(s: Settings) -> str:
     """Return RTSP URL with credentials injected from RTSP_USER/RTSP_PASS.
-    Falls back to camera_url as-is when no separate credentials are configured."""
+    Falls back to camera_url as-is when no separate credentials are configured.
+
+    SEC-02: usuario y contraseña se codifican; sin ello una contraseña con "/", "?"
+    o "#" partia la URL y la credencial acababa en la ruta del stream."""
     if not s.rtsp_user:
         return s.camera_url
-    from urllib.parse import urlparse, urlunparse
+    from urllib.parse import quote, urlparse, urlunparse
     p = urlparse(s.camera_url)
-    netloc = f"{s.rtsp_user}:{s.rtsp_pass}@{p.hostname}"
+    user = quote(s.rtsp_user, safe=_USERINFO_SAFE)
+    password = quote(s.rtsp_pass, safe=_USERINFO_SAFE)
+    netloc = f"{user}:{password}@{p.hostname}"
     if p.port:
         netloc += f":{p.port}"
     return urlunparse(p._replace(netloc=netloc))
 
 
+_CREDENTIALS_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*://)(.*)@")
+
+
 def mask_rtsp_url(url: str) -> str:
-    """Replace credentials in RTSP URL with *** for safe logging."""
-    from urllib.parse import urlparse, urlunparse
-    p = urlparse(url)
-    if p.username:
-        netloc = f"***:***@{p.hostname}"
-        if p.port:
-            netloc += f":{p.port}"
-        return urlunparse(p._replace(netloc=netloc))
-    return url
+    """Replace credentials in RTSP URL with *** for safe logging.
+
+    SEC-02: no se usa urlparse. Con una contraseña sin codificar que contiene "/",
+    "?" o "#", urlparse no ve el usuario y la version anterior devolvia la URL intacta,
+    con la contraseña dentro. Aqui se enmascara todo lo que hay entre "://" y la
+    ultima "@": si hay duda, se oculta de mas, nunca de menos."""
+    return _CREDENTIALS_RE.sub(r"\1***:***@", url, count=1)

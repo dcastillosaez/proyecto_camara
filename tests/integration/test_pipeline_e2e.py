@@ -12,7 +12,6 @@ servidor HTTP. Ejecutable en CI (ver .github/workflows/tests.yml).
 from __future__ import annotations
 
 import asyncio
-import datetime
 
 import numpy as np
 import pytest_asyncio

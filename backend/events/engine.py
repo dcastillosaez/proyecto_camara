@@ -88,6 +88,16 @@ class EventEngine:
     def emit_line_crossing(
         self, crossing: dict[str, Any], captured_at: float | None = None, processed_at: float | None = None
     ) -> None:
+        if crossing.get("is_intrusion"):
+            # DIR-02: INTRUSION estaba en el catalogo y nunca se emitia. Un cruce fuera del
+            # horario de acceso es una intrusion: se publica como evento propio (CRITICAL
+            # por catalogo) ademas del LINE_CROSSED, que sigue contando para el conteo.
+            self._publish(
+                EventType.INTRUSION, ts=crossing["timestamp"], captured_at=captured_at,
+                processed_at=processed_at, track_id=crossing.get("tracker_id"),
+                payload={"source": "line", "line_id": crossing.get("line_id"),
+                         "direction": crossing["direction"]},
+            )
         self._publish(
             EventType.LINE_CROSSED,
             ts=crossing["timestamp"],
@@ -112,10 +122,17 @@ class EventEngine:
         now: datetime.datetime,
         captured_at: float | None = None,
         processed_at: float | None = None,
+        lost_track_ids: set[int] | None = None,
     ) -> None:
-        """Diff against the last known set of active tracks; emit only on transitions."""
+        """Diff against the last known set of active tracks; emit only on transitions.
+
+        DET-02: *lost_track_ids* son los tracks que ByteTrack aun puede recuperar. No
+        cuentan como salida: PERSON_EXITED se emite cuando el track expira, no en el
+        primer frame en que falla la deteccion (antes, cada fallo breve generaba una
+        salida y una entrada falsas con el mismo id)."""
+        lost = lost_track_ids or set()
         entered = active_track_ids - self._known_tracks
-        exited = self._known_tracks - active_track_ids
+        exited = self._known_tracks - active_track_ids - lost
         for track_id in entered:
             self._publish(
                 EventType.PERSON_ENTERED, ts=now, captured_at=captured_at,
@@ -126,7 +143,7 @@ class EventEngine:
                 EventType.PERSON_EXITED, ts=now, captured_at=captured_at,
                 processed_at=processed_at, track_id=track_id,
             )
-        self._known_tracks = set(active_track_ids)
+        self._known_tracks = (self._known_tracks | active_track_ids) - exited
 
     # ------------------------------------------------------------------
     # Zone membership
@@ -140,6 +157,7 @@ class EventEngine:
         captured_at: float | None = None,
         processed_at: float | None = None,
         now_monotonic: float | None = None,
+        kind: str | None = None,
     ) -> None:
         previous = self._zone_inside.get(zone_id, set())
         entered = inside_track_ids - previous
@@ -152,6 +170,14 @@ class EventEngine:
                 EventType.ZONE_ENTERED, ts=now, captured_at=captured_at,
                 processed_at=processed_at, track_id=track_id, zone_id=zone_id,
             )
+            if kind == "restricted":
+                # DIR-02: las zonas `restricted` no hacian nada distinto de una zona
+                # normal. Entrar en una (dentro de su horario, si lo tiene) es INTRUSION.
+                self._publish(
+                    EventType.INTRUSION, ts=now, captured_at=captured_at,
+                    processed_at=processed_at, track_id=track_id, zone_id=zone_id,
+                    payload={"source": "zone"},
+                )
         for track_id in exited:
             t0 = entry_at.pop(track_id, None)  # el pop ES la politica de limpieza (T-26-08)
             payload: dict[str, Any] = {}

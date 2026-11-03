@@ -1,5 +1,6 @@
 // frontend/js/views/dashboard-ptz.js
 import { showToast } from './dashboard.js';
+import { activeView } from '../nav.js';
 
 // ── PTZ: steps slider ────────────────────────────────
 const stepsInput = document.getElementById('ptz-steps');
@@ -81,7 +82,17 @@ export function bindPtzControls() {
   document.getElementById('ptz-stop-btn').addEventListener('click', ptzStop);
 
   document.addEventListener('keydown', e => {
-    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+    // Fase 8: el atajo capturaba flechas y Espacio aunque el foco estuviera en un boton,
+    // una pestana o un control con su propio teclado, y movia la camara en vez de
+    // activarlos o navegarlos. Solo actua con el foco fuera de controles, sin
+    // modificadores y con la vista Operaciones (la del panel PTZ) a la vista.
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (activeView() !== 'operaciones') return;
+    const t = e.target;
+    if (t instanceof Element && (t.isContentEditable || t.closest(
+      'input, textarea, select, button, a[href], summary, [role="tab"], [role="tablist"], '
+      + '[role="slider"], [role="menu"], [role="listbox"], [role="dialog"], [tabindex]:not([tabindex="-1"])'
+    ))) return;
     const dirMap = { ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right' };
     if (dirMap[e.key]) { e.preventDefault(); ptzMove(dirMap[e.key]); }
     if (e.key === ' ')  { e.preventDefault(); ptzStop(); }

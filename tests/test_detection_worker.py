@@ -179,6 +179,7 @@ def test_latency_is_observed(broker):
     rate = MagicMock()
     rate.should_process.return_value = True
     rate.effective_fps = 8.0
+    rate.measured_fps = 0.0
     worker = DetectionWorker(sub, detector, tracker, TrackRegistry(), rate)
     worker.start()
 
@@ -646,6 +647,7 @@ def TEST_sync_frame_rate_reaches_both_trackers():
     object_tracker = MagicMock()
     rate = MagicMock()
     rate.effective_fps = 6.0
+    rate.measured_fps = 0.0       # sin medida todavia: se usa el pedido
     worker = DetectionWorker(
         broker.subscribe("detector"), MagicMock(), tracker, TrackRegistry(), rate,
         object_tracker=object_tracker,
@@ -655,6 +657,21 @@ def TEST_sync_frame_rate_reaches_both_trackers():
 
     tracker.set_frame_rate.assert_called_once_with(6.0)
     object_tracker.set_frame_rate.assert_called_once_with(6.0)
+
+
+def TEST_sync_frame_rate_uses_measured_fps():
+    """DET-08: ByteTrack se sincroniza con el FPS procesado de verdad, no con el pedido."""
+    broker = FrameBroker()
+    tracker = MagicMock()
+    rate = MagicMock()
+    rate.effective_fps = 12.0
+    rate.measured_fps = 7.4
+    worker = DetectionWorker(broker.subscribe("detector"), MagicMock(), tracker, TrackRegistry(), rate)
+    worker._sync_tracker_frame_rate()
+    tracker.set_frame_rate.assert_called_once_with(7.5)
+    rate.measured_fps = 7.6       # mismo medio FPS: no se vuelve a mutar
+    worker._sync_tracker_frame_rate()
+    tracker.set_frame_rate.assert_called_once()
 
 
 def TEST_no_object_classes_behaves_like_today():

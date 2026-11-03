@@ -2,7 +2,7 @@
 import { connectWS } from './websocket.js';
 import { loadInitialData, loadCamStatus, loadPipelineHealth } from './views/dashboard.js';
 import { bindPtzControls } from './views/dashboard-ptz.js';
-import { bindEventExport } from './views/dashboard-events.js';
+import { bindEventExport, initActivityChart } from './views/dashboard-events.js';
 import { loadHealth, loadObservability } from './views/dashboard-observability.js';
 import { loadResolutions, initTracksOverlay } from './components/videoCanvas.js';
 import { loadRecordings, bindEventCardControls } from './components/eventCard.js';
@@ -16,6 +16,7 @@ import { initNav } from './nav.js';
 import { initCamera } from './views/camera.js';
 import { initCameraQuick } from './views/camera-quick.js';
 import { initSettings } from './views/settings.js';
+import { poll } from './poll.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   // Wiring de listeners — el orden entre si no importa (no hay llamadas de red aqui,
@@ -25,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindEventCardControls();
   bindPersonGallery();
   bindEventExport();
+  initActivityChart();   // DEBT-01: si Chart.js falta, solo se pierde el grafico
   bindAlertCenter();
   bindMarkPerson();
   // initAnalytics() ANTES de initNav(): registra el boot diferido que initNav puede
@@ -44,23 +46,23 @@ document.addEventListener('DOMContentLoaded', () => {
   connectWS();
 
   loadRecordings();
-  setInterval(loadRecordings, 30000);
+  poll(loadRecordings, 30000, { view: 'operaciones' });
 
   loadPersons();
-  setInterval(loadPersons, 30000);
+  poll(loadPersons, 30000, { view: 'operaciones' });
   // person_name no viaja persistido en el evento: la timeline lo resuelve contra su
   // Map<person_id, name>, que se refresca al mismo ritmo que la galeria (Hallazgo 5).
-  setInterval(refreshPersonNames, 30000);
+  poll(refreshPersonNames, 30000);
 
   loadDetectionClasses();
 
   loadHealth();
-  setInterval(loadHealth, 30000);
+  poll(loadHealth, 30000, { view: ['operaciones', 'camara'] });
   loadPipelineHealth();
   loadAlerts();
 
   loadObservability();
-  setInterval(loadObservability, 5000);
+  poll(loadObservability, 5000, { view: ['operaciones', 'camara'] });
 
   // Fase 32 (32-07): las tres vistas nuevas -- seguras de llamar aunque su pestana no
   // este activa (initCamera arma el timer de la tarjeta RTSP pero no activa

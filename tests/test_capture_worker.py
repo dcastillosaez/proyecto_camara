@@ -6,10 +6,9 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
-import pytest
 
 from backend.pipeline.broker import FrameBroker
 from backend.pipeline.capture import CaptureWorker
@@ -92,7 +91,7 @@ def test_reconnects_on_read_failure(mock_video_capture):
     cap.read.side_effect = _read_side_effect
 
     broker = FrameBroker()
-    sub = broker.subscribe("test")
+    broker.subscribe("test")
     worker = CaptureWorker("cam1", "rtsp://fake", broker)
     # No parchear time.sleep aqui: parchear "backend.pipeline.capture.time.sleep"
     # sustituye el atributo del modulo `time` compartido globalmente, lo que

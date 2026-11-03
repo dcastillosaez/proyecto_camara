@@ -217,7 +217,11 @@ def TEST_set_classes_changes_next_inference(detector, blank_frame):
 # Criterio 6 del ROADMAP (Fase 27): latencia con multiples clases activas
 # ---------------------------------------------------------------------------
 
-_BUS_JPG = Path("F:/Documentos/IA/Proyecto_Camara/.venv/Lib/site-packages/ultralytics/assets/bus.jpg")
+# TEST-04: la imagen viene con el paquete ultralytics; antes era una ruta absoluta de
+# Windows y en CI estos tests se saltaban siempre.
+from ultralytics.utils import ASSETS  # noqa: E402
+
+_BUS_JPG = Path(ASSETS) / "bus.jpg"
 
 
 @pytest.fixture(scope="module")
@@ -339,3 +343,32 @@ def TEST_detect_never_passes_device_kwarg(detector, blank_frame):
     with patch("backend.detector.sv.Detections.from_ultralytics", return_value=sv.Detections.empty()):
         detector.detect_sv(blank_frame)
     assert "device" not in detector._mock_model.call_args.kwargs
+
+
+# ─── DET-01: hilos de inferencia fijados tras la primera inferencia ──────────
+def TEST_inference_threads_applied_after_first_inference():
+    """Ultralytics sube torch a min(8, nucleos-1) hilos en la primera inferencia;
+    PersonDetector lo corrige justo despues con el valor configurado."""
+    import torch
+
+    original = torch.get_num_threads()
+    try:
+        det = PersonDetector(model_path="yolo26n.pt", confidence=0.45, inference_threads=2)
+        det.detect_sv(np.zeros((360, 640, 3), dtype=np.uint8))
+        assert torch.get_num_threads() == 2
+        torch.set_num_threads(original)
+        det.detect_sv(np.zeros((360, 640, 3), dtype=np.uint8))
+        assert torch.get_num_threads() == original   # solo se aplica una vez
+    finally:
+        torch.set_num_threads(original)
+
+
+def TEST_inference_threads_zero_leaves_torch_alone(detector):
+    import torch
+
+    original = torch.get_num_threads()
+    detector._mock_model.return_value = [_make_yolo_result([])]
+    with patch("torch.set_num_threads") as set_threads:
+        detector.detect(np.zeros((360, 640, 3), dtype=np.uint8))
+    set_threads.assert_not_called()
+    assert torch.get_num_threads() == original

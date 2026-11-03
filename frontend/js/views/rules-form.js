@@ -31,14 +31,14 @@ const ACTION_FIELDS = {
   snapshot: [],
   notify: ['template'],
   telegram: ['template'],
-  webhook: ['url_ref'],
+  webhook: [],
   log: [],
-  upload_drive: [],
+  upload_drive: ['pre_secs', 'post_secs'],
   set_flag: [],
 };
 
 const ACTION_FIELD_LABELS = {
-  pre_secs: 'Pre (s)', post_secs: 'Post (s)', template: 'Plantilla', url_ref: 'URL',
+  pre_secs: 'Pre (s)', post_secs: 'Post (s)', template: 'Plantilla',
 };
 
 function _span(className, text) {

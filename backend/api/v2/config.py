@@ -22,6 +22,8 @@ mitigacion es auditoria (`CONFIG_CHANGED` con diff) + rate limit + validacion es
 
 from __future__ import annotations
 
+import asyncio
+
 import datetime
 from typing import Any
 
@@ -238,7 +240,8 @@ async def put_config(request: Request, body: ConfigPutIn) -> dict[str, Any]:
                     "process_width", overrides.get("process_width", settings.process_width))
                 h = valid_changes.get(
                     "process_height", overrides.get("process_height", settings.process_height))
-                pipeline.set_process_size(int(w), int(h))
+                # PERF-01: para y relanza la captura (join del hilo): fuera del event loop.
+                await asyncio.to_thread(pipeline.set_process_size, int(w), int(h))
 
     if _event_engine is not None and diff:
         _event_engine.config_changed(datetime.datetime.now(), section=body.section, diff=diff)

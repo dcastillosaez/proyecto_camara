@@ -17,7 +17,7 @@ variacion sobre totales que ya trajo la base — nunca vuelve a agregar sobre
 filas ya traidas (OPS-14).
 
 El heatmap (/heatmap, /heatmap/scale) se compone sobre el ultimo frame fuera
-del event loop (asyncio.to_thread), igual que /api/heatmap en main.py, y
+del event loop (asyncio.to_thread), igual que hacia el v1 /api/heatmap (retirado en DEBT-02), y
 distingue 503 (sin camara/frame) de 404 (sin actividad acumulada) — el v1 no
 lo hace.
 
@@ -301,7 +301,7 @@ async def get_heatmap(request: Request, camera_id: str | None = Query(default=No
     Acumula desde el arranque de la camara y NO sigue el rango de la vista (D-12):
     el panel lo dice con un chip visible en vez de fingir que responde al selector.
     503 y 404 significan cosas distintas y el panel tiene un texto para cada una,
-    a diferencia del v1 /api/heatmap, que devuelve 404 para las dos.
+    a diferencia del v1 /api/heatmap (ya retirado), que devolvia 404 para las dos.
     """
     camera_id = await resolve_camera_id(camera_id, get_session_factory())
     pipeline = _camera_manager.get(camera_id) if _camera_manager is not None else None
@@ -310,7 +310,8 @@ async def get_heatmap(request: Request, camera_id: str | None = Query(default=No
     img = await asyncio.to_thread(pipeline.get_heatmap)
     if img is None:
         raise HTTPException(status_code=404, detail="Sin actividad acumulada")
-    ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    # PERF-01: codificar un JPEG de 1280x720 son milisegundos de CPU: fuera del loop.
+    ok, jpeg = await asyncio.to_thread(cv2.imencode, ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
     if not ok:
         raise HTTPException(status_code=500, detail="No se pudo codificar el mapa de calor")
     return Response(content=jpeg.tobytes(), media_type="image/jpeg")

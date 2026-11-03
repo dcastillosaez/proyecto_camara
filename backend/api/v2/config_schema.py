@@ -235,6 +235,36 @@ ALL_SECTIONS: tuple[Section, ...] = (
                         enum_values=("auto", "cpu", "cuda"),
                         applies="restart_server",
                     ),
+                    FieldDef(
+                        key="inference_threads", env="INFERENCE_THREADS",
+                        label="Hilos de inferencia en CPU",
+                        hint="Hilos de PyTorch para YOLO en CPU; 0 deja el valor de Ultralytics "
+                             "(núcleos - 1). Menos hilos: algo más de latencia y mucha menos CPU.",
+                        type="int", default=3, min=0, max=64, applies="restart_server",
+                    ),
+                    FieldDef(
+                        key="motion_gate_enabled", env="MOTION_GATE_ENABLED",
+                        label="Puerta de movimiento (experimental)",
+                        hint="Sin personas ni movimiento en la imagen, la detección baja al FPS "
+                             "de reposo. Puede ver tarde a alguien inmóvil: validar con la "
+                             "cámara antes de activarla.",
+                        type="bool", default=False, applies="restart_camera",
+                    ),
+                    FieldDef(
+                        key="motion_gate_idle_fps", env="MOTION_GATE_IDLE_FPS",
+                        label="FPS de reposo de la puerta de movimiento",
+                        hint="Ritmo de detección con la escena vacía; nunca llega a cero.",
+                        type="float", default=2.0, min=0.5, max=30.0, step=0.5,
+                        applies="restart_camera",
+                    ),
+                    FieldDef(
+                        key="motion_gate_min_changed", env="MOTION_GATE_MIN_CHANGED",
+                        label="Umbral de movimiento",
+                        hint="Fracción de píxeles de la miniatura 160×90 que deben cambiar "
+                             "para considerar que hay movimiento.",
+                        type="float", default=0.005, min=0.0001, max=1.0, step=0.0005,
+                        applies="restart_camera",
+                    ),
                 ),
             ),
             Group(
@@ -684,24 +714,6 @@ ALL_SECTIONS: tuple[Section, ...] = (
                 label="Disparadores",
                 fields=(
                     FieldDef(
-                        key="alert_on_intrusion", env="ALERT_ON_INTRUSION",
-                        label="Avisar en intrusión",
-                        hint="Avisa cuando se detecta una intrusión.",
-                        type="bool", default=True, applies="restart_server",
-                    ),
-                    FieldDef(
-                        key="alert_on_unknown", env="ALERT_ON_UNKNOWN",
-                        label="Avisar en desconocido",
-                        hint="Avisa cuando se detecta una persona desconocida.",
-                        type="bool", default=True, applies="restart_server",
-                    ),
-                    FieldDef(
-                        key="alert_on_detection", env="ALERT_ON_DETECTION",
-                        label="Avisar en cada detección",
-                        hint="Avisa en cada detección; ruidoso, desactivado por defecto.",
-                        type="bool", default=False, applies="restart_server",
-                    ),
-                    FieldDef(
                         key="alert_cooldown_secs", env="ALERT_COOLDOWN_SECS",
                         label="Segundos entre avisos repetidos",
                         hint="Segundos mínimos entre avisos repetidos de la misma regla.",
@@ -742,10 +754,26 @@ ALL_SECTIONS: tuple[Section, ...] = (
                         type="float", default=15.0, min=1, max=30, applies="restart_camera",
                     ),
                     FieldDef(
-                        key="recording_tail_secs", env="RECORDING_TAIL_SECS",
-                        label="Cola tras última detección (s)",
-                        hint="Segundos de grabación tras la última detección.",
-                        type="float", default=5.0, min=0, max=60, applies="restart_camera",
+                        key="recording_max_clip_secs", env="RECORDING_MAX_CLIP_SECS",
+                        label="Duración máxima de un clip (s)",
+                        hint="El clip se cierra al llegar aquí aunque sigan llegando eventos; "
+                             "0 = sin límite.",
+                        type="float", default=300.0, min=0, max=3600, applies="restart_camera",
+                    ),
+                    FieldDef(
+                        key="recording_min_free_mb", env="RECORDING_MIN_FREE_MB",
+                        label="Espacio libre mínimo para grabar (MB)",
+                        hint="Por debajo de este espacio libre en disco no se graba y se emite "
+                             "DEGRADED_MODE; 0 = no comprobar.",
+                        type="int", default=1024, min=0, max=1048576, applies="restart_camera",
+                    ),
+                    FieldDef(
+                        key="clips_max_total_mb", env="CLIPS_MAX_TOTAL_MB",
+                        label="Tamaño máximo de los clips locales (MB)",
+                        hint="La retención borra los clips locales más antiguos (ya subidos o "
+                             "descartados, nunca pendientes) por encima de este total; 0 = sin "
+                             "cota.",
+                        type="int", default=20480, min=0, max=10485760, applies="restart_server",
                     ),
                     FieldDef(
                         key="recording_codec", env="RECORDING_CODEC", label="Códec de vídeo",
@@ -846,6 +874,20 @@ ALL_SECTIONS: tuple[Section, ...] = (
                         hint="Días que se conservan las personas anónimas sin nombre antes de "
                              "borrarlas.",
                         type="int", default=30, min=0, max=3650, applies="restart_server",
+                    ),
+                    FieldDef(
+                        key="captures_retention_days", env="CAPTURES_RETENTION_DAYS",
+                        label="Retención de capturas de galería (días, 0=desactivado)",
+                        hint="Días que se conservan los recortes de la galería de personas; "
+                             "0 desactiva la purga.",
+                        type="int", default=30, min=0, max=3650, applies="restart_server",
+                    ),
+                    FieldDef(
+                        key="retention_hour", env="RETENTION_HOUR",
+                        label="Hora de la purga diaria",
+                        hint="Hora local (0-23) a la que se aplica la retención cada día. "
+                             "También se aplica al arrancar el servidor.",
+                        type="int", default=3, min=0, max=23, applies="restart_server",
                     ),
                     FieldDef(
                         key="upload_min_severity", env="UPLOAD_MIN_SEVERITY",

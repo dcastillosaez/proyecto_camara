@@ -1,5 +1,4 @@
 """Entry point: starts uvicorn with optional SSL from config."""
-import logging
 import uvicorn
 
 from backend.config import get_settings

@@ -7,10 +7,9 @@ from datetime import datetime, timedelta
 
 import cv2
 import numpy as np
-import pytest
 
 from backend.pipeline.broker import Frame
-from backend.pipeline.prebuffer import BufferedFrame, RingFrameBuffer
+from backend.pipeline.prebuffer import RingFrameBuffer
 
 
 def make_frame(seq: int, wall_clock: datetime, size=(48, 64)) -> Frame:

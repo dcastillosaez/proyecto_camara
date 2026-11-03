@@ -87,6 +87,7 @@ def build_camera_pipeline(
         label=settings.detection_label,
         imgsz=settings.yolo_imgsz,
         device=device.torch_device,
+        inference_threads=settings.inference_threads,
     )
     tracker = PersonTracker(frame_rate=settings.tracker_frame_rate)
     event_engine = EventEngine(services.event_bus, camera_id=camera_id, latency_tracker=services.latency_tracker)
@@ -110,7 +111,20 @@ def build_camera_pipeline(
                 "id": rec_id,
             })
 
-        asyncio.run_coroutine_threadsafe(_persist(), services.loop)
+        # BUG-08: antes el futuro se descartaba y un fallo de la BD se perdia en
+        # silencio: el clip quedaba en disco sin fila. Ahora se registra, y la
+        # reconciliacion del arranque (main._reconcile_clips) avisa de esos huerfanos.
+        future = asyncio.run_coroutine_threadsafe(_persist(), services.loop)
+
+        def _log_failure(fut) -> None:
+            exc = fut.exception()
+            if exc is not None:
+                logger.error("No se pudo registrar el clip %s de %s: %r", result.path, camera_id, exc)
+                event_engine.degraded_mode(
+                    datetime.datetime.now(), reason=f"clip sin registrar en BD: {Path(result.path).name}",
+                )
+
+        future.add_done_callback(_log_failure)
 
     def _on_recording_failure(message: str) -> None:
         logger.error("RecordingWorker failure (%s): %s", camera_id, message)
@@ -126,6 +140,8 @@ def build_camera_pipeline(
         "pre_buffer_jpeg_quality": settings.pre_buffer_jpeg_quality,
         "codec": settings.recording_codec,
         "upload_min_severity": settings.upload_min_severity,
+        "max_clip_secs": settings.recording_max_clip_secs,
+        "min_free_mb": settings.recording_min_free_mb,
         "on_clip_ready": _on_clip_ready,
         "on_failure": _on_recording_failure,
     }
@@ -183,6 +199,9 @@ def build_camera_pipeline(
         object_person_window_secs=settings.object_person_window_secs,
         object_max_tracks=settings.object_max_tracks,
         inference_device_mode=device.mode,
+        motion_gate_enabled=settings.motion_gate_enabled,
+        motion_gate_idle_fps=settings.motion_gate_idle_fps,
+        motion_gate_min_changed=settings.motion_gate_min_changed,
     )
     _report_device_fallbacks(pipeline, event_engine)
     pipeline.set_detection_classes(services.active_classes)
@@ -226,10 +245,13 @@ async def start_camera_pipeline(
         (camera["process_w"], camera["process_h"])
         if camera.get("process_w") and camera.get("process_h") else None
     )
-    pipeline = build_camera_pipeline(
+    # PERF-01: construir la pipeline carga el modelo YOLO y arrancarla lanza hilos;
+    # en el alta en caliente esto corria dentro del event loop y congelaba la API.
+    pipeline = await asyncio.to_thread(
+        build_camera_pipeline,
         camera_manager, camera["id"], camera["rtsp_url"], services, process_size=process_size,
     )
-    pipeline.start()
+    await asyncio.to_thread(pipeline.start)
     camera_id = camera["id"]
     pipeline.set_zones(await ZoneRepo(get_session_factory()).list(camera_id=camera_id))
     pipeline.set_lines(await LineRepo(get_session_factory()).list(camera_id=camera_id))

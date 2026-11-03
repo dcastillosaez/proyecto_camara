@@ -123,8 +123,8 @@ async def TEST_rebalance_fps_activates_on_real_pipelines_under_load(mock_video_c
     rebalance_fps() debe imponer un techo real sobre AdaptiveRate cuando el coste
     estimado de dos pipelines REALES (no fakes) supera un presupuesto bajo."""
     manager = CameraManager()
-    d1 = _add_camera(manager, "cam1")
-    d2 = _add_camera(manager, "cam2")
+    _add_camera(manager, "cam1")
+    _add_camera(manager, "cam2")
     manager.start_all()
     try:
         await asyncio.sleep(1.0)  # deja que ambas AdaptiveRate observen latencia real

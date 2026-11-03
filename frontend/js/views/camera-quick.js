@@ -26,6 +26,7 @@
 // estos ids en el DOM, initCameraQuick() no lanza (mismo criterio que camera.js).
 
 import { showToast } from './dashboard.js';
+import { getConfig, invalidateConfig } from '../api.js';
 
 const APPLIES_LABEL = {
   hot: 'En caliente',
@@ -49,11 +50,13 @@ function _findField(cfg, key) {
 }
 
 async function _putConfig(section, changes) {
-  return fetch('/api/v2/config', {
+  const res = await fetch('/api/v2/config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ section, changes }),
   });
+  invalidateConfig();   // DIR-04: la siguiente lectura trae los valores nuevos
+  return res;
 }
 
 async function _handleError(res, revert) {
@@ -68,7 +71,7 @@ async function _handleError(res, revert) {
 }
 
 async function _loadConfig() {
-  return fetch('/api/v2/config').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  return getConfig();   // DIR-04: una sola peticion compartida por pagina
 }
 
 // ── Clases detectadas ─────────────────────────────────────────────

@@ -13,8 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import String, and_, bindparam, case, func, select, text, tuple_, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import String, and_, bindparam, case, delete, func, select, text, tuple_, update
 
 from backend.events.types import Event as EventDTO
 from backend.events.types import EventType, Severity
@@ -360,6 +359,31 @@ class EventRepo:
                     await session.delete(row)
         return len(rows)
 
+    async def set_snapshot_path(self, event_id: str, path: str) -> None:
+        """DIR-02: la accion snapshot captura despues del INSERT y completa la fila."""
+        async with self._sf() as session:
+            async with session.begin():
+                await session.execute(
+                    update(models.Event).where(models.Event.id == event_id).values(snapshot_path=path)
+                )
+
+    async def purge_before(self, cutoff: datetime.datetime) -> int:
+        """BUG-02: retencion de TODOS los tipos de evento anteriores a *cutoff*, salvo
+        los que disparan una grabacion que sigue en `recordings`: esos siguen al clip
+        y se borran cuando la retencion de grabaciones elimina su fila. DELETE en
+        bloque: con meses de eventos, cargar cada fila en el ORM no escala."""
+        recorded = select(models.Recording.trigger_event_id).where(
+            models.Recording.trigger_event_id.is_not(None)
+        )
+        async with self._sf() as session:
+            async with session.begin():
+                result = await session.execute(
+                    delete(models.Event).where(
+                        models.Event.ts < cutoff, models.Event.id.notin_(recorded),
+                    )
+                )
+        return result.rowcount or 0
+
     async def delete_range(
         self, from_dt: datetime.datetime, to_dt: datetime.datetime, type: EventType | None = None
     ) -> int:
@@ -586,6 +610,47 @@ class RecordingRepo:
             session.expunge_all()
             return rows
 
+    async def claim_for_upload(self, rec_id: int) -> bool:
+        """BUG-09: pasa pending -> uploading de forma atomica. Solo un llamador gana:
+        sin esto, cada sondeo de 30 s relanzaba la subida de un clip que seguia
+        `pending` mientras la anterior estaba en curso, y se subia varias veces."""
+        async with self._sf() as session:
+            async with session.begin():
+                result = await session.execute(
+                    update(models.Recording)
+                    .where(
+                        models.Recording.id == rec_id,
+                        models.Recording.upload_state == UploadState.PENDING.value,
+                    )
+                    .values(upload_state=UploadState.UPLOADING.value)
+                )
+        return (result.rowcount or 0) == 1
+
+    async def release_claim(self, rec_id: int) -> None:
+        """DIR-03: devuelve un clip reclamado a pending sin contar el intento."""
+        async with self._sf() as session:
+            async with session.begin():
+                await session.execute(
+                    update(models.Recording)
+                    .where(
+                        models.Recording.id == rec_id,
+                        models.Recording.upload_state == UploadState.UPLOADING.value,
+                    )
+                    .values(upload_state=UploadState.PENDING.value)
+                )
+
+    async def recover_interrupted_uploads(self) -> int:
+        """BUG-09: al arrancar, un `uploading` es una subida que murio con el proceso.
+        Vuelve a `pending` para que la cola la reintente. Devuelve cuantas recupero."""
+        async with self._sf() as session:
+            async with session.begin():
+                result = await session.execute(
+                    update(models.Recording)
+                    .where(models.Recording.upload_state == UploadState.UPLOADING.value)
+                    .values(upload_state=UploadState.PENDING.value)
+                )
+        return result.rowcount or 0
+
     async def count_by_upload_state(self, state: UploadState) -> int:
         """Cheap COUNT for the metrics sampler (upload_queue_depth)."""
         async with self._sf() as session:
@@ -631,6 +696,41 @@ class RecordingRepo:
                         [UploadState.PENDING.value, UploadState.UPLOADING.value]
                     ),
                 )
+            )
+            rows = list(result.scalars().all())
+            session.expunge_all()
+            return rows
+
+    async def purge_before(self, before: datetime.datetime) -> list[tuple[str | None, str | None]]:
+        """BUG-02: borra las filas con `started_at` anterior a *before* y devuelve las
+        rutas (clip, miniatura) que aun quedaran en disco para que quien llama las
+        elimine. Igual que expired_local, nunca toca pending/uploading: perder un clip
+        antes de subirlo es peor que llenar el disco. Antes se filtraba por un
+        `created_at` que este repositorio nunca escribe, y no se borraba nada."""
+        async with self._sf() as session:
+            async with session.begin():
+                result = await session.execute(
+                    select(models.Recording).where(
+                        models.Recording.started_at < before,
+                        models.Recording.upload_state.notin_(
+                            [UploadState.PENDING.value, UploadState.UPLOADING.value]
+                        ),
+                    )
+                )
+                rows = list(result.scalars().all())
+                paths = [(r.local_path, r.thumbnail_path) for r in rows]
+                for row in rows:
+                    await session.delete(row)
+        return paths
+
+    async def with_local_files(self) -> list[models.Recording]:
+        """Filas que aun apuntan a un fichero local, de la mas antigua a la mas nueva
+        (BUG-08 reconciliacion, BUG-11 retencion por tamano)."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(models.Recording)
+                .where(models.Recording.local_path.is_not(None))
+                .order_by(models.Recording.started_at)
             )
             rows = list(result.scalars().all())
             session.expunge_all()

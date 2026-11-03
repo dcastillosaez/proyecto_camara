@@ -14,6 +14,8 @@ limiter/valor compartidos de backend/api/v2/deps.py.
 
 from __future__ import annotations
 
+import asyncio
+
 import math
 from dataclasses import asdict
 from typing import Any
@@ -217,7 +219,8 @@ async def update_camera(request: Request, camera_id: str, body: CameraUpdate):
         process_w=body.process_w, process_h=body.process_h,
     )
     if needs_restart and _camera_manager is not None:
-        _camera_manager.remove(camera_id)  # no-op si no estaba corriendo
+        # PERF-01: parar una pipeline hace join de sus hilos (hasta segundos).
+        await asyncio.to_thread(_camera_manager.remove, camera_id)  # no-op si no estaba corriendo
         if camera["enabled"]:
             if _services is None:
                 raise HTTPException(status_code=503, detail="Pipeline v2 no activo")
@@ -234,6 +237,6 @@ async def delete_camera(request: Request, camera_id: str):
     if await repo.get(camera_id) is None:
         raise HTTPException(status_code=404, detail="Camera not found")
     if _camera_manager is not None:
-        _camera_manager.remove(camera_id)
+        await asyncio.to_thread(_camera_manager.remove, camera_id)   # PERF-01
     await repo.delete(camera_id)
     return {"deleted": camera_id}

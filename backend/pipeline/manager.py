@@ -8,6 +8,7 @@ con una ("cam1").
 
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -21,6 +22,7 @@ from backend.perception.reid.gallery import TrackGallery
 from backend.pipeline.broker import FrameBroker
 from backend.pipeline.capture import CaptureHealth, CaptureWorker
 from backend.pipeline.detection import DetectionWorker
+from backend.pipeline.motion import MotionGate
 from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.recognition import RecognitionWorker
 from backend.pipeline.recording import RecordingWorker
@@ -93,6 +95,9 @@ class CameraPipeline:
         object_person_window_secs: float = 10.0,
         object_max_tracks: int = 256,
         inference_device_mode: str = "auto",
+        motion_gate_enabled: bool = False,
+        motion_gate_idle_fps: float = 2.0,
+        motion_gate_min_changed: float = 0.005,
     ) -> None:
         self.camera_id = camera_id
         self.broker = FrameBroker()
@@ -101,13 +106,16 @@ class CameraPipeline:
         self.detector = detector
         self._inference_device_mode = inference_device_mode
         self.recognizer = recognizer
+        # BUG-01: el EventEngine de ESTA camara. Acumula sus detection_stats y
+        # main._detection_stats_flush_loop los vacia desde aqui.
+        self.event_engine = event_engine
 
         self._process_size = process_size
         self._rtsp_url = rtsp_url
 
         self.capture = CaptureWorker(camera_id, rtsp_url, self.broker, process_size=process_size)
-        self.supervisor = WorkerSupervisor(interval=supervisor_interval)
-        self.supervisor.register("capture", lambda: self.capture)
+        self.supervisor = WorkerSupervisor(interval=supervisor_interval, on_failed=self._on_worker_failed)
+        self.supervisor.register("capture", self._make_capture)
 
         target, lo, hi = detection_fps
         self.detection: DetectionWorker | None = None
@@ -176,6 +184,10 @@ class CameraPipeline:
                     objects=self.objects,
                     object_tracker=self.object_tracker,
                     object_class_ids=set(object_class_ids or []),
+                    motion_gate=(
+                        MotionGate(idle_fps=motion_gate_idle_fps, min_changed=motion_gate_min_changed)
+                        if motion_gate_enabled else None
+                    ),
                 )
                 return self.detection
 
@@ -254,6 +266,15 @@ class CameraPipeline:
     # ------------------------------------------------------------------
     # Ciclo de vida
     # ------------------------------------------------------------------
+
+    def _on_worker_failed(self, worker_name: str) -> None:
+        """BUG-05: un worker FAILED avisa con DEGRADED_MODE (corre en el hilo del supervisor;
+        EventEngine publica de forma thread-safe)."""
+        logger.error("CameraPipeline %s: worker %s en FAILED", self.camera_id, worker_name)
+        if self.event_engine is not None:
+            self.event_engine.degraded_mode(
+                datetime.datetime.now(), reason=f"worker {worker_name} FAILED en {self.camera_id}",
+            )
 
     def start(self) -> None:
         self.supervisor.start_all()
@@ -415,14 +436,24 @@ class CameraPipeline:
     def get_process_size(self) -> tuple[int, int]:
         return self._process_size or (0, 0)
 
+    def _make_capture(self) -> CaptureWorker:
+        """Factoria de la captura para el supervisor. Tras una caida reutiliza la
+        instancia (conserva sus contadores); si la resolucion de proceso cambio, crea
+        otra con el tamano nuevo."""
+        if self.capture._process_size != self._process_size:
+            self.capture = CaptureWorker(
+                self.camera_id, self._rtsp_url, self.broker, process_size=self._process_size
+            )
+        return self.capture
+
     def set_process_size(self, w: int, h: int) -> None:
-        """Cambia la resolucion de proceso reiniciando el CaptureWorker."""
+        """Cambia la resolucion de proceso reiniciando el CaptureWorker.
+
+        BUG-03: el reinicio lo hace el supervisor (restart), que para la instancia
+        vieja, crea la nueva y no lo cuenta como caida. Bloquea hasta parar el hilo:
+        desde una corrutina se llama con asyncio.to_thread (PERF-01)."""
         self._process_size = (w, h) if (w > 0 and h > 0) else None
-        self.capture.stop()
-        self.capture = CaptureWorker(
-            self.camera_id, self._rtsp_url, self.broker, process_size=self._process_size
-        )
-        self.capture.start()
+        self.supervisor.restart("capture")
 
     def device_stats(self) -> dict[str, Any]:
         """Dispositivo de inferencia efectivo por motor (Fase 38, SCALE-11).

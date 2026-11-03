@@ -51,55 +51,76 @@ document.getElementById('delete-events-confirm').addEventListener('click', async
 });
 
 // ── Chart (Phase 5) ─────────────────────────────────────
+// DEBT-01: el grafico se crea al iniciar (initActivityChart, desde app.js) y no al
+// evaluar el modulo. Antes, si Chart.js no cargaba, `new Chart` lanzaba al importar
+// este modulo, que app.js importa de forma estatica, y moria toda la interfaz,
+// video incluido. Ahora solo falta el grafico.
 const hours = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}h`);
-const curH  = new Date().getHours();
-const actChart = new Chart(
-  document.getElementById('activity-chart').getContext('2d'),
-  {
-    type: 'bar',
-    data: {
-      labels: hours,
-      datasets: [{
-        label: 'Personas',
-        data:  new Array(24).fill(0),
-        backgroundColor: hours.map((_, i) => i === curH ? 'rgba(74,222,128,0.4)' : 'rgba(51,65,85,0.3)'),
-        borderColor:     hours.map((_, i) => i === curH ? 'rgba(74,222,128,0.7)' : 'rgba(71,85,105,0.5)'),
-        borderWidth: 1, borderRadius: 3,
-      }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      animation: { duration: 300 },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#1e293b', borderColor: '#334155', borderWidth: 1,
-          titleColor: '#94a3b8', bodyColor: '#f8fafc',
-          titleFont: { size: 10 }, bodyFont: { size: 11 },
-          callbacks: { label: c => ` ${c.parsed.y} personas` },
+let actChart = null;
+
+export function initActivityChart() {
+  if (actChart) return actChart;
+  const canvas = document.getElementById('activity-chart');
+  if (!canvas || typeof Chart === 'undefined') {
+    console.warn('Chart.js no disponible: el grafico de actividad queda desactivado');
+    return null;
+  }
+  const curH = new Date().getHours();
+  try {
+    actChart = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: hours,
+        datasets: [{
+          label: 'Personas',
+          data:  new Array(24).fill(0),
+          backgroundColor: hours.map((_, i) => i === curH ? 'rgba(74,222,128,0.4)' : 'rgba(51,65,85,0.3)'),
+          borderColor:     hours.map((_, i) => i === curH ? 'rgba(74,222,128,0.7)' : 'rgba(71,85,105,0.5)'),
+          borderWidth: 1, borderRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 300 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1e293b', borderColor: '#334155', borderWidth: 1,
+            titleColor: '#94a3b8', bodyColor: '#f8fafc',
+            titleFont: { size: 10 }, bodyFont: { size: 11 },
+            callbacks: { label: c => ` ${c.parsed.y} personas` },
+          },
+        },
+        scales: {
+          x: { grid: { color: 'rgba(51,65,85,0.3)', drawTicks: false }, border: { display: false },
+               ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 8, maxRotation: 0 } },
+          y: { min: 0, grid: { color: 'rgba(51,65,85,0.3)', drawTicks: false }, border: { display: false },
+               ticks: { color: '#475569', font: { size: 9 }, precision: 0, maxTicksLimit: 4 } },
         },
       },
-      scales: {
-        x: { grid: { color: 'rgba(51,65,85,0.3)', drawTicks: false }, border: { display: false },
-             ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 8, maxRotation: 0 } },
-        y: { min: 0, grid: { color: 'rgba(51,65,85,0.3)', drawTicks: false }, border: { display: false },
-             ticks: { color: '#475569', font: { size: 9 }, precision: 0, maxTicksLimit: 4 } },
-      },
-    },
+    });
+  } catch (err) {
+    console.warn('No se pudo crear el grafico de actividad', err);
+    actChart = null;
   }
-);
+  return actChart;
+}
 
 export function updateChart(hourlyData) {
-  actChart.data.datasets[0].data = hourlyData;
-  actChart.update('active');
+  const chart = initActivityChart();
+  if (!chart) return;
+  chart.data.datasets[0].data = hourlyData;
+  chart.update('active');
   document.getElementById('chart-placeholder').style.display = 'none';
 }
 
 export function bumpHourBar(hour) {
   // Extrae index.html:1174-1177 — websocket.js (28-07) no puede tocar actChart
   // directamente (es privado a este modulo), llama a esta funcion en su lugar.
-  actChart.data.datasets[0].data[hour] = (actChart.data.datasets[0].data[hour] || 0) + 1;
-  actChart.update('active');
+  const chart = initActivityChart();
+  if (!chart) return;
+  chart.data.datasets[0].data[hour] = (chart.data.datasets[0].data[hour] || 0) + 1;
+  chart.update('active');
   document.getElementById('chart-placeholder').style.display = 'none';
 }
 

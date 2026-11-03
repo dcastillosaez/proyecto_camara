@@ -9,7 +9,7 @@
 //     has_previous llegan ya resueltos del servidor (31-05). Cero reduce,
 //     sort, filter ni funciones de maximo/minimo sobre datos del servidor.
 //
-// Chart.js ya esta cargado por CDN con SRI en index.html y expuesto como
+// Chart.js se sirve desde frontend/vendor/ (DEBT-01, sin CDN) y queda expuesto como
 // global `Chart` — no se importa ni se anade <script> (D-01).
 
 const SERIE_ACTUAL   = '#60a5fa';                    // blue-400, trazo 2px
@@ -39,6 +39,7 @@ const $ = (id) => document.getElementById(id);
 
 export function createCharts() {
   if (hourlyChart) return;  // idempotente: llamarlo dos veces no duplica instancias
+  if (typeof Chart === 'undefined') return;  // DEBT-01: sin Chart.js, sin graficas, pero la vista vive
 
   hourlyChart = new Chart($('an-chart-hourly').getContext('2d'), {
     type: 'bar',

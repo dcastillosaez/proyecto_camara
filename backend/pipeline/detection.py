@@ -25,6 +25,7 @@ from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.tracking import TrackRegistry
 
 if TYPE_CHECKING:
+    from backend.pipeline.motion import MotionGate
     from backend.detector import PersonDetector
     from backend.events.engine import EventEngine
     from backend.observability.latency import LatencyTracker
@@ -67,8 +68,11 @@ class DetectionWorker:
         object_tracker: "ObjectTracker | None" = None,
         object_class_ids: set[int] | None = None,
         objects: "ObjectAnalyzer | None" = None,
+        motion_gate: "MotionGate | None" = None,
     ) -> None:
         self._sub = sub
+        self._motion_gate = motion_gate   # DET-09: None = desactivada (por defecto)
+        self._has_tracks = False
         self._detector = detector
         self._tracker = tracker
         self._registry = registry
@@ -87,6 +91,7 @@ class DetectionWorker:
         self._running = False
         self._thread: threading.Thread | None = None
         self._last_effective_fps: float | None = None
+        self._lost_ids: set[int] = set()   # DET-02: tracks perdidos aun recuperables
         self._frames_processed = 0
         self._exceptions = 0
 
@@ -132,6 +137,7 @@ class DetectionWorker:
         return {
             "frames_processed": self._frames_processed,
             "exceptions": self._exceptions,
+            "motion_skipped": self._motion_gate.skipped if self._motion_gate is not None else 0,
             **self._rate.stats,
         }
 
@@ -232,8 +238,14 @@ class DetectionWorker:
         while self._running:
             frame = self._sub.get(timeout=1.0)
             if frame is None:
+                if self._sub.closed:   # BUG-06: reemplazado o parado, nunca en bucle activo
+                    break
                 continue
             if not self._rate.should_process(time.monotonic()):
+                continue
+            if self._motion_gate is not None and not self._motion_gate.allow(
+                frame.image, time.monotonic(), self._has_tracks or bool(self._lost_ids),
+            ):
                 continue
 
             t0 = time.monotonic()
@@ -247,6 +259,8 @@ class DetectionWorker:
                 # personas de la Fase 4, que esta en produccion.
                 person_dets, object_dets = self._split_by_class(sv_dets)
                 tracked, crossings = self._tracker.update(person_dets)
+                self._lost_ids = self._tracker_lost_ids()
+                self._has_tracks = len(tracked) > 0
                 obj_tracked = (
                     self._object_tracker.update(object_dets)
                     if self._object_tracker is not None
@@ -277,6 +291,10 @@ class DetectionWorker:
             self._emit_crossings(crossings, frame.captured_at, now)
             self._emit_track_lifecycle(tracked, frame.captured_at, now)
             self._registry.prune(now)
+
+    def _tracker_lost_ids(self) -> set[int]:
+        lost_ids = getattr(self._tracker, "lost_ids", None)
+        return set(lost_ids()) if callable(lost_ids) else set()
 
     def _split_by_class(self, dets: sv.Detections) -> tuple[sv.Detections, sv.Detections]:
         """Separa personas y objetos. El slicing preserva data["class_name"] (verificado
@@ -470,13 +488,22 @@ class DetectionWorker:
         if self._event_engine is None:
             return
         wall_now = datetime.datetime.now()
-        self._event_engine.process_tracks(active_ids, wall_now, captured_at, processed_at)
+        self._event_engine.process_tracks(
+            active_ids, wall_now, captured_at, processed_at, lost_track_ids=self._lost_ids,
+        )
         confidences = list(tracked.confidence) if tracked.confidence is not None else []
         self._event_engine.accumulate_detections(wall_now, active_ids, confidences)
 
     def _sync_tracker_frame_rate(self) -> None:
-        """Si AdaptiveRate cambio de escalon, sincroniza ByteTrack (riesgo #1 de la fase)."""
-        fps = self._rate.effective_fps
+        """Sincroniza ByteTrack con el FPS al que de verdad se procesa (riesgo #1 de la fase).
+
+        DET-08: antes se usaba el FPS PEDIDO (effective_fps). Si la fuente no da para
+        tanto, ByteTrack creia trabajar a 12 FPS procesando 7,5 y su ventana de perdida
+        en segundos quedaba mas larga de lo calculado. Se usa el medido, redondeado a
+        medio FPS para no mutar el tracker en cada frame, y el pedido mientras no hay
+        medida."""
+        measured = self._rate.measured_fps
+        fps = round(measured * 2) / 2 if measured > 0 else self._rate.effective_fps
         if fps != self._last_effective_fps:
             self._last_effective_fps = fps
             self._tracker.set_frame_rate(fps)
@@ -539,6 +566,9 @@ class DetectionWorker:
                 if ids is not None and len(mask)
                 else set()
             )
+            # DET-02: mismo parpadeo que PERSON_EXITED. Un track perdido pero aun
+            # recuperable conserva su pertenencia a la zona hasta que expire.
+            inside |= st["inside"] & self._lost_ids
             with self._lock:
                 st["entries"] += len(inside - st["inside"])
                 st["inside"] = inside
@@ -546,7 +576,7 @@ class DetectionWorker:
             if self._event_engine is not None:
                 self._event_engine.process_zone(
                     st["id"], inside, datetime.datetime.now(), captured_at, processed_at,
-                    now_monotonic=processed_at,
+                    now_monotonic=processed_at, kind=st.get("kind"),
                 )
 
         if len(tracked) == 0:

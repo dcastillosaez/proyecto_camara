@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import textwrap
 
-import pytest
 
 from backend.events.rules import Rule, RuleEngine, is_schedule_active, load_rules
 from backend.events.types import Event, EventType
@@ -28,7 +27,6 @@ SPEC_RULES_YAML = textwrap.dedent("""
           - type: telegram
             template: "Intrusion en {zone_id} a las {ts:%H:%M:%S}"
           - type: webhook
-            url_ref: alert_webhook_url
 
       - name: persona_desconocida
         when:
@@ -353,3 +351,46 @@ def TEST_is_schedule_active_combines_days_and_time_range():
     saturday_morning = datetime.datetime(2026, 4, 18, 10, 0)
     assert saturday_morning.weekday() == 5
     assert is_schedule_active(schedule, now=saturday_morning) is False
+
+
+# ─── SEC-07: validación de time_range, days y plantillas; fallo aislado por regla ───
+import pytest  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
+
+from backend.events.rules import Action, When  # noqa: E402
+
+
+@pytest.mark.parametrize("bad", ["23:00", "25:00-06:00", "noche", "22:00-06:00-07:00"])
+def TEST_sec07_invalid_time_range_rejected(bad):
+    with pytest.raises(ValidationError, match="time_range"):
+        When(event=EventType.PERSON_ENTERED, time_range=bad)
+
+
+def TEST_sec07_valid_time_range_accepted():
+    assert When(event=EventType.PERSON_ENTERED, time_range="22:00-06:00").time_range == "22:00-06:00"
+
+
+def TEST_sec07_days_out_of_range_rejected():
+    with pytest.raises(ValidationError, match="days"):
+        When(event=EventType.PERSON_ENTERED, days=[0, 7])
+
+
+@pytest.mark.parametrize("bad", ["{ts.__class__}", "{payload[x]}", "{0}", "{}", "abierta {"])
+def TEST_sec07_template_rejects_attribute_index_and_malformed(bad):
+    with pytest.raises(ValidationError, match="template"):
+        Action(type="telegram", template=bad)
+
+
+def TEST_sec07_template_accepts_simple_fields_with_format_spec():
+    a = Action(type="telegram", template="Intrusion en {zone_id} a las {ts:%H:%M:%S}")
+    assert a.template
+
+
+async def TEST_sec07_broken_rule_does_not_block_the_others():
+    broken = Rule(name="rota", when=When(event=EventType.PERSON_ENTERED), actions=[{"type": "log"}])
+    ok = Rule(name="buena", when=When(event=EventType.PERSON_ENTERED), actions=[{"type": "log"}])
+    # Simula una regla corrupta que ya paso la validacion (p. ej. mutada en memoria).
+    object.__setattr__(broken.when, "time_range", "rota")
+    engine = RuleEngine([broken, ok], registry={})
+    ev = Event(type=EventType.PERSON_ENTERED, camera_id="cam1", ts=datetime.datetime(2026, 1, 1, 12))
+    assert engine.match(ev) == ["buena"]

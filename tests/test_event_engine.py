@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 
-import pytest
 
 from backend.events.bus import EventBus
 from backend.events.engine import EventEngine

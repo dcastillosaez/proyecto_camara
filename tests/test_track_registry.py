@@ -5,7 +5,6 @@ from __future__ import annotations
 import threading
 
 import numpy as np
-import pytest
 
 from backend.perception.face.identity import IdentityState
 from backend.pipeline.tracking import TrackRegistry

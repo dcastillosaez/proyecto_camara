@@ -23,6 +23,7 @@ class BufferedFrame:
     seq: int
     wall_clock: datetime
     jpeg: bytes
+    captured_at: float = 0.0   # time.monotonic() de la captura: ritmo del clip (BUG-10)
 
 
 class RingFrameBuffer:
@@ -41,7 +42,7 @@ class RingFrameBuffer:
         ok, buf = cv2.imencode(".jpg", frame.image, [int(cv2.IMWRITE_JPEG_QUALITY), self._quality])
         if not ok:
             return
-        item = BufferedFrame(frame.seq, frame.wall_clock, buf.tobytes())
+        item = BufferedFrame(frame.seq, frame.wall_clock, buf.tobytes(), frame.captured_at)
         with self._lock:
             self._items.append(item)
             self._bytes += len(item.jpeg)

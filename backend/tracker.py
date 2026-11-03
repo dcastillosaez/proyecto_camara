@@ -119,6 +119,19 @@ class PersonTracker:
                         })
         return tracked, crossings
 
+    def lost_ids(self) -> set[int]:
+        """Ids de tracks que ByteTrack ha perdido de vista pero aun puede recuperar.
+
+        DET-02: update_with_detections() solo devuelve los tracks emparejados en el
+        frame actual. Un track que falla una deteccion pasa a `lost_tracks` y vuelve
+        con el MISMO id si reaparece antes de max_time_lost. Hasta entonces la persona
+        no ha salido. Se llama desde el hilo de deteccion, justo despues de update()."""
+        return {
+            int(t.external_track_id)
+            for t in self._byte_tracker.lost_tracks
+            if t.external_track_id >= 0
+        }
+
     def annotate(
         self,
         frame: np.ndarray,

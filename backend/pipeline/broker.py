@@ -52,6 +52,15 @@ class Subscription:
         self.dropped = 0
         self.last_seq = -1
 
+    @property
+    def closed(self) -> bool:
+        """True tras close() o tras ser reemplazada por subscribe(replace=True).
+
+        BUG-06: get() sobre un slot cerrado devuelve None al instante, sin esperar.
+        Un worker que solo hiciera `continue` con None quedaria en un bucle activo
+        al 100 % de un nucleo; los workers comprueban esto y salen."""
+        return self._closed
+
     def _offer(self, frame: Frame) -> None:
         """Llamado por el broker. Nunca bloquea mas alla de adquirir el Condition."""
         with self._cond:

@@ -6,7 +6,6 @@ import asyncio
 import datetime
 from unittest.mock import patch
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -97,11 +96,14 @@ async def TEST_retry_with_backoff(db):
     assert row["upload_state"] == "done"
 
 
-async def TEST_token_expired_is_retried(db):
+async def TEST_token_expired_pauses_queue_then_retries(db):
+    """DIR-03: un error de autorizacion pausa la cola sin gastar intentos; al reanudar
+    (token nuevo o plazo cumplido) el clip se sube."""
     repo = RecordingRepo(db)
     rec_id = await make_pending_recording(repo)
 
     calls = {"n": 0}
+    paused: list[str] = []
 
     def upload_side_effect(path, folder_id, credentials_path, token_path):
         calls["n"] += 1
@@ -109,18 +111,46 @@ async def TEST_token_expired_is_retried(db):
             raise RuntimeError("invalid_grant: token expired")
         return "gdrive-id-2"
 
-    queue = UploadQueue(repo, folder_id="F", credentials_path="creds.json", max_attempts=5, poll_secs=1000)
+    async def on_paused(reason):
+        paused.append(reason)
+
+    queue = UploadQueue(repo, folder_id="F", credentials_path="creds.json", max_attempts=5,
+                        poll_secs=1000, on_paused=on_paused, auth_retry_secs=3600)
 
     with patch("backend.gdrive.upload_file", side_effect=upload_side_effect):
         await queue.run_once()
         await asyncio.sleep(0.05)
-        await force_retry_now(db, rec_id)
+        row = await repo.get(rec_id)
+        assert row["upload_state"] == "pending"
+        assert row["upload_attempts"] == 0           # no consume intentos
+        assert queue.status["paused"] is True and paused == ["invalid_grant: token expired"]
+
+        await queue.run_once()                       # sigue en pausa: no reintenta
+        await asyncio.sleep(0.05)
+        assert calls["n"] == 1
+
+        queue._auth_retry_secs = 0                   # plazo cumplido
         await queue.run_once()
         await asyncio.sleep(0.05)
 
     row = await repo.get(rec_id)
     assert row["upload_state"] == "done"
     assert calls["n"] == 2
+    assert queue.status["paused"] is False
+
+
+def TEST_worker_never_opens_the_browser_flow(tmp_path):
+    """DIR-03: sin token, load_credentials lanza DriveAuthRequired en vez de esperar
+    a un navegador dentro del hilo de subida."""
+    import pytest
+
+    from backend.gdrive import DriveAuthRequired, load_credentials
+
+    with patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file") as flow:
+        with pytest.raises(DriveAuthRequired):
+            load_credentials(str(tmp_path / "creds.json"), str(tmp_path / "token.json"))
+    flow.assert_not_called()
+    assert classify_error(DriveAuthRequired("x")) == "auth"
 
 
 async def TEST_quota_error_backs_off_longer(db):
@@ -235,3 +265,48 @@ async def TEST_skipped_never_uploaded(db):
     pending = await repo.next_pending()
 
     assert all(r.id != rec_id for r in pending)
+
+
+# ─── BUG-09: reclamo atómico y recuperación de huérfanos ─────────────────────
+async def TEST_claim_for_upload_only_one_caller_wins(db):
+    repo = RecordingRepo(db)
+    rec_id = await make_pending_recording(repo)
+    assert await repo.claim_for_upload(rec_id) is True
+    assert await repo.claim_for_upload(rec_id) is False
+    assert (await repo.get(rec_id))["upload_state"] == UploadState.UPLOADING.value
+    assert await repo.next_pending() == []
+
+
+async def TEST_two_polls_do_not_upload_the_same_clip_twice(db):
+    repo = RecordingRepo(db)
+    rec_id = await make_pending_recording(repo)
+    calls = []
+
+    def slow_upload(path, folder_id, credentials_path, token_path):
+        calls.append(path)
+        return "drive-id"
+
+    queue = UploadQueue(repo, folder_id="F", credentials_path="creds.json", poll_secs=1000)
+    pending = await repo.next_pending()
+    with patch("backend.gdrive.upload_file", side_effect=slow_upload):
+        # Dos sondeos ven la misma fila pending antes de que la primera subida termine.
+        await asyncio.gather(queue._process(pending[0]), queue._process(pending[0]))
+    queue.stop()
+    assert len(calls) == 1
+    assert (await repo.get(rec_id))["upload_state"] == UploadState.DONE.value
+
+
+async def TEST_interrupted_uploads_return_to_pending_at_startup(db):
+    repo = RecordingRepo(db)
+    rec_id = await make_pending_recording(repo)
+    assert await repo.claim_for_upload(rec_id)
+    # El proceso muere con la fila en `uploading`; al arrancar la cola la recupera.
+    queue = UploadQueue(repo, folder_id="F", credentials_path="creds.json", poll_secs=1000)
+    with patch("backend.gdrive.upload_file", return_value="drive-id"):
+        queue.start()
+        for _ in range(50):
+            await asyncio.sleep(0.02)
+            if (await repo.get(rec_id))["upload_state"] == UploadState.PENDING.value:
+                break
+        queue.stop()
+    assert (await repo.get(rec_id))["upload_state"] == UploadState.PENDING.value

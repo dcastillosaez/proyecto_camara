@@ -23,3 +23,24 @@ test('mover la camara envia la direccion y los pasos correctos a POST /ptz/move'
   // la UI sabe que la accion esta pendiente, sin esperar a que pytapo desista.
   await expect(page.locator('.ptz-btn[data-dir="up"]')).toHaveClass(/busy/);
 });
+
+// Fase 8: las flechas y el Espacio sobre un control (aqui, una pestana) son del
+// control, no del PTZ. Con el foco en la pagina, la flecha sigue moviendo la camara.
+test('las flechas sobre una pestana no mueven la camara; sobre la pagina si', async ({ page }) => {
+  await gotoHome(page);
+  const moves = [];
+  page.on('request', (req) => {
+    if (req.url().endsWith('/ptz/move')) moves.push(req.postDataJSON());
+  });
+
+  await page.locator('#tab-operaciones').focus();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(300);
+  expect(moves).toEqual([]);
+
+  await page.locator('#tab-operaciones').click();   // vuelve a Operaciones si la flecha cambio de pestana
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.keyboard.press('ArrowUp');
+  await expect.poll(() => moves.length).toBe(1);
+  expect(moves[0].direction).toBe('up');
+});

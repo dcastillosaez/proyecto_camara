@@ -25,9 +25,11 @@ import pytest
 from backend.detector import PersonDetector
 from backend.inference.device import _torch_cuda_available
 
-_BUS_JPG = Path(
-    "F:/Documentos/IA/Proyecto_Camara/.venv/Lib/site-packages/ultralytics/assets/bus.jpg"
-)
+# TEST-04: la imagen viene con el paquete ultralytics; antes era una ruta absoluta de
+# Windows y en CI estos tests se saltaban siempre.
+from ultralytics.utils import ASSETS  # noqa: E402
+
+_BUS_JPG = Path(ASSETS) / "bus.jpg"
 _MIN_SPEEDUP = 3.0      # criterio 3 del ROADMAP
 _REPS = 30
 _WARMUP = 5
