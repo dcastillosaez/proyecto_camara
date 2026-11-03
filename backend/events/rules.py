@@ -212,7 +212,11 @@ class RuleEngine:
         last = self._last_fired.get(self._debounce_key(rule, event))
         if last is None:
             return False
-        return (event.ts - last).total_seconds() < rule.debounce_secs
+        # BUG-07: si el reloj de pared retrocede (fin del horario de verano, NTP), la
+        # diferencia sale negativa y la regla quedaba silenciada hasta recuperar la
+        # hora perdida. Un salto atras cuenta como debounce vencido.
+        elapsed = (event.ts - last).total_seconds()
+        return 0 <= elapsed < rule.debounce_secs
 
     def _purge_stale(self, now: datetime.datetime) -> None:
         if not self._last_fired:

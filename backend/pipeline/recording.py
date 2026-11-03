@@ -18,7 +18,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -68,7 +68,7 @@ class ClipResult:
 class _ActiveClip:
     writer: ClipWriter
     started_at: datetime
-    deadline: datetime
+    deadline: float          # time.monotonic() (BUG-07): inmune a cambios de hora y NTP
     request: ClipRequest
     trigger_jpeg: bytes | None = None
 
@@ -234,7 +234,7 @@ class RecordingWorker:
                 except queue.Empty:
                     pass
                 self._drain_live_frames()
-                if self._active is not None and datetime.now() >= self._active.deadline:
+                if self._active is not None and time.monotonic() >= self._active.deadline:
                     self._finalize_clip()
 
         if self._active is not None:
@@ -267,7 +267,7 @@ class RecordingWorker:
         self._active = _ActiveClip(
             writer=writer,
             started_at=pre_frames[0].wall_clock if pre_frames else req.trigger_ts,
-            deadline=req.trigger_ts + timedelta(seconds=self._post_buffer_secs),
+            deadline=self._deadline_for(req),
             request=req,
             trigger_jpeg=self._closest_jpeg(pre_frames, req.trigger_ts),
         )
@@ -281,10 +281,18 @@ class RecordingWorker:
         closest = min(pre_frames, key=lambda item: abs((item.wall_clock - ts).total_seconds()))
         return closest.jpeg
 
+    def _deadline_for(self, req: ClipRequest) -> float:
+        """Fin del post-buffer en reloj monotonico. BUG-07: con datetime.now() un cambio
+        de hora (fin del horario de verano) alargaba el clip una hora entera o lo cerraba
+        al instante. La edad del disparo se descuenta una vez, al recibir la peticion; si
+        el reloj de pared ha ido hacia atras y sale negativa, cuenta como 0."""
+        age = max(0.0, (datetime.now() - req.trigger_ts).total_seconds())
+        return time.monotonic() + max(0.0, self._post_buffer_secs - age)
+
     def _extend_clip(self, req: ClipRequest) -> None:
         if self._active is None:
             return
-        new_deadline = req.trigger_ts + timedelta(seconds=self._post_buffer_secs)
+        new_deadline = self._deadline_for(req)
         if new_deadline > self._active.deadline:
             self._active.deadline = new_deadline
 

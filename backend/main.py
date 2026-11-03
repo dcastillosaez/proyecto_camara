@@ -498,6 +498,28 @@ async def _purge_loop() -> None:
         await asyncio.sleep(_secs_until_hour(get_settings().retention_hour, datetime.datetime.now()))
 
 
+def is_in_access_schedule(settings, now: datetime.datetime) -> bool:
+    """True si *now* cae dentro del horario de acceso configurado (fuera = intrusion).
+
+    BUG-07: reutiliza _time_in_range de las reglas. La version anterior comparaba
+    start <= now <= end sobre el mismo dia, asi que un horario 22:00-06:00 nunca se
+    cumplia y todo cruce contaba como intrusion. En un horario que cruza la
+    medianoche, el dia que cuenta es el de inicio: el lunes 22:00-06:00 cubre hasta
+    las 06:00 del martes."""
+    from backend.events.rules import _time_in_range
+
+    if not settings.schedule_enabled:
+        return True
+    start = datetime.time.fromisoformat(settings.schedule_start)
+    end = datetime.time.fromisoformat(settings.schedule_end)
+    if not _time_in_range(now.time(), start, end):
+        return False
+    day = now.weekday()
+    if start > end and now.time() <= end:
+        day = (day - 1) % 7      # tramo de madrugada: pertenece al dia anterior
+    return day in settings.schedule_days
+
+
 def _resolve_active_classes(persisted: list[int] | None, settings_value: list[int]) -> list[int]:
     """app_config gana sobre la env var YOLO_CLASSES (27-RESEARCH.md Q6).
 
@@ -662,17 +684,7 @@ async def lifespan(app: FastAPI):
     upload_queue.start()
 
     def _is_in_schedule() -> bool:
-        """True si la hora actual cae dentro del horario de acceso configurado."""
-        if not settings.schedule_enabled:
-            return True
-        now = datetime.datetime.now()
-        if now.weekday() not in settings.schedule_days:
-            return False
-        sh, sm = map(int, settings.schedule_start.split(":"))
-        eh, em = map(int, settings.schedule_end.split(":"))
-        start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
-        end = now.replace(hour=eh, minute=em, second=0, microsecond=0)
-        return start <= now <= end
+        return is_in_access_schedule(settings, datetime.datetime.now())
 
     _last_capture: dict[int, float] = {}
 

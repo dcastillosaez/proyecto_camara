@@ -200,3 +200,85 @@ def test_restart_count_resets_after_window():
     sup.stop_all()
 
     assert status == WorkerStatus.RUNNING   # el tercer crash NO marca FAILED
+
+
+# ─── BUG-05: FAILED avisa y se reintenta tras el enfriamiento ───────────────
+def TEST_failed_worker_notifies_and_retries_after_cooldown():
+    instances: list[_FakeWorker] = []
+    failed: list[str] = []
+
+    def _make():
+        w = _FakeWorker()
+        instances.append(w)
+        return w
+
+    clock = _Clock()
+    sup = WorkerSupervisor(interval=0.05, max_restarts=1, window=60.0, clock=clock,
+                           failed_cooldown=300.0, on_failed=failed.append)
+    sup.register("w", _make)
+    sup.start_all()
+    instances[-1].crash()
+    assert _wait_for(lambda: sup.status()["w"] == WorkerStatus.FAILED)
+    assert failed == ["w"]
+
+    n = len(instances)
+    time.sleep(0.2)
+    assert len(instances) == n          # dentro del enfriamiento no hay reintento
+    clock.advance(301.0)
+    assert _wait_for(lambda: sup.status()["w"] == WorkerStatus.RUNNING)
+    sup.stop_all()
+    assert len(instances) == n + 1
+
+
+def TEST_on_failed_exception_does_not_kill_the_supervisor():
+    def boom(_name):
+        raise RuntimeError("bus caido")
+
+    instances: list[_FakeWorker] = []
+
+    def _make():
+        w = _FakeWorker()
+        instances.append(w)
+        return w
+
+    sup = WorkerSupervisor(interval=0.05, max_restarts=1, clock=_Clock(), on_failed=boom)
+    sup.register("w", _make)
+    sup.start_all()
+    instances[-1].crash()
+    assert _wait_for(lambda: sup.status()["w"] == WorkerStatus.FAILED)
+    assert sup._thread.is_alive()
+    sup.stop_all()
+
+
+# ─── BUG-06: la instancia anterior se para antes de crear la nueva ──────────
+def TEST_previous_instance_is_stopped_before_replacement():
+    instances: list[_FakeWorker] = []
+
+    def _make():
+        w = _FakeWorker()
+        instances.append(w)
+        return w
+
+    sup = WorkerSupervisor(interval=0.05, clock=_Clock())
+    sup.register("w", _make)
+    sup.start_all()
+    first = instances[-1]
+    first.crash()
+    assert _wait_for(lambda: len(instances) == 2)
+    sup.stop_all()
+    assert first.stopped == 1
+
+
+def TEST_worker_on_closed_subscription_exits_instead_of_spinning():
+    """Un DetectionWorker cuyo slot cerro otro (subscribe replace=True) debe salir."""
+    from unittest.mock import MagicMock
+
+    from backend.pipeline.broker import FrameBroker
+    from backend.pipeline.streaming import StreamingWorker
+
+    broker = FrameBroker()
+    worker = StreamingWorker(broker.subscribe("streaming"), MagicMock(), MagicMock())
+    worker.start()
+    broker.subscribe("streaming", replace=True)   # el slot del worker queda cerrado
+    assert _wait_for(lambda: not worker.is_alive(), timeout=3.0)
+    worker.stop(1.0)
