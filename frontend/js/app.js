@@ -2,7 +2,7 @@
 import { connectWS } from './websocket.js';
 import { loadInitialData, loadCamStatus, loadPipelineHealth } from './views/dashboard.js';
 import { bindPtzControls } from './views/dashboard-ptz.js';
-import { bindEventExport } from './views/dashboard-events.js';
+import { bindEventExport, initActivityChart } from './views/dashboard-events.js';
 import { loadHealth, loadObservability } from './views/dashboard-observability.js';
 import { loadResolutions, initTracksOverlay } from './components/videoCanvas.js';
 import { loadRecordings, bindEventCardControls } from './components/eventCard.js';
@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindEventCardControls();
   bindPersonGallery();
   bindEventExport();
+  initActivityChart();   // DEBT-01: si Chart.js falta, solo se pierde el grafico
   bindAlertCenter();
   bindMarkPerson();
   // initAnalytics() ANTES de initNav(): registra el boot diferido que initNav puede

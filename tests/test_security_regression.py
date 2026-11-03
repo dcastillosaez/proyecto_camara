@@ -208,14 +208,44 @@ def TEST_vuln_13_ssl_key_permission_restriction_is_attempted(tmp_path):
     ssl_utils._restrict_key_permissions(key_path)
 
 
-# ─── Vuln 14 — sin Subresource Integrity en CDN de Chart.js ──────────────────
-def TEST_vuln_14_chartjs_cdn_has_subresource_integrity():
+# ─── Vuln 14 — Chart.js sin Subresource Integrity (DEBT-01: ya no hay CDN) ──
+# El riesgo era un CDN comprometido. Desde DEBT-01 Chart.js, Tailwind y las fuentes
+# se sirven desde frontend/vendor/: index.html no puede cargar nada de otro host.
+def TEST_vuln_14_frontend_loads_no_external_resources():
+    import re
+
     html = Path("frontend/index.html").read_text(encoding="utf-8")
-    for line in html.splitlines():
-        if "chart.js" in line.lower() and "cdn" in line.lower():
-            assert "integrity=" in line, "Chart.js CDN <script> missing Subresource Integrity"
-            return
-    pytest.fail("No Chart.js CDN <script> tag found in frontend/index.html")
+    external = re.findall(r'(?:src|href)="(https?://[^"]+)"', html)
+    assert external == [], f"recursos externos en index.html: {external}"
+    assert '/static/vendor/chart.umd.min.js' in html
+    assert Path("frontend/vendor/chart.umd.min.js").exists()
+
+
+def TEST_vendored_chartjs_matches_the_previous_sri_hash():
+    """El fichero copiado es identico al que el CDN servia con SRI (Chart.js 4.5.1)."""
+    import base64
+    import hashlib
+
+    digest = hashlib.sha384(Path("frontend/vendor/chart.umd.min.js").read_bytes()).digest()
+    assert base64.b64encode(digest).decode() == (
+        "jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+    )
+
+
+def TEST_vendored_fonts_css_points_to_local_files():
+    css = Path("frontend/vendor/fonts.css").read_text(encoding="utf-8")
+    assert "gstatic" not in css and "googleapis" not in css
+    import re
+
+    for url in re.findall(r"url\((/static/vendor/fonts/[^)]+)\)", css):
+        assert Path("frontend" + url[len("/static"):]).exists(), url
+
+
+async def TEST_sec09_csp_has_no_external_hosts():
+    async with await _client() as client:
+        resp = await client.get("/")
+    csp = resp.headers["Content-Security-Policy"]
+    assert "http" not in csp, csp
 
 
 # ═══ Plan de mejoras tras la v2.0 — Fase 2 ════════════════════════════════════
