@@ -242,6 +242,29 @@ ALL_SECTIONS: tuple[Section, ...] = (
                              "(núcleos - 1). Menos hilos: algo más de latencia y mucha menos CPU.",
                         type="int", default=3, min=0, max=64, applies="restart_server",
                     ),
+                    FieldDef(
+                        key="motion_gate_enabled", env="MOTION_GATE_ENABLED",
+                        label="Puerta de movimiento (experimental)",
+                        hint="Sin personas ni movimiento en la imagen, la detección baja al FPS "
+                             "de reposo. Puede ver tarde a alguien inmóvil: validar con la "
+                             "cámara antes de activarla.",
+                        type="bool", default=False, applies="restart_camera",
+                    ),
+                    FieldDef(
+                        key="motion_gate_idle_fps", env="MOTION_GATE_IDLE_FPS",
+                        label="FPS de reposo de la puerta de movimiento",
+                        hint="Ritmo de detección con la escena vacía; nunca llega a cero.",
+                        type="float", default=2.0, min=0.5, max=30.0, step=0.5,
+                        applies="restart_camera",
+                    ),
+                    FieldDef(
+                        key="motion_gate_min_changed", env="MOTION_GATE_MIN_CHANGED",
+                        label="Umbral de movimiento",
+                        hint="Fracción de píxeles de la miniatura 160×90 que deben cambiar "
+                             "para considerar que hay movimiento.",
+                        type="float", default=0.005, min=0.0001, max=1.0, step=0.0005,
+                        applies="restart_camera",
+                    ),
                 ),
             ),
             Group(

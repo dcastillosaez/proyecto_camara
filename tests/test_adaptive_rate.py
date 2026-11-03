@@ -123,3 +123,41 @@ def test_should_process_respects_external_cap():
 def test_min_fps_is_readable():
     r = AdaptiveRate(target_fps=8.0, min_fps=3.0, max_fps=12.0)
     assert r.min_fps == 3.0
+
+
+# ─── DET-08: tolerancia frente al periodo de la fuente y FPS medido ─────────
+def _run(rate: AdaptiveRate, source_fps: float, seconds: float) -> int:
+    accepted = 0
+    period = 1.0 / source_fps
+    for i in range(int(source_fps * seconds)):
+        if rate.should_process(i * period):
+            accepted += 1
+    return accepted
+
+
+def TEST_15fps_source_and_12fps_target_does_not_halve():
+    """Antes: con fuente a 15 FPS y 12 pedidos solo pasaba uno de cada dos (7,5 FPS)."""
+    r = AdaptiveRate(target_fps=12.0, min_fps=12.0, max_fps=12.0)
+    accepted = _run(r, source_fps=15.0, seconds=10.0)
+    assert 11.0 <= accepted / 10.0 <= 12.5
+
+
+def TEST_never_exceeds_target_with_a_fast_source():
+    r = AdaptiveRate(target_fps=8.0, min_fps=8.0, max_fps=8.0)
+    accepted = _run(r, source_fps=30.0, seconds=10.0)
+    assert 7.5 <= accepted / 10.0 <= 8.3
+
+
+def TEST_no_burst_after_a_pause():
+    r = AdaptiveRate(target_fps=10.0, min_fps=10.0, max_fps=10.0)
+    assert r.should_process(0.0)
+    assert r.should_process(5.0)        # tras 5 s sin frames, uno...
+    assert not r.should_process(5.01)   # ...y no una rafaga para "recuperar"
+
+
+def TEST_measured_fps_reflects_what_is_processed():
+    r = AdaptiveRate(target_fps=12.0, min_fps=12.0, max_fps=12.0)
+    assert r.measured_fps == 0.0
+    _run(r, source_fps=6.0, seconds=5.0)   # la fuente no da para 12
+    assert 5.5 <= r.measured_fps <= 6.5
+    assert r.stats["measured_fps"] == r.measured_fps

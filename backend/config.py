@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     # (min(8, nucleos - 1)). Medido en el i7-9700K: 3 hilos = 42 ms y 1 nucleo a 8 FPS,
     # frente a 37 ms y 1,9 nucleos con 7.
     inference_threads: int = 3
+    # DET-09: puerta de movimiento. Sin tracks ni cambios en una miniatura de 160x90,
+    # la deteccion baja a motion_gate_idle_fps (nunca a cero). Desactivada por defecto:
+    # el riesgo de ver tarde a una persona inmovil solo se mide con la camara real.
+    motion_gate_enabled: bool = False
+    motion_gate_idle_fps: float = 2.0
+    # Fraccion de pixeles de la miniatura que deben cambiar para contar como movimiento.
+    motion_gate_min_changed: float = 0.005
     # FPS inicial que se pasa a ByteTrack; DetectionWorker lo re-sincroniza
     # en caliente con el FPS efectivo de AdaptiveRate (set_frame_rate).
     tracker_frame_rate: int = 15
@@ -424,6 +431,14 @@ class Settings(BaseSettings):
         if not 0 <= v <= 64:
             raise ValueError("inference_threads debe estar en [0, 64] (0 = valor de Ultralytics)")
         return v
+
+    @model_validator(mode="after")
+    def validate_motion_gate(self) -> "Settings":
+        if not 0.5 <= self.motion_gate_idle_fps <= 30.0:
+            raise ValueError("motion_gate_idle_fps debe estar en [0.5, 30]: la puerta nunca para la detección")
+        if not 0.0 < self.motion_gate_min_changed <= 1.0:
+            raise ValueError("motion_gate_min_changed debe estar en (0, 1]")
+        return self
 
     @model_validator(mode="after")
     def validate_retention_params(self) -> "Settings":

@@ -46,6 +46,22 @@ def _publish_for(broker: FrameBroker, seconds: float, interval: float = 0.02) ->
         time.sleep(interval)
 
 
+def _publish_until(broker: FrameBroker, predicate, timeout: float = 2.0, interval: float = 0.02) -> bool:
+    """Publica frames hasta que se cumple *predicate* o vence *timeout*. Con un tiempo
+    fijo de publicacion el test fallaba en la suite completa: con la maquina cargada el
+    hilo del worker no llegaba a procesar los frames necesarios antes de que se dejara
+    de publicar."""
+    deadline = time.time() + timeout
+    seq = 0
+    while time.time() < deadline:
+        if predicate():
+            return True
+        broker.publish(_make_frame(seq))
+        seq += 1
+        time.sleep(interval)
+    return predicate()
+
+
 def _face(person_id=None, name=None, is_new=False, score=0.0, ambiguous=False) -> FaceResult:
     return FaceResult(person_id, name, is_new, score, ambiguous)
 
@@ -254,15 +270,13 @@ async def TEST_track_recovery_via_real_path_emits_person_recognized_once(broker)
     # Track 1 aparece y se confirma (3 votos coherentes).
     registry.update_from_detections(_FakeTracked([1]), now=time.monotonic())
     registry.set_frame_ids({1})
-    _publish_for(broker, seconds=0.3)
-    await wait_until(lambda: fsm.state_of(1) is IdentityState.CONFIRMED, timeout=2.0)
+    assert _publish_until(broker, lambda: fsm.state_of(1) is IdentityState.CONFIRMED)
 
     # Track 1 desaparece del frame (oclusion): _sync_identity real lo marca
     # perdido, y el mock deja de "verle" cara (nadie coincide con match_track).
     match_track["id"] = None
     registry.set_frame_ids(set())
-    _publish_for(broker, seconds=0.2)
-    await wait_until(lambda: fsm.state_of(1) is IdentityState.TEMPORARILY_LOST, timeout=2.0)
+    assert _publish_until(broker, lambda: fsm.state_of(1) is IdentityState.TEMPORARILY_LOST)
 
     # El TrackRegistry termina soltando el track viejo (lo que haria
     # DetectionWorker.prune() pasado su ttl) -- sin esto seguiria ganando el
@@ -273,11 +287,10 @@ async def TEST_track_recovery_via_real_path_emits_person_recognized_once(broker)
     match_track["id"] = 99
     registry.update_from_detections(_FakeTracked([99]), now=time.monotonic())
     registry.set_frame_ids({99})
-    _publish_for(broker, seconds=0.3)
-    await wait_until(
+    assert _publish_until(
+        broker,
         lambda: registry.get(99) is not None
         and registry.get(99).identity_state is IdentityState.CONFIRMED,
-        timeout=2.0,
     )
 
     worker.stop()

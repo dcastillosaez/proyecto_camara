@@ -25,6 +25,7 @@ from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.tracking import TrackRegistry
 
 if TYPE_CHECKING:
+    from backend.pipeline.motion import MotionGate
     from backend.detector import PersonDetector
     from backend.events.engine import EventEngine
     from backend.observability.latency import LatencyTracker
@@ -67,8 +68,11 @@ class DetectionWorker:
         object_tracker: "ObjectTracker | None" = None,
         object_class_ids: set[int] | None = None,
         objects: "ObjectAnalyzer | None" = None,
+        motion_gate: "MotionGate | None" = None,
     ) -> None:
         self._sub = sub
+        self._motion_gate = motion_gate   # DET-09: None = desactivada (por defecto)
+        self._has_tracks = False
         self._detector = detector
         self._tracker = tracker
         self._registry = registry
@@ -133,6 +137,7 @@ class DetectionWorker:
         return {
             "frames_processed": self._frames_processed,
             "exceptions": self._exceptions,
+            "motion_skipped": self._motion_gate.skipped if self._motion_gate is not None else 0,
             **self._rate.stats,
         }
 
@@ -238,6 +243,10 @@ class DetectionWorker:
                 continue
             if not self._rate.should_process(time.monotonic()):
                 continue
+            if self._motion_gate is not None and not self._motion_gate.allow(
+                frame.image, time.monotonic(), self._has_tracks or bool(self._lost_ids),
+            ):
+                continue
 
             t0 = time.monotonic()
             try:
@@ -251,6 +260,7 @@ class DetectionWorker:
                 person_dets, object_dets = self._split_by_class(sv_dets)
                 tracked, crossings = self._tracker.update(person_dets)
                 self._lost_ids = self._tracker_lost_ids()
+                self._has_tracks = len(tracked) > 0
                 obj_tracked = (
                     self._object_tracker.update(object_dets)
                     if self._object_tracker is not None
@@ -485,8 +495,15 @@ class DetectionWorker:
         self._event_engine.accumulate_detections(wall_now, active_ids, confidences)
 
     def _sync_tracker_frame_rate(self) -> None:
-        """Si AdaptiveRate cambio de escalon, sincroniza ByteTrack (riesgo #1 de la fase)."""
-        fps = self._rate.effective_fps
+        """Sincroniza ByteTrack con el FPS al que de verdad se procesa (riesgo #1 de la fase).
+
+        DET-08: antes se usaba el FPS PEDIDO (effective_fps). Si la fuente no da para
+        tanto, ByteTrack creia trabajar a 12 FPS procesando 7,5 y su ventana de perdida
+        en segundos quedaba mas larga de lo calculado. Se usa el medido, redondeado a
+        medio FPS para no mutar el tracker en cada frame, y el pedido mientras no hay
+        medida."""
+        measured = self._rate.measured_fps
+        fps = round(measured * 2) / 2 if measured > 0 else self._rate.effective_fps
         if fps != self._last_effective_fps:
             self._last_effective_fps = fps
             self._tracker.set_frame_rate(fps)

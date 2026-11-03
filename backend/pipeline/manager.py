@@ -22,6 +22,7 @@ from backend.perception.reid.gallery import TrackGallery
 from backend.pipeline.broker import FrameBroker
 from backend.pipeline.capture import CaptureHealth, CaptureWorker
 from backend.pipeline.detection import DetectionWorker
+from backend.pipeline.motion import MotionGate
 from backend.pipeline.rate import AdaptiveRate
 from backend.pipeline.recognition import RecognitionWorker
 from backend.pipeline.recording import RecordingWorker
@@ -94,6 +95,9 @@ class CameraPipeline:
         object_person_window_secs: float = 10.0,
         object_max_tracks: int = 256,
         inference_device_mode: str = "auto",
+        motion_gate_enabled: bool = False,
+        motion_gate_idle_fps: float = 2.0,
+        motion_gate_min_changed: float = 0.005,
     ) -> None:
         self.camera_id = camera_id
         self.broker = FrameBroker()
@@ -180,6 +184,10 @@ class CameraPipeline:
                     objects=self.objects,
                     object_tracker=self.object_tracker,
                     object_class_ids=set(object_class_ids or []),
+                    motion_gate=(
+                        MotionGate(idle_fps=motion_gate_idle_fps, min_changed=motion_gate_min_changed)
+                        if motion_gate_enabled else None
+                    ),
                 )
                 return self.detection
 

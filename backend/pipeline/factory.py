@@ -184,6 +184,9 @@ def build_camera_pipeline(
         object_person_window_secs=settings.object_person_window_secs,
         object_max_tracks=settings.object_max_tracks,
         inference_device_mode=device.mode,
+        motion_gate_enabled=settings.motion_gate_enabled,
+        motion_gate_idle_fps=settings.motion_gate_idle_fps,
+        motion_gate_min_changed=settings.motion_gate_min_changed,
     )
     _report_device_fallbacks(pipeline, event_engine)
     pipeline.set_detection_classes(services.active_classes)
