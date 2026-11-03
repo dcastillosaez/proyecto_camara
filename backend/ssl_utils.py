@@ -16,6 +16,9 @@ def ensure_self_signed_cert(certfile: str, keyfile: str) -> None:
     cert_path = Path(certfile)
     key_path = Path(keyfile)
     if cert_path.exists() and key_path.exists():
+        # SEC-11: las instalaciones que ya tenian la clave nunca pasaban por aqui con
+        # las ACL corregidas; se reaplican en cada arranque (es idempotente).
+        _restrict_key_permissions(key_path)
         return
 
     from cryptography import x509

@@ -1,5 +1,6 @@
 """HTTP Basic Auth + WebSocket token management."""
 import base64
+import logging
 import secrets
 import time
 
@@ -7,6 +8,8 @@ from fastapi import HTTPException, status
 from starlette.requests import HTTPConnection
 
 from backend.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 _WS_TOKEN_TTL = 60  # seconds
 
@@ -16,6 +19,23 @@ _ws_tokens: dict[str, float] = {}
 
 def _auth_enabled() -> bool:
     return bool(get_settings().dashboard_user)
+
+
+def check_auth_config(settings=None) -> None:
+    """SEC-06: se llama al arrancar. Con DASHBOARD_USER y sin DASHBOARD_PASS bastaria
+    conocer el usuario para entrar con la contraseña vacia, asi que se aborta el
+    arranque. Sin usuario no hay autenticacion: se permite, pero se avisa."""
+    s = settings or get_settings()
+    if s.dashboard_user and not s.dashboard_pass:
+        raise RuntimeError(
+            "DASHBOARD_USER está configurado sin DASHBOARD_PASS: el dashboard aceptaría "
+            "la contraseña vacía. Define DASHBOARD_PASS o vacía DASHBOARD_USER."
+        )
+    if not s.dashboard_user:
+        logger.warning(
+            "Autenticación desactivada (DASHBOARD_USER vacío): cualquiera en la red puede "
+            "ver el vídeo, los clips y los rostros."
+        )
 
 
 def _purge_expired_tokens() -> None:

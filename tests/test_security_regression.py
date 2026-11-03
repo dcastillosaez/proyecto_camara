@@ -216,3 +216,137 @@ def TEST_vuln_14_chartjs_cdn_has_subresource_integrity():
             assert "integrity=" in line, "Chart.js CDN <script> missing Subresource Integrity"
             return
     pytest.fail("No Chart.js CDN <script> tag found in frontend/index.html")
+
+
+# ═══ Plan de mejoras tras la v2.0 — Fase 2 ════════════════════════════════════
+def _auth_settings(**kw) -> Settings:
+    return Settings(dashboard_user="u", dashboard_pass="p", **kw)
+
+
+# ─── SEC-01 — los mounts estáticos y /docs exigen autenticación ──────────────
+@pytest.mark.parametrize("path", [
+    "/clips/x.mp4", "/gallery/1/x.jpg", "/snapshots/20260101/x.jpg",
+    "/docs", "/redoc", "/openapi.json",
+])
+async def TEST_sec01_static_mounts_and_docs_require_auth(path):
+    from backend import auth
+    with patch.object(auth, "get_settings", return_value=_auth_settings()):
+        async with await _client() as client:
+            resp = await client.get(path)
+    assert resp.status_code == 401, f"{path} respondio {resp.status_code} sin credenciales"
+    assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+
+
+async def TEST_sec01_static_mount_accepts_valid_credentials(tmp_path):
+    from backend import auth
+    with patch.object(auth, "get_settings", return_value=_auth_settings()):
+        async with await _client() as client:
+            resp = await client.get("/clips/no-existe.mp4", auth=("u", "p"))
+    assert resp.status_code == 404   # pasa la auth; el fichero simplemente no existe
+
+
+async def TEST_sec01_static_mounts_open_without_auth_configured():
+    from backend import auth
+    with patch.object(auth, "get_settings", return_value=Settings(dashboard_user="")):
+        async with await _client() as client:
+            resp = await client.get("/clips/no-existe.mp4")
+    assert resp.status_code == 404
+
+
+# ─── SEC-02 — máscara y codificación de credenciales ─────────────────────────
+@pytest.mark.parametrize("url", [
+    "rtsp://admin:pa/ss@192.168.1.2:554/stream1",
+    "rtsp://admin:pa?ss@192.168.1.2/stream1",
+    "rtsp://admin:pa#ss@192.168.1.2/stream1",
+    "rtsp://admin:p@ss@192.168.1.2/stream1",
+])
+def TEST_sec02_mask_hides_password_with_url_delimiters(url):
+    masked = mask_rtsp_url(url)
+    assert "pa" not in masked.split("@")[0] and "ss@" not in masked
+    assert "admin" not in masked
+    assert masked.startswith("rtsp://***:***@192.168.1.2")
+
+
+def TEST_sec02_mask_leaves_url_without_credentials():
+    assert mask_rtsp_url("rtsp://192.168.1.2:554/stream2") == "rtsp://192.168.1.2:554/stream2"
+
+
+def TEST_sec02_build_rtsp_url_encodes_delimiters():
+    from urllib.parse import unquote, urlparse
+    s = Settings(camera_url="rtsp://192.168.1.2:554/stream2", rtsp_user="admin", rtsp_pass="a/b?c#d@e")
+    url = build_rtsp_url(s)
+    p = urlparse(url)
+    assert p.hostname == "192.168.1.2" and p.port == 554 and p.path == "/stream2"
+    assert unquote(p.password) == "a/b?c#d@e"
+    assert "a/b?c#d@e" not in mask_rtsp_url(url)
+
+
+def TEST_sec02_simple_credentials_unchanged():
+    s = Settings(camera_url="rtsp://192.168.1.2:554/stream2", rtsp_user="admin", rtsp_pass="Secr3t!")
+    assert build_rtsp_url(s) == "rtsp://admin:Secr3t!@192.168.1.2:554/stream2"
+
+
+async def TEST_sec02_telegram_failure_log_does_not_contain_token(caplog):
+    import logging
+
+    from backend.notifier import Notifier
+    token = "123456:SECRET-TOKEN"
+    n = Notifier(telegram_token=token, telegram_chat_id="1")
+    err = httpx.ConnectError(f"fallo en https://api.telegram.org/bot{token}/sendMessage")
+    with patch("backend.notifier.httpx.AsyncClient.post", side_effect=err), \
+         caplog.at_level(logging.DEBUG):
+        assert await n.send_telegram("hola") is False
+    assert token not in caplog.text
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+
+
+# ─── SEC-03 — el nombre de persona no se interpola en innerHTML ─────────────
+def TEST_sec03_person_gallery_does_not_interpolate_name_into_html():
+    src = Path("frontend/js/components/personGallery.js").read_text(encoding="utf-8")
+    start = src.index("row.innerHTML = `")
+    end = src.index("`;", start)
+    assert "${" not in src[start + len("row.innerHTML = `"):end]
+    assert "textContent = p.name" in src
+
+
+# ─── SEC-06 — usuario sin contraseña aborta el arranque ──────────────────────
+def TEST_sec06_user_without_password_aborts_startup():
+    from backend.auth import check_auth_config
+    with pytest.raises(RuntimeError, match="DASHBOARD_PASS"):
+        check_auth_config(Settings(dashboard_user="u", dashboard_pass=""))
+
+
+def TEST_sec06_no_auth_logs_warning(caplog):
+    import logging
+
+    from backend.auth import check_auth_config
+    with caplog.at_level(logging.WARNING, logger="backend.auth"):
+        check_auth_config(Settings(dashboard_user=""))
+    assert "Autenticación desactivada" in caplog.text
+
+
+def TEST_sec06_user_with_password_is_accepted():
+    from backend.auth import check_auth_config
+    check_auth_config(_auth_settings())
+
+
+def TEST_sec06_lifespan_calls_check_auth_config():
+    src = Path("backend/main.py").read_text(encoding="utf-8")
+    lifespan = src[src.index("async def lifespan"):]
+    assert lifespan.index("check_auth_config(settings)") < lifespan.index("await init_db()")
+
+
+# ─── SEC-11 — la clave existente recupera permisos restrictivos ──────────────
+@pytest.mark.skipif(__import__("os").name == "nt", reason="chmod POSIX; en Windows se usa icacls")
+def TEST_sec11_existing_key_gets_restricted_permissions(tmp_path):
+    import os
+    import stat
+
+    from backend.ssl_utils import ensure_self_signed_cert
+    cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
+    cert.write_bytes(b"cert")
+    key.write_bytes(b"key")
+    os.chmod(key, 0o644)
+    ensure_self_signed_cert(str(cert), str(key))
+    assert stat.S_IMODE(os.stat(key).st_mode) == 0o600
+    assert key.read_bytes() == b"key"   # no se regenera

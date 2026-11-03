@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import datetime
 import logging
+import string
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol
 
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 from backend.events.types import Event, EventType
 
@@ -32,6 +33,24 @@ class When(BaseModel):
     person: str | None = None  # nombre o "unknown"
     payload: dict[str, Any] | None = None  # match exacto de claves del payload (AND)
 
+    @field_validator("time_range")
+    @classmethod
+    def _valid_time_range(cls, v: str | None) -> str | None:
+        """SEC-07: un rango mal escrito lanzaba en cada evento dentro de match()."""
+        if v is not None:
+            try:
+                _parse_time_range(v)
+            except ValueError as exc:
+                raise ValueError(f"time_range debe tener la forma HH:MM-HH:MM: {exc}") from None
+        return v
+
+    @field_validator("days")
+    @classmethod
+    def _valid_days(cls, v: list[int] | None) -> list[int] | None:
+        if v is not None and any(d < 0 or d > 6 for d in v):
+            raise ValueError("days solo admite valores de 0 (lunes) a 6 (domingo)")
+        return v
+
 
 class Action(BaseModel):
     type: Literal[
@@ -41,6 +60,26 @@ class Action(BaseModel):
     post_secs: float | None = None
     template: str | None = None
     url_ref: str | None = None
+
+    @field_validator("template")
+    @classmethod
+    def _valid_template(cls, v: str | None) -> str | None:
+        """SEC-07: la plantilla pasa por str.format(). Solo se admiten campos simples
+        ({type}, {camera_id}...): con "{ts.__class__}" o "{payload[x]}" se podria
+        recorrer atributos de los objetos del evento."""
+        if v is None:
+            return v
+        try:
+            fields = [f for _, f, _, _ in string.Formatter().parse(v) if f is not None]
+        except ValueError as exc:
+            raise ValueError(f"template mal formada: {exc}") from None
+        for field in fields:
+            if not field.isidentifier():
+                raise ValueError(
+                    f"template: el campo {{{field}}} no es un nombre simple "
+                    "(no se admiten atributos, índices ni campos posicionales)"
+                )
+        return v
 
 
 class Rule(BaseModel):
@@ -197,7 +236,13 @@ class RuleEngine:
         for rule in self._rules:
             if not rule.enabled:
                 continue
-            if not _matches(rule.when, event):
+            try:
+                matched = _matches(rule.when, event)
+            except Exception:
+                # SEC-07: una regla rota no puede impedir que se evaluen las demas.
+                logger.exception("Regla %r fallo al evaluar el evento %s", rule.name, event.id)
+                continue
+            if not matched:
                 continue
             if self._is_debounced(rule, event):
                 continue

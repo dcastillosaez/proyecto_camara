@@ -12,6 +12,9 @@ from dataclasses import dataclass
 import httpx
 
 logger = logging.getLogger(__name__)
+# SEC-02: httpx registra en INFO cada peticion con su URL completa, y la de Telegram
+# lleva el token del bot ("/bot<token>/sendMessage"). Solo se dejan pasar avisos.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 _TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 _TELEGRAM_PHOTO_API = "https://api.telegram.org/bot{token}/sendPhoto"
@@ -22,6 +25,10 @@ class Notifier:
     webhook_url: str = ""
     telegram_token: str = ""
     telegram_chat_id: str = ""
+
+    def _redact(self, text: str) -> str:
+        """Quita el token de Telegram de un texto (los errores de httpx incluyen la URL)."""
+        return text.replace(self.telegram_token, "***") if self.telegram_token else text
 
     @property
     def active_channels(self) -> list[str]:
@@ -51,7 +58,7 @@ class Notifier:
             logger.info("Telegram alert sent")
             return True
         except Exception as exc:
-            logger.warning("Telegram alert failed: %s", exc)
+            logger.warning("Telegram alert failed: %s", self._redact(str(exc)))
             return False
 
     async def send_webhook(self, payload: dict) -> bool:

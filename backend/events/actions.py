@@ -90,7 +90,7 @@ def _interpolate(template: str, event: Event) -> str:
     }
     try:
         return template.format(**values)
-    except (KeyError, IndexError) as exc:
+    except (KeyError, IndexError, ValueError, AttributeError) as exc:
         logger.warning("Placeholder desconocido en template %r: %s", template, exc)
         return template
 

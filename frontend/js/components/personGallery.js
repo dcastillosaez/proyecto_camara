@@ -25,16 +25,23 @@ export async function loadPersons() {
           <div class="w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center flex-shrink-0">
             <svg class="w-3 h-3 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
           </div>
-          <span class="text-xs font-medium text-slate-200 truncate">${p.name}</span>
+          <span class="person-name text-xs font-medium text-slate-200 truncate"></span>
         </div>
         <div class="flex items-center gap-2 flex-shrink-0">
-          <span class="text-xs text-slate-600">${p.visit_count}×</span>
-          <span class="text-xs text-slate-600">${ts}</span>
-          <button class="btn-gallery text-xs text-slate-500 hover:text-blue-400 transition-colors cursor-pointer" title="Ver capturas" aria-label="Ver capturas de ${p.name}">
+          <span class="person-visits text-xs text-slate-600"></span>
+          <span class="person-seen text-xs text-slate-600"></span>
+          <button class="btn-gallery text-xs text-slate-500 hover:text-blue-400 transition-colors cursor-pointer" title="Ver capturas">
             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
           </button>
         </div>`;
-      row.querySelector('.btn-gallery').addEventListener('click', () => openGallery(p.id, p.name));
+      // SEC-03: el nombre lo escribe el operador al registrar una cara; va siempre por
+      // textContent, nunca interpolado en innerHTML (XSS almacenado).
+      row.querySelector('.person-name').textContent = p.name;
+      row.querySelector('.person-visits').textContent = `${p.visit_count}×`;
+      row.querySelector('.person-seen').textContent = ts;
+      const btn = row.querySelector('.btn-gallery');
+      btn.setAttribute('aria-label', `Ver capturas de ${p.name}`);
+      btn.addEventListener('click', () => openGallery(p.id, p.name));
       list.appendChild(row);
     });
   } catch {}
