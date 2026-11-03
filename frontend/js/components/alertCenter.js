@@ -11,6 +11,7 @@
 import { apiFetch } from '../api.js';
 import { showToast } from '../views/dashboard.js';
 import { describe, SEV_COLOR } from '../views/timeline-row.js';
+import { poll } from '../poll.js';
 
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 5000;
@@ -269,4 +270,4 @@ export function bindAlertCenter() {
   });
 }
 
-setInterval(loadAlerts, REFRESH_MS);
+poll(loadAlerts, REFRESH_MS);   // DIR-04: badge de cabecera, cualquier vista

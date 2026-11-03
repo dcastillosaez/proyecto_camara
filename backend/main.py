@@ -44,6 +44,7 @@ from backend.events.engine import EventEngine
 from backend.events.rules import RuleEngine, load_rules
 from backend.events.types import Event, EventType
 from backend.gdrive import UploadQueue
+from backend.http_guards import BodySizeLimitMiddleware, OriginCheckMiddleware
 from backend.observability.latency import LatencyTracker
 from backend.observability.metrics import metrics as obs_metrics
 from backend.observability.sampler import MetricsSampler
@@ -934,7 +935,7 @@ async def lifespan(app: FastAPI):
     logger.info("Pipeline detenido")
 
 
-_limiter = Limiter(key_func=get_remote_address)
+_limiter = Limiter(key_func=get_remote_address, key_style="endpoint")   # SEC-04, ver deps.py
 
 app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify)])
 app.state.limiter = _limiter
@@ -992,7 +993,15 @@ class StaticAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# SEC-08: limite de cuerpo antes de procesarlo. 2 MB sobran para cualquier JSON de la
+# API; /api/enroll_face admite su imagen de 10 MB mas la envoltura multipart.
+_MAX_BODY_BYTES = 2 * 1024 * 1024
+_ENROLL_MAX_BODY_BYTES = 11 * 1024 * 1024
+
 app.add_middleware(StaticAuthMiddleware)
+app.add_middleware(OriginCheckMiddleware, allowed_origins=_settings.cors_origins)    # SEC-05
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=_MAX_BODY_BYTES,
+                   overrides={"/api/enroll_face": _ENROLL_MAX_BODY_BYTES})
 app.add_middleware(SecurityHeadersMiddleware)   # el ultimo anadido envuelve al resto: tambien al 401
 
 if _settings.camera_driver == "tapo":

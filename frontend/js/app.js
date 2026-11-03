@@ -16,6 +16,7 @@ import { initNav } from './nav.js';
 import { initCamera } from './views/camera.js';
 import { initCameraQuick } from './views/camera-quick.js';
 import { initSettings } from './views/settings.js';
+import { poll } from './poll.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   // Wiring de listeners — el orden entre si no importa (no hay llamadas de red aqui,
@@ -45,23 +46,23 @@ document.addEventListener('DOMContentLoaded', () => {
   connectWS();
 
   loadRecordings();
-  setInterval(loadRecordings, 30000);
+  poll(loadRecordings, 30000, { view: 'operaciones' });
 
   loadPersons();
-  setInterval(loadPersons, 30000);
+  poll(loadPersons, 30000, { view: 'operaciones' });
   // person_name no viaja persistido en el evento: la timeline lo resuelve contra su
   // Map<person_id, name>, que se refresca al mismo ritmo que la galeria (Hallazgo 5).
-  setInterval(refreshPersonNames, 30000);
+  poll(refreshPersonNames, 30000);
 
   loadDetectionClasses();
 
   loadHealth();
-  setInterval(loadHealth, 30000);
+  poll(loadHealth, 30000, { view: ['operaciones', 'camara'] });
   loadPipelineHealth();
   loadAlerts();
 
   loadObservability();
-  setInterval(loadObservability, 5000);
+  poll(loadObservability, 5000, { view: ['operaciones', 'camara'] });
 
   // Fase 32 (32-07): las tres vistas nuevas -- seguras de llamar aunque su pestana no
   // este activa (initCamera arma el timer de la tarjeta RTSP pero no activa

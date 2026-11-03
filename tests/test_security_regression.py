@@ -380,3 +380,115 @@ def TEST_sec11_existing_key_gets_restricted_permissions(tmp_path):
     ensure_self_signed_cert(str(cert), str(key))
     assert stat.S_IMODE(os.stat(key).st_mode) == 0o600
     assert key.read_bytes() == b"key"   # no se regenera
+
+
+# ─── SEC-04 — fallos de autenticación por IP y límite por plantilla de ruta ──
+async def TEST_sec04_repeated_auth_failures_are_throttled_per_ip():
+    from backend import auth
+    auth._auth_failures.clear()
+    try:
+        with patch.object(auth, "get_settings", return_value=_auth_settings()):
+            async with await _client() as client:
+                codes = [(await client.get("/api/stats", auth=("u", "mal"))).status_code
+                         for _ in range(auth._FAIL_MAX)]
+                assert set(codes) == {401}
+                blocked = await client.get("/api/stats", auth=("u", "p"))
+                assert blocked.status_code == 429      # ni con la contraseña buena
+                assert (await client.get("/api/stats")).status_code == 429
+    finally:
+        auth._auth_failures.clear()
+
+
+async def TEST_sec04_success_resets_the_failure_count():
+    from backend import auth
+    auth._auth_failures.clear()
+    try:
+        with patch.object(auth, "get_settings", return_value=_auth_settings()), \
+             patch.object(main_module, "get_stats_today", return_value={"total_today": 0, "hourly": {}}):
+            async with await _client() as client:
+                for _ in range(auth._FAIL_MAX - 1):
+                    await client.get("/api/stats", auth=("u", "mal"))
+                assert (await client.get("/api/stats", auth=("u", "p"))).status_code == 200
+                assert auth._auth_failures == {}
+    finally:
+        auth._auth_failures.clear()
+
+
+def TEST_sec04_missing_header_is_not_a_failure():
+    """El navegador siempre hace la primera petición sin cabecera: no cuenta."""
+    import asyncio
+
+    from backend import auth
+    auth._auth_failures.clear()
+    conn = MagicMock()
+    conn.scope = {"type": "http"}
+    conn.headers = {}
+    conn.client.host = "10.0.0.9"
+    with patch.object(auth, "get_settings", return_value=_auth_settings()):
+        for _ in range(auth._FAIL_MAX + 2):
+            with pytest.raises(Exception) as exc:
+                asyncio.run(auth.verify(conn))
+            assert exc.value.status_code == 401
+    assert auth._auth_failures == {}
+
+
+def TEST_sec04_rate_limit_counts_per_route_template():
+    from backend.main import _limiter
+    assert v2_limiter._key_style == "endpoint"
+    assert _limiter._key_style == "endpoint"
+
+
+# ─── SEC-05 — Origin en métodos que cambian estado ───────────────────────────
+async def TEST_sec05_cross_origin_post_is_rejected():
+    async with await _client() as client:
+        resp = await client.delete(
+            "/api/events", params={"from_dt": "2026-01-01T00:00:00", "to_dt": "2026-01-02T00:00:00"},
+            headers={"Origin": "http://atacante.lan"},
+        )
+    assert resp.status_code == 403
+
+
+async def TEST_sec05_same_origin_and_no_origin_pass():
+    with patch.object(main_module, "delete_events_range", return_value=0):
+        async with await _client() as client:
+            params = {"from_dt": "2026-01-01T00:00:00", "to_dt": "2026-01-02T00:00:00"}
+            same = await client.delete("/api/events", params=params, headers={"Origin": "http://test"})
+            none = await client.delete("/api/events", params=params)
+    assert same.status_code == 200
+    assert none.status_code == 200
+
+
+async def TEST_sec05_get_is_not_checked():
+    async with await _client() as client:
+        resp = await client.get("/", headers={"Origin": "http://atacante.lan"})
+    assert resp.status_code == 200
+
+
+# ─── SEC-08 — tamaño del cuerpo antes de procesarlo ──────────────────────────
+async def TEST_sec08_oversized_body_rejected_by_content_length():
+    async with await _client() as client:
+        resp = await client.post("/api/v2/rules", content=b"x" * (3 * 1024 * 1024),
+                                 headers={"Content-Type": "application/json"})
+    assert resp.status_code == 413
+
+
+async def TEST_sec08_streamed_body_without_length_is_cut():
+    async def chunks():
+        for _ in range(40):
+            yield b"x" * (100 * 1024)
+
+    async with await _client() as client:
+        resp = await client.post("/api/v2/rules", content=chunks(),
+                                 headers={"Content-Type": "application/json"})
+    assert resp.status_code == 413
+
+
+async def TEST_sec08_enroll_keeps_its_larger_limit():
+    """La imagen de enrolado sigue admitiendo hasta 10 MB: el 413 lo da el endpoint."""
+    oversized = b"\xff" * (10 * 1024 * 1024 + 1)
+    with patch.object(main_module, "rtsp_stream", _mock_recognizer_stream()):
+        async with await _client() as client:
+            resp = await client.post("/api/enroll_face", data={"name": "Eve"},
+                                     files={"image": ("big.jpg", oversized, "image/jpeg")})
+    assert resp.status_code == 413
+    assert "10 MB" in resp.json()["detail"]

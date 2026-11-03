@@ -35,14 +35,15 @@ export function rateLimitedFor() {
 /**
  * Llama a `fn` cada `ms` milisegundos mientras tenga sentido:
  *   - nunca con la pestana del navegador oculta;
- *   - si `view` se indica, solo con esa vista activa ('operaciones', 'camara'...);
+ *   - si `view` se indica, solo con esa vista (o una de esa lista) activa;
  *   - nunca durante el backoff de un 429.
  * Al volver a ser visible o activa, el siguiente tick llega en <= `ms`.
  */
 export function poll(fn, ms, { view = null } = {}) {
   const tick = async () => {
     const visible = document.visibilityState !== 'hidden';
-    const active = view === null || activeView() === view;
+    const active = view === null
+      || (Array.isArray(view) ? view.includes(activeView()) : activeView() === view);
     if (visible && active && rateLimitedFor() === 0) {
       try { await fn(); } catch { /* cada fn gestiona sus propios errores */ }
     }

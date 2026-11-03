@@ -21,7 +21,10 @@ from fastapi import HTTPException, Query
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-limiter = Limiter(key_func=get_remote_address)
+# SEC-04: key_style="endpoint" cuenta por funcion de ruta (la plantilla, p. ej.
+# /api/v2/recordings/{recording_id}), no por URL concreta: con "url" cada id tenia su
+# propio cupo y bastaba variar el id para esquivar el limite.
+limiter = Limiter(key_func=get_remote_address, key_style="endpoint")
 
 V2_RATE_LIMIT = "60/minute"
 

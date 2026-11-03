@@ -3,6 +3,7 @@ import base64
 import logging
 import secrets
 import time
+from collections import deque
 
 from fastapi import HTTPException, status
 from starlette.requests import HTTPConnection
@@ -15,6 +16,49 @@ _WS_TOKEN_TTL = 60  # seconds
 
 # token → issued_at timestamp
 _ws_tokens: dict[str, float] = {}
+
+# SEC-04: intentos fallidos de Basic Auth por IP. Pasado el maximo dentro de la
+# ventana, esa IP recibe 429 sin comprobar credenciales hasta que la ventana se vacie.
+# Antes no habia limite: el de slowapi era por URL concreta y por endpoint, y una
+# fuerza bruta podia repartirse entre rutas. Acotado: a partir de _FAIL_TRACK_CAP IPs
+# se descartan las que no tienen fallos recientes.
+_FAIL_WINDOW = 300.0
+_FAIL_MAX = 10
+_FAIL_TRACK_CAP = 1024
+_auth_failures: dict[str, deque[float]] = {}
+
+
+def _client_ip(conn: HTTPConnection) -> str:
+    return conn.client.host if conn.client else "unknown"
+
+
+def _recent_failures(ip: str, now: float) -> deque[float]:
+    window = _auth_failures.get(ip)
+    if window is None:
+        return deque()
+    while window and now - window[0] > _FAIL_WINDOW:
+        window.popleft()
+    if not window:
+        del _auth_failures[ip]
+    return window
+
+
+def _record_failure(ip: str, now: float) -> None:
+    if len(_auth_failures) >= _FAIL_TRACK_CAP and ip not in _auth_failures:
+        for other in list(_auth_failures):
+            _recent_failures(other, now)
+        if len(_auth_failures) >= _FAIL_TRACK_CAP:
+            _auth_failures.pop(next(iter(_auth_failures)))
+    _auth_failures.setdefault(ip, deque()).append(now)
+
+
+def _unauthorized(detail: str, ip: str) -> HTTPException:
+    _record_failure(ip, time.monotonic())
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        headers={"WWW-Authenticate": "Basic realm='Tapo Dashboard'"},
+        detail=detail,
+    )
 
 
 def _auth_enabled() -> bool:
@@ -53,8 +97,16 @@ async def verify(conn: HTTPConnection) -> None:
     if conn.scope.get("type") == "websocket":
         return
 
+    ip = _client_ip(conn)
+    if len(_recent_failures(ip, time.monotonic())) >= _FAIL_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos de autenticación fallidos; espera unos minutos",
+        )
+
     auth = conn.headers.get("Authorization", "")
     if not auth.startswith("Basic "):
+        # Sin cabecera no es un intento fallido: el navegador siempre pide primero sin ella.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             headers={"WWW-Authenticate": "Basic realm='Tapo Dashboard'"},
@@ -64,21 +116,14 @@ async def verify(conn: HTTPConnection) -> None:
         decoded = base64.b64decode(auth[6:]).decode("utf-8")
         username, password = decoded.split(":", 1)
     except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            headers={"WWW-Authenticate": "Basic realm='Tapo Dashboard'"},
-            detail="Invalid Authorization header",
-        )
+        raise _unauthorized("Invalid Authorization header", ip)
 
     s = get_settings()
     user_ok = secrets.compare_digest(username.encode(), s.dashboard_user.encode())
     pass_ok = secrets.compare_digest(password.encode(), s.dashboard_pass.encode())
     if not (user_ok and pass_ok):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            headers={"WWW-Authenticate": "Basic realm='Tapo Dashboard'"},
-            detail="Invalid credentials",
-        )
+        raise _unauthorized("Invalid credentials", ip)
+    _auth_failures.pop(ip, None)
 
 
 def issue_ws_token() -> str:

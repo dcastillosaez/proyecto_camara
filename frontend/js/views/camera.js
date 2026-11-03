@@ -26,6 +26,7 @@ import { initLineEditor, disableLineEditMode } from '../components/lineEditor.js
 import { initRulesEditor } from './rules-editor.js';
 import { getActiveCameraId, setActiveCameraId, onActiveCameraChange } from '../components/activeCamera.js';
 import { initCameraMosaic } from './camera-mosaic.js';
+import { poll } from '../poll.js';
 
 let _activatedCameraId = null;
 
@@ -100,12 +101,16 @@ function _paintRtspState(state) {
  * la URL en el navegador (T-32-12). De paso refresca el selector y el aviso de CPU
  * (Fase 36) sobre el mismo tick de 5s, sin abrir una peticion aparte.
  */
+let _rtspUrlLoaded = false;
+
 export async function loadRtspCard() {
   _paintCpuWarning(await _loadCameraOptions());
   try {
+    // DIR-04: /api/v2/config solo se pide una vez (la URL RTSP no cambia sin guardar
+    // Ajustes, y guardar recarga la vista). Antes salia en cada tick de 5 s.
     const [healthRes, configRes] = await Promise.all([
       fetch(`/api/v2/cameras/${encodeURIComponent(getActiveCameraId())}/health`),
-      fetch('/api/v2/config'),
+      _rtspUrlLoaded ? Promise.resolve(null) : fetch('/api/v2/config'),
     ]);
     if (!healthRes.ok) throw new Error('health fetch failed');
     const h = await healthRes.json();
@@ -123,7 +128,8 @@ export async function loadRtspCard() {
     const resolution = document.getElementById('rtsp-resolution');
     if (resolution) resolution.textContent = w && hh ? `${w}×${hh}` : '–';
 
-    if (configRes.ok) {
+    if (configRes && configRes.ok) {
+      _rtspUrlLoaded = true;
       const cfg = await configRes.json();
       const camara = cfg.sections.find((sec) => sec.key === 'camara');
       const captura = camara && camara.groups.find((g) => g.key === 'captura');
@@ -157,7 +163,7 @@ export function tickCameraFooter() {
  */
 export function initCamera() {
   loadRtspCard();
-  setInterval(loadRtspCard, 5000);
+  poll(loadRtspCard, 5000, { view: 'camara' });   // DIR-04: solo con la vista Camara activa
   tickCameraFooter();
   setInterval(tickCameraFooter, 1000);
 

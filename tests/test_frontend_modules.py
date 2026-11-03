@@ -162,3 +162,33 @@ def TEST_analytics_no_client_aggregation():
     assert not offenders, (
         "OPS-14: agregacion en el navegador. Estos datos los resuelve el servidor "
         "(ver 31-05: peak_index, chart, has_previous, truncated):\n" + "\n".join(offenders))
+
+
+# ─── DIR-04: los sondeos pasan por poll() (pestaña visible, vista activa, 429) ──
+def TEST_api_polling_goes_through_poll_helper():
+    import re
+    from pathlib import Path
+
+    offenders = []
+    for path in sorted(Path("frontend/js").rglob("*.js")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            m = re.search(r"setInterval\((\w+)", line)
+            if m and m.group(1) not in {"tickClock", "tickCameraFooter"}:   # relojes, sin red
+                offenders.append(f"{path}:{lineno} {line.strip()}")
+    assert not offenders, "sondeos con setInterval en vez de poll():\n" + "\n".join(offenders)
+
+
+def TEST_rtsp_card_requests_config_once():
+    from pathlib import Path
+
+    src = Path("frontend/js/views/camera.js").read_text(encoding="utf-8")
+    assert "_rtspUrlLoaded ? Promise.resolve(null) : fetch('/api/v2/config')" in src
+    assert "poll(loadRtspCard, 5000, { view: 'camara' })" in src
+
+
+def TEST_poll_helper_backs_off_on_429():
+    from pathlib import Path
+
+    src = Path("frontend/js/poll.js").read_text(encoding="utf-8")
+    assert "res.status === 429" in src and "BACKOFF_MAX_MS" in src
+    assert "document.visibilityState" in src
