@@ -72,7 +72,10 @@ class CaptureWorker:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Launch the background capture thread."""
+        """Launch the background capture thread. Idempotente (BUG-03): con el hilo vivo
+        no hace nada, nunca dos hilos leyendo el mismo VideoCapture."""
+        if self._thread is not None and self._thread.is_alive():
+            return
         self._running = True
         self._thread = threading.Thread(
             target=self._capture_loop, daemon=True, name=f"capture-{self._camera_id}"

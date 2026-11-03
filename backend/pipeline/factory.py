@@ -245,10 +245,13 @@ async def start_camera_pipeline(
         (camera["process_w"], camera["process_h"])
         if camera.get("process_w") and camera.get("process_h") else None
     )
-    pipeline = build_camera_pipeline(
+    # PERF-01: construir la pipeline carga el modelo YOLO y arrancarla lanza hilos;
+    # en el alta en caliente esto corria dentro del event loop y congelaba la API.
+    pipeline = await asyncio.to_thread(
+        build_camera_pipeline,
         camera_manager, camera["id"], camera["rtsp_url"], services, process_size=process_size,
     )
-    pipeline.start()
+    await asyncio.to_thread(pipeline.start)
     camera_id = camera["id"]
     pipeline.set_zones(await ZoneRepo(get_session_factory()).list(camera_id=camera_id))
     pipeline.set_lines(await LineRepo(get_session_factory()).list(camera_id=camera_id))

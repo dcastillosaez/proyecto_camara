@@ -310,7 +310,8 @@ async def get_heatmap(request: Request, camera_id: str | None = Query(default=No
     img = await asyncio.to_thread(pipeline.get_heatmap)
     if img is None:
         raise HTTPException(status_code=404, detail="Sin actividad acumulada")
-    ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    # PERF-01: codificar un JPEG de 1280x720 son milisegundos de CPU: fuera del loop.
+    ok, jpeg = await asyncio.to_thread(cv2.imencode, ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
     if not ok:
         raise HTTPException(status_code=500, detail="No se pudo codificar el mapa de calor")
     return Response(content=jpeg.tobytes(), media_type="image/jpeg")

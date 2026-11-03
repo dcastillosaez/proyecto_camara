@@ -855,7 +855,7 @@ async def lifespan(app: FastAPI):
 
     if settings.camera_driver == "tapo" and pipeline is not None:
         from backend.camera import set_refs as camera_set_refs
-        camera_set_refs(pipeline, pipeline.tracker)
+        camera_set_refs(camera_manager, pipeline.camera_id)
 
     metrics_sampler = None
     if settings.metrics_enabled:
@@ -1296,13 +1296,22 @@ async def websocket_v2_endpoint(ws: WebSocket, token: str | None = Query(default
 
 
 @app.get("/persons")
-async def persons():
-    """Return all known persons with visit history."""
+async def persons(
+    limit: int = Query(default=500, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0),
+):
+    """Known persons with visit history, most recently seen first.
+
+    PERF-01: la consulta a persons.db (SQLite sincrono, con lock) va en un hilo y
+    se pagina; antes devolvia todas las filas desde el event loop."""
     if rtsp_stream is None or rtsp_stream.recognizer is None:
-        return {"persons": [], "recognition_enabled": False}
+        return {"persons": [], "recognition_enabled": False, "total": 0}
+    recognizer = rtsp_stream.recognizer
+    rows, total = await asyncio.to_thread(recognizer.list_persons_page, limit, offset)
     return {
-        "persons": rtsp_stream.recognizer.list_persons(),
-        "recognition_enabled": rtsp_stream.recognizer.available,
+        "persons": rows,
+        "recognition_enabled": recognizer.available,
+        "total": total,
     }
 
 
@@ -1399,7 +1408,7 @@ async def api_heatmap():
     img = await asyncio.to_thread(rtsp_stream.get_heatmap)
     if img is None:
         raise HTTPException(status_code=404, detail="No activity recorded yet")
-    ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    ok, jpeg = await asyncio.to_thread(cv2.imencode, ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])  # PERF-01
     if not ok:
         raise HTTPException(status_code=500, detail="JPEG encoding failed")
     return Response(content=jpeg.tobytes(), media_type="image/jpeg")

@@ -105,6 +105,23 @@ class WorkerSupervisor:
             for entry in self._entries.values():
                 self._stop_entry(entry, timeout)
 
+    def restart(self, name: str, timeout: float = 5.0) -> None:
+        """BUG-03: reinicio pedido (p. ej. cambio de resolucion), no una caida: para la
+        instancia actual, crea la nueva con la factoria y NO suma a la ventana de
+        caidas. Antes quien cambiaba la captura lo hacia a espaldas del supervisor, que
+        lo contaba como caida y llamaba a start() sobre un worker ya en marcha; tres
+        cambios en 60 s dejaban FAILED una captura viva. Sin start_all() previo solo
+        para la instancia: start_all() creara la nueva."""
+        with self._lock:
+            entry = self._entries[name]
+            self._retire(entry, timeout)
+            if not self._running:
+                entry.status = WorkerStatus.STOPPED
+                return
+            entry.crashes.clear()
+            entry.failed_at = None
+            self._spawn(entry)
+
     def get(self, name: str) -> Any | None:
         with self._lock:
             entry = self._entries.get(name)
@@ -149,14 +166,14 @@ class WorkerSupervisor:
             except Exception:
                 logger.exception("WorkerSupervisor: on_failed fallo para %s", entry.name)
 
-    def _retire(self, entry: _Entry) -> None:
+    def _retire(self, entry: _Entry, timeout: float = 1.0) -> None:
         """BUG-06: para la instancia anterior antes de sustituirla. Un worker caido ya
         no tiene hilo, pero su stop() cierra la suscripcion y libera recursos."""
         if entry.worker is None:
             return
         try:
             try:
-                entry.worker.stop(1.0)
+                entry.worker.stop(timeout)
             except TypeError:
                 entry.worker.stop()
         except Exception:

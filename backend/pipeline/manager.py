@@ -115,7 +115,7 @@ class CameraPipeline:
 
         self.capture = CaptureWorker(camera_id, rtsp_url, self.broker, process_size=process_size)
         self.supervisor = WorkerSupervisor(interval=supervisor_interval, on_failed=self._on_worker_failed)
-        self.supervisor.register("capture", lambda: self.capture)
+        self.supervisor.register("capture", self._make_capture)
 
         target, lo, hi = detection_fps
         self.detection: DetectionWorker | None = None
@@ -436,14 +436,24 @@ class CameraPipeline:
     def get_process_size(self) -> tuple[int, int]:
         return self._process_size or (0, 0)
 
+    def _make_capture(self) -> CaptureWorker:
+        """Factoria de la captura para el supervisor. Tras una caida reutiliza la
+        instancia (conserva sus contadores); si la resolucion de proceso cambio, crea
+        otra con el tamano nuevo."""
+        if self.capture._process_size != self._process_size:
+            self.capture = CaptureWorker(
+                self.camera_id, self._rtsp_url, self.broker, process_size=self._process_size
+            )
+        return self.capture
+
     def set_process_size(self, w: int, h: int) -> None:
-        """Cambia la resolucion de proceso reiniciando el CaptureWorker."""
+        """Cambia la resolucion de proceso reiniciando el CaptureWorker.
+
+        BUG-03: el reinicio lo hace el supervisor (restart), que para la instancia
+        vieja, crea la nueva y no lo cuenta como caida. Bloquea hasta parar el hilo:
+        desde una corrutina se llama con asyncio.to_thread (PERF-01)."""
         self._process_size = (w, h) if (w > 0 and h > 0) else None
-        self.capture.stop()
-        self.capture = CaptureWorker(
-            self.camera_id, self._rtsp_url, self.broker, process_size=self._process_size
-        )
-        self.capture.start()
+        self.supervisor.restart("capture")
 
     def device_stats(self) -> dict[str, Any]:
         """Dispositivo de inferencia efectivo por motor (Fase 38, SCALE-11).

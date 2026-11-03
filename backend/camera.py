@@ -21,14 +21,21 @@ RESOLUTIONS: list[tuple[int, int]] = [
 ]
 
 # Runtime reference — injected from main.py at startup
-_stream_ref = None
-_tracker_ref = None
+# BUG-03: se guarda el CameraManager y no la pipeline: si la pipeline de la camara se
+# recrea (alta/baja en caliente desde /api/v2/cameras), una referencia fija apuntaria
+# a la instancia vieja ya parada.
+_manager_ref = None
+_camera_id = "cam1"
 
 
-def set_refs(stream, tracker) -> None:
-    global _stream_ref, _tracker_ref
-    _stream_ref = stream
-    _tracker_ref = tracker
+def set_refs(manager, camera_id: str = "cam1") -> None:
+    global _manager_ref, _camera_id
+    _manager_ref = manager
+    _camera_id = camera_id
+
+
+def _stream():
+    return _manager_ref.get(_camera_id) if _manager_ref is not None else None
 
 
 async def _cam(method: str, *args):
@@ -148,11 +155,12 @@ async def get_resolutions():
 
     native = (0, 0)
     current_w, current_h = s.process_width, s.process_height
-    if _stream_ref is not None:
-        nw, nh = _stream_ref.get_native_resolution()
+    stream = _stream()
+    if stream is not None:
+        nw, nh = stream.get_native_resolution()
         if nw > 0:
             native = (nw, nh)
-        cw, ch = _stream_ref.get_process_size()
+        cw, ch = stream.get_process_size()
         if cw > 0:
             current_w, current_h = cw, ch
 
@@ -174,10 +182,11 @@ async def set_resolution(req: ResolutionRequest):
     en el siguiente frame procesado (gate `_line_frame_size != (fw, fh)` de
     DetectionWorker._update_lines, Plan 33-05) — igual que ya ocurria con las
     zonas, este endpoint no necesita tocar el tracker."""
-    if _stream_ref is None or _tracker_ref is None:
+    stream = _stream()
+    if stream is None or stream.tracker is None:
         raise HTTPException(status_code=503, detail="Stream not ready")
 
-    _stream_ref.set_process_size(req.width, req.height)
+    await asyncio.to_thread(stream.set_process_size, req.width, req.height)   # PERF-01
 
     label = f"{req.width}×{req.height}" if req.width > 0 else "Nativa"
     return {"resolution": label}
