@@ -6,7 +6,6 @@ import asyncio
 import datetime
 from unittest.mock import patch
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker

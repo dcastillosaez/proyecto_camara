@@ -1,7 +1,6 @@
 """Camera settings endpoints — privacy, LED, motion detection, auto-track, reboot, resolution."""
 
 import asyncio
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel

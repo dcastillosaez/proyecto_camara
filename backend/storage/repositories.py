@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import String, and_, bindparam, case, func, select, text, tuple_, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.events.types import Event as EventDTO
 from backend.events.types import EventType, Severity

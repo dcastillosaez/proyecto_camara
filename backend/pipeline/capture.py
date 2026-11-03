@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import cv2
-import numpy as np
 
 from backend.pipeline.broker import Frame, FrameBroker
 

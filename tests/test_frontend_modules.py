@@ -161,4 +161,4 @@ def TEST_analytics_no_client_aggregation():
                 offenders.append(f"{rel}:{i}: {line.strip()}")
     assert not offenders, (
         "OPS-14: agregacion en el navegador. Estos datos los resuelve el servidor "
-        f"(ver 31-05: peak_index, chart, has_previous, truncated):\n" + "\n".join(offenders))
+        "(ver 31-05: peak_index, chart, has_previous, truncated):\n" + "\n".join(offenders))

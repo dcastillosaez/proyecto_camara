@@ -8,10 +8,9 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
-import pytest
 
 from backend.pipeline.broker import Frame, FrameBroker
-from backend.pipeline.recording import ClipRequest, RecordingWorker
+from backend.pipeline.recording import RecordingWorker
 from backend.pipeline.tracking import TrackRegistry
 
 

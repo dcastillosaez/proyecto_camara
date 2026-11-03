@@ -25,7 +25,7 @@ from slowapi.errors import RateLimitExceeded
 
 from backend.api.v2 import config as config_module
 from backend.api.v2.deps import limiter
-from backend.config import Settings, get_settings, mask_rtsp_url
+from backend.config import get_settings, mask_rtsp_url
 
 
 def _local_app() -> FastAPI:

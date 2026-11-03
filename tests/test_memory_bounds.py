@@ -12,13 +12,11 @@ not to introduce new bounding logic where it was missing.
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 
 from backend.events.bus import EventBus
 from backend.events.engine import EventEngine
@@ -236,7 +234,6 @@ def TEST_zone_state_bounded():
 # detecciones se acumulen.
 # ─────────────────────────────────────────────────────────────────────────────
 def TEST_heatmap_does_not_grow():
-    import sys
 
     heat_mask = np.zeros((720, 1280), dtype=np.float32)
     size_before = heat_mask.nbytes

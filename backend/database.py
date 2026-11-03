@@ -16,7 +16,7 @@ import datetime
 import os
 from typing import Any
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, and_, create_engine, func, select, text
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, create_engine, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 

@@ -1,0 +1,7 @@
+# DX-02: solo errores de sintaxis (E9) y de pyflakes (F). El estilo no se impone:
+# el objetivo es que CI detecte imports rotos, nombres sin definir y código muerto.
+target-version = "py312"
+extend-exclude = ["third_party", ".venv", "node_modules"]
+
+[lint]
+select = ["E9", "F"]

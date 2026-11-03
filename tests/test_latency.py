@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import statistics
-import time
 from dataclasses import dataclass
 
 from backend.observability import latency as lat

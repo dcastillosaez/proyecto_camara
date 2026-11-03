@@ -2,7 +2,8 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 opencv-python>=4.10
 ultralytics>=8.4
-supervision>=0.25
+# supervision 0.31 retiró sv.ByteTrack, que usan backend/tracker.py y backend/pipeline/detection.py.
+supervision>=0.25,<0.31
 aiosqlite>=0.20
 sqlalchemy[asyncio]>=2.0
 pydantic-settings>=2.0

@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import textwrap
 
-import pytest
 
 from backend.events.rules import Rule, RuleEngine, is_schedule_active, load_rules
 from backend.events.types import Event, EventType
