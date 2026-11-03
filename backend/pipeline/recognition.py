@@ -136,6 +136,8 @@ class RecognitionWorker:
         while self._running:
             frame = self._sub.get(timeout=1.0)
             if frame is None:
+                if self._sub.closed:   # BUG-06: reemplazado o parado, nunca en bucle activo
+                    break
                 continue
             if not available:
                 continue

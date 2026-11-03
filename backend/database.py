@@ -12,7 +12,9 @@ Zones/captures/recordings are untouched by the v2 migration beyond an added
 
 from __future__ import annotations
 
+import asyncio
 import datetime
+import logging
 import os
 from typing import Any
 
@@ -24,7 +26,9 @@ from backend.config import get_settings
 from backend.events.types import Event, EventType
 from backend.storage import models as storage_models
 from backend.storage.migrations import SCHEMA_VERSION, run_migrations
-from backend.storage.repositories import EventRepo
+from backend.storage.repositories import EventRepo, RecordingRepo
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Schema — zones/captures/recordings only.
@@ -268,9 +272,12 @@ async def get_stats_today() -> dict[str, Any]:
 
 
 async def purge_old_events(retention_days: int) -> int:
-    """Delete crossing events older than *retention_days*. Returns deleted count."""
+    """Delete events of EVERY type older than *retention_days*, except those that
+    triggered a recording still in `recordings` (they follow the clip). Returns count.
+
+    BUG-02: antes solo se borraba LINE_CROSSED y el resto de tipos crecia sin limite."""
     cutoff = datetime.datetime.now() - datetime.timedelta(days=retention_days)
-    return await _event_repo().delete_before(cutoff, type=EventType.LINE_CROSSED)
+    return await _event_repo().purge_before(cutoff)
 
 
 async def delete_events_range(from_dt: datetime.datetime, to_dt: datetime.datetime) -> int:
@@ -432,16 +439,50 @@ async def get_captures_for_person(person_id: int, limit: int = 20) -> list[dict[
 
 
 async def purge_old_recordings(retention_days: int) -> int:
-    """Delete recording rows older than *retention_days*. Returns deleted count."""
+    """Delete recording rows (and any file still on disk) whose clip started more than
+    *retention_days* ago. Never touches pending/uploading rows. Returns deleted count.
+
+    BUG-02: antes se filtraba por `created_at`, que RecordingRepo nunca escribe, y no
+    se borraba ninguna fila."""
     cutoff = datetime.datetime.now() - datetime.timedelta(days=retention_days)
+    paths = await RecordingRepo(_get_session_factory()).purge_before(cutoff)
+    await asyncio.to_thread(_remove_files, [p for pair in paths for p in pair])
+    # Filas de la v1 (insert_recording): tienen created_at y no started_at. Se
+    # conserva su criterio de siempre; las de la v2 tienen created_at NULL y no casan.
     sf = _get_session_factory()
     async with sf() as session:
         async with session.begin():
             result = await session.execute(
                 select(Recording).where(Recording.created_at < cutoff)
             )
+            legacy = result.scalars().all()
+            for row in legacy:
+                await session.delete(row)
+    return len(paths) + len(legacy)
+
+
+async def purge_old_captures(retention_days: int) -> int:
+    """Delete gallery captures (row + image) older than *retention_days*. Returns count.
+
+    BUG-02: la galeria guarda un recorte por persona identificada cada
+    gallery_throttle_secs y nada la purgaba."""
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=retention_days)
+    sf = _get_session_factory()
+    async with sf() as session:
+        async with session.begin():
+            result = await session.execute(select(Capture).where(Capture.timestamp < cutoff))
             rows = result.scalars().all()
-            count = len(rows)
+            paths = [r.image_path for r in rows]
             for row in rows:
                 await session.delete(row)
-    return count
+    await asyncio.to_thread(_remove_files, paths)
+    return len(paths)
+
+
+def _remove_files(paths: list[str | None]) -> None:
+    for path in paths:
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError as exc:
+                logger.warning("No se pudo borrar %s: %s", path, exc)

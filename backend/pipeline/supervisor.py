@@ -3,11 +3,15 @@
 Supervisor simple, no framework (18-CONTEXT.md): un hilo que cada
 `interval` segundos comprueba `worker.is_alive()` y recrea con la factory
 los que hayan muerto. Tres caidas dentro de una ventana de 60 s marcan el
-worker como FAILED y se deja de reintentar — reintentar en bucle un
-worker que falla siempre solo consume CPU y llena el log.
+worker como FAILED — reintentar en bucle un worker que falla siempre solo
+consume CPU y llena el log.
 
-En esta fase el modo degradado se loguea y se expone por el endpoint de
-salud; emitirlo como evento tipado DEGRADED_MODE llega en la Fase 19.
+BUG-05: FAILED ya no es para siempre. Se avisa con `on_failed` (CameraPipeline
+lo traduce a un evento DEGRADED_MODE) y, pasado `failed_cooldown` segundos, se
+vuelve a intentar con la ventana de caidas limpia: un fallo pasajero (camara
+apagada una noche, disco lleno un rato) no deja el pipeline muerto hasta reiniciar.
+BUG-06: antes de recrear un worker se para la instancia anterior, para que no
+queden dos hilos sobre la misma suscripcion o el mismo VideoCapture.
 """
 
 from __future__ import annotations
@@ -41,6 +45,7 @@ class _Entry:
         # Timestamps de las caidas dentro de la ventana deslizante
         self.crashes: deque[float] = deque()
         self.total_restarts = 0
+        self.failed_at: float | None = None
 
 
 class WorkerSupervisor:
@@ -52,6 +57,8 @@ class WorkerSupervisor:
         max_restarts: int = 3,
         window: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
+        failed_cooldown: float = 600.0,
+        on_failed: Callable[[str], None] | None = None,
     ) -> None:
         """
         *max_restarts* es el numero de caidas dentro de *window* segundos
@@ -62,6 +69,8 @@ class WorkerSupervisor:
         self._max_crashes = max_restarts
         self._window = window
         self._clock = clock
+        self._failed_cooldown = failed_cooldown
+        self._on_failed = on_failed
 
         self._lock = threading.RLock()
         self._entries: dict[str, _Entry] = {}
@@ -128,8 +137,30 @@ class WorkerSupervisor:
             entry.worker.start()
             entry.status = WorkerStatus.RUNNING
         except Exception:
-            entry.status = WorkerStatus.FAILED
             logger.exception("WorkerSupervisor: no se pudo arrancar %s", entry.name)
+            self._mark_failed(entry)
+
+    def _mark_failed(self, entry: _Entry) -> None:
+        entry.status = WorkerStatus.FAILED
+        entry.failed_at = self._clock()
+        if self._on_failed is not None:
+            try:
+                self._on_failed(entry.name)
+            except Exception:
+                logger.exception("WorkerSupervisor: on_failed fallo para %s", entry.name)
+
+    def _retire(self, entry: _Entry) -> None:
+        """BUG-06: para la instancia anterior antes de sustituirla. Un worker caido ya
+        no tiene hilo, pero su stop() cierra la suscripcion y libera recursos."""
+        if entry.worker is None:
+            return
+        try:
+            try:
+                entry.worker.stop(1.0)
+            except TypeError:
+                entry.worker.stop()
+        except Exception:
+            logger.exception("WorkerSupervisor: fallo al parar %s antes de reemplazarlo", entry.name)
 
     def _stop_entry(self, entry: _Entry, timeout: float) -> None:
         if entry.worker is not None:
@@ -151,6 +182,18 @@ class WorkerSupervisor:
                     self._check(entry)
 
     def _check(self, entry: _Entry) -> None:
+        if entry.status == WorkerStatus.FAILED:
+            if entry.failed_at is not None and self._clock() - entry.failed_at >= self._failed_cooldown:
+                logger.warning(
+                    "WorkerSupervisor: %s lleva %.0fs en FAILED, nuevo intento",
+                    entry.name, self._failed_cooldown,
+                )
+                entry.crashes.clear()
+                entry.failed_at = None
+                entry.total_restarts += 1
+                self._retire(entry)
+                self._spawn(entry)
+            return
         if entry.status not in (WorkerStatus.RUNNING, WorkerStatus.RESTARTING):
             return
         worker = entry.worker
@@ -164,12 +207,13 @@ class WorkerSupervisor:
         entry.crashes.append(now)
 
         if len(entry.crashes) >= self._max_crashes:
-            entry.status = WorkerStatus.FAILED
             logger.error(
                 "WorkerSupervisor: %s marcado FAILED tras %d caidas en %.0fs — "
-                "modo degradado, sin mas reintentos",
-                entry.name, len(entry.crashes), self._window,
+                "modo degradado, nuevo intento en %.0fs",
+                entry.name, len(entry.crashes), self._window, self._failed_cooldown,
             )
+            self._retire(entry)
+            self._mark_failed(entry)
             return
 
         entry.total_restarts += 1
@@ -178,4 +222,5 @@ class WorkerSupervisor:
             "WorkerSupervisor: %s caido, reiniciando (caida %d/%d en la ventana)",
             entry.name, len(entry.crashes), self._max_crashes,
         )
+        self._retire(entry)
         self._spawn(entry)

@@ -8,6 +8,7 @@ con una ("cam1").
 
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -101,12 +102,15 @@ class CameraPipeline:
         self.detector = detector
         self._inference_device_mode = inference_device_mode
         self.recognizer = recognizer
+        # BUG-01: el EventEngine de ESTA camara. Acumula sus detection_stats y
+        # main._detection_stats_flush_loop los vacia desde aqui.
+        self.event_engine = event_engine
 
         self._process_size = process_size
         self._rtsp_url = rtsp_url
 
         self.capture = CaptureWorker(camera_id, rtsp_url, self.broker, process_size=process_size)
-        self.supervisor = WorkerSupervisor(interval=supervisor_interval)
+        self.supervisor = WorkerSupervisor(interval=supervisor_interval, on_failed=self._on_worker_failed)
         self.supervisor.register("capture", lambda: self.capture)
 
         target, lo, hi = detection_fps
@@ -254,6 +258,15 @@ class CameraPipeline:
     # ------------------------------------------------------------------
     # Ciclo de vida
     # ------------------------------------------------------------------
+
+    def _on_worker_failed(self, worker_name: str) -> None:
+        """BUG-05: un worker FAILED avisa con DEGRADED_MODE (corre en el hilo del supervisor;
+        EventEngine publica de forma thread-safe)."""
+        logger.error("CameraPipeline %s: worker %s en FAILED", self.camera_id, worker_name)
+        if self.event_engine is not None:
+            self.event_engine.degraded_mode(
+                datetime.datetime.now(), reason=f"worker {worker_name} FAILED en {self.camera_id}",
+            )
 
     def start(self) -> None:
         self.supervisor.start_all()

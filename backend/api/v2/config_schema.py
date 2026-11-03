@@ -848,6 +848,20 @@ ALL_SECTIONS: tuple[Section, ...] = (
                         type="int", default=30, min=0, max=3650, applies="restart_server",
                     ),
                     FieldDef(
+                        key="captures_retention_days", env="CAPTURES_RETENTION_DAYS",
+                        label="Retención de capturas de galería (días, 0=desactivado)",
+                        hint="Días que se conservan los recortes de la galería de personas; "
+                             "0 desactiva la purga.",
+                        type="int", default=30, min=0, max=3650, applies="restart_server",
+                    ),
+                    FieldDef(
+                        key="retention_hour", env="RETENTION_HOUR",
+                        label="Hora de la purga diaria",
+                        hint="Hora local (0-23) a la que se aplica la retención cada día. "
+                             "También se aplica al arrancar el servidor.",
+                        type="int", default=3, min=0, max=23, applies="restart_server",
+                    ),
+                    FieldDef(
                         key="upload_min_severity", env="UPLOAD_MIN_SEVERITY",
                         label="Subir clips a Drive desde severidad",
                         hint="Severidad mínima del evento para subir su clip a Google Drive.",

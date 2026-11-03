@@ -1,5 +1,6 @@
 """Centralized configuration via pydantic-settings."""
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -317,6 +318,10 @@ class Settings(BaseSettings):
     # Personas anónimas de paso (sin nombre, 1 sola visita): días hasta
     # borrarlas de persons.db. Las personas con nombre nunca se tocan.
     persons_retention_days: int = 30
+    # BUG-02: recortes de la galeria (tabla captures + imagenes de data/gallery/).
+    captures_retention_days: int = 30
+    # Hora local (0-23) de la purga diaria; ademas se purga siempre al arrancar.
+    retention_hour: int = 3
 
     # env_file anclado a la raíz del proyecto: si fuese la ruta relativa ".env",
     # arrancar uvicorn desde otro directorio dejaría las credenciales vacías
@@ -410,6 +415,16 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def validate_retention_params(self) -> "Settings":
+        if not 0 <= self.retention_hour <= 23:
+            raise ValueError("retention_hour debe estar en [0, 23]")
+        for name in ("events_retention_days", "recordings_retention_days", "local_retention_days",
+                     "captures_retention_days", "persons_retention_days"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} debe ser >= 0 (0 = sin purga)")
+        return self
+
+    @model_validator(mode="after")
     def validate_snapshot_params(self) -> "Settings":
         """Rangos del snapshot de evento — cota de disco y de CPU (T-30-13)."""
         if not 64 <= self.snapshot_max_width <= 1920:
@@ -430,26 +445,38 @@ def get_settings() -> Settings:
     return Settings()
 
 
+# Caracteres que rompen la URL si aparecen sin codificar en usuario o contraseña
+# (":", "/", "?", "#", "@", "[", "]", "%", espacios...). Los sub-delims de RFC 3986
+# se dejan tal cual para no cambiar credenciales que ya funcionaban.
+_USERINFO_SAFE = "!$&'()*+,;="
+
+
 def build_rtsp_url(s: Settings) -> str:
     """Return RTSP URL with credentials injected from RTSP_USER/RTSP_PASS.
-    Falls back to camera_url as-is when no separate credentials are configured."""
+    Falls back to camera_url as-is when no separate credentials are configured.
+
+    SEC-02: usuario y contraseña se codifican; sin ello una contraseña con "/", "?"
+    o "#" partia la URL y la credencial acababa en la ruta del stream."""
     if not s.rtsp_user:
         return s.camera_url
-    from urllib.parse import urlparse, urlunparse
+    from urllib.parse import quote, urlparse, urlunparse
     p = urlparse(s.camera_url)
-    netloc = f"{s.rtsp_user}:{s.rtsp_pass}@{p.hostname}"
+    user = quote(s.rtsp_user, safe=_USERINFO_SAFE)
+    password = quote(s.rtsp_pass, safe=_USERINFO_SAFE)
+    netloc = f"{user}:{password}@{p.hostname}"
     if p.port:
         netloc += f":{p.port}"
     return urlunparse(p._replace(netloc=netloc))
 
 
+_CREDENTIALS_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*://)(.*)@")
+
+
 def mask_rtsp_url(url: str) -> str:
-    """Replace credentials in RTSP URL with *** for safe logging."""
-    from urllib.parse import urlparse, urlunparse
-    p = urlparse(url)
-    if p.username:
-        netloc = f"***:***@{p.hostname}"
-        if p.port:
-            netloc += f":{p.port}"
-        return urlunparse(p._replace(netloc=netloc))
-    return url
+    """Replace credentials in RTSP URL with *** for safe logging.
+
+    SEC-02: no se usa urlparse. Con una contraseña sin codificar que contiene "/",
+    "?" o "#", urlparse no ve el usuario y la version anterior devolvia la URL intacta,
+    con la contraseña dentro. Aqui se enmascara todo lo que hay entre "://" y la
+    ultima "@": si hay duda, se oculta de mas, nunca de menos."""
+    return _CREDENTIALS_RE.sub(r"\1***:***@", url, count=1)

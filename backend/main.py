@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -22,7 +22,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from backend.api.v2.deps import snapshot_url
-from backend.auth import issue_ws_token, verify, verify_ws_token
+from backend.auth import check_auth_config, issue_ws_token, verify, verify_ws_token
 from backend.config import build_rtsp_url, get_settings
 from backend.database import (
     delete_events_range,
@@ -78,31 +78,43 @@ _ws_v2_clients: set[WebSocket] = set()
 _start_time: float = time.time()
 
 
+# BUG-04: un cliente lento (pestana en segundo plano, Wi-Fi debil) no puede frenar
+# al resto ni a quien emite. Pasado este plazo se le da por muerto y se descarta.
+_WS_SEND_TIMEOUT = 2.0
+
+
+async def _send_all(clients: set[WebSocket], payload: str) -> None:
+    """Envia *payload* a todos los *clients* en paralelo, con plazo por cliente.
+
+    Itera sobre una COPIA: el `set` vivo cambia en cada conexion o desconexion, y
+    con un await dentro del bucle eso lanzaba "Set changed size during iteration"."""
+    targets = list(clients)
+    if not targets:
+        return
+
+    async def _one(ws: WebSocket) -> bool:
+        try:
+            await asyncio.wait_for(ws.send_text(payload), timeout=_WS_SEND_TIMEOUT)
+            return True
+        except Exception:
+            return False
+
+    results = await asyncio.gather(*(_one(ws) for ws in targets))
+    clients.difference_update(ws for ws, ok in zip(targets, results) if not ok)
+
+
 async def _broadcast(message: dict) -> None:
     """Send *message* to every connected v1 WebSocket client, dropping dead ones."""
-    dead: set[WebSocket] = set()
-    payload = json.dumps(message)
-    for ws in _ws_clients:
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.add(ws)
-    _ws_clients.difference_update(dead)
+    await _send_all(_ws_clients, json.dumps(message))
 
 
 async def _broadcast_v2(event: Event) -> None:
     """Send the {"v": 2, "kind": "event", ...} envelope to every /api/v2/ws client."""
-    dead: set[WebSocket] = set()
     payload = json.dumps({"v": 2, "kind": "event", "data": json.loads(event.model_dump_json())})
     emitted_at = event.payload.get("_emitted_at")
     if latency_tracker is not None and emitted_at is not None:
         latency_tracker.mark_ws_sent(emitted_at)
-    for ws in _ws_v2_clients:
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.add(ws)
-    _ws_v2_clients.difference_update(dead)
+    await _send_all(_ws_v2_clients, payload)
 
 
 async def _broadcast_v1_compat(event: Event) -> None:
@@ -261,15 +273,17 @@ def make_event_pipeline(event_repo, rule_engine, *, broadcast_event=None,
         except Exception:
             logger.exception("Failed to persist event %s", event.id)
 
+        # BUG-04: las acciones se programan ANTES del broadcast. Siguen yendo despues
+        # del INSERT, pero ya no esperan a que los clientes WebSocket reciban el evento.
+        if fired:
+            schedule(rule_engine.run_actions(event, fired))  # lentas: nunca bloquean 2 ni 3
+
         try:
             await broadcast_event(event)            # /ws  {"type": "event", ...}
             await broadcast_v2(event)               # /api/v2/ws — contrato v2 intacto
             schedule(broadcast_v1(event))           # legacy: consulta la DB, no bloquear
         except Exception:
             logger.exception("Broadcast failed for event %s", event.id)
-
-        if fired:
-            schedule(rule_engine.run_actions(event, fired))  # lentas: nunca bloquean 2 ni 3
 
     return _event_pipeline
 
@@ -291,20 +305,39 @@ async def _camera_watchdog(check_interval: float = 10.0) -> None:
         was_offline = is_offline
 
 
+async def _flush_detection_stats(now: datetime.datetime) -> int:
+    """Vacia los buckets por minuto del EventEngine de CADA pipeline.
+
+    BUG-01: antes se vaciaba solo el EventEngine global de main.py, pero desde la
+    Fase 36 las detecciones las acumula el engine propio de cada camara
+    (factory.build_camera_pipeline): los buckets crecian sin limite y detection_stats
+    no recibia filas. Un fallo en una camara no impide vaciar las demas."""
+    if camera_manager is None:
+        return 0
+    stat_repo = DetectionStatRepo(get_session_factory())
+    flushed = 0
+    for pipeline in camera_manager.all():
+        engine = getattr(pipeline, "event_engine", None)
+        if engine is None:
+            continue
+        try:
+            flushed += await engine.flush_stats(stat_repo, now)
+        except Exception:
+            logger.exception("detection_stats flush failed for camera %s", pipeline.camera_id)
+    return flushed
+
+
 async def _detection_stats_flush_loop(interval: float = 30.0) -> None:
     """Periodically persist completed per-minute detection_stats buckets."""
     while True:
         await asyncio.sleep(interval)
-        if event_engine is None:
-            continue
         try:
-            stat_repo = DetectionStatRepo(get_session_factory())
-            await event_engine.flush_stats(stat_repo, datetime.datetime.now())
+            await _flush_detection_stats(datetime.datetime.now())
         except Exception:
             logger.exception("detection_stats flush failed")
 
 
-async def _purge_local_clip_files(retention_days: int) -> None:
+async def _purge_local_clip_files(retention_days: int) -> int:
     """Delete local clip + thumbnail files past retention. Never touches pending/uploading
     rows — losing a clip before it's uploaded would be worse than a full disk (CONTEXT.md)."""
     import os
@@ -322,6 +355,7 @@ async def _purge_local_clip_files(retention_days: int) -> None:
         await repo.clear_local_path(rec.id)
     if expired:
         logger.info("Purged %d local clip file(s) older than %d days", len(expired), retention_days)
+    return len(expired)
 
 
 async def _housekeeping_loop(interval: float = 60.0) -> None:
@@ -371,49 +405,97 @@ async def _tracks_broadcast_loop(interval: float = 0.5) -> None:
         await asyncio.sleep(interval)
         if camera_manager is None:
             continue
+        # BUG-04: sin try, una excepcion (p. ej. una pipeline a medio retirar) mataba
+        # esta tarea para siempre y el overlay de tracks dejaba de actualizarse.
         for pipeline in camera_manager.all():
-            boxes = pipeline.get_person_boxes()
-            await _broadcast({
-                "type": "tracks",
-                "camera_id": pipeline.camera_id,
-                "tracks": boxes,
-            })
+            try:
+                await _broadcast({
+                    "type": "tracks",
+                    "camera_id": pipeline.camera_id,
+                    "tracks": pipeline.get_person_boxes(),
+                })
+            except Exception:
+                logger.exception("tracks broadcast failed for camera %s", pipeline.camera_id)
+
+
+async def _run_retention(settings) -> dict[str, int]:
+    """BUG-02: una pasada completa de retencion. Cada paso lleva su propio try: si
+    falla uno (disco, BD bloqueada), los demas se ejecutan igualmente. Devuelve el
+    recuento por paso para registro y tests; -1 marca un paso fallido.
+
+    Que se borra (0 dias = paso desactivado):
+      - events: todos los tipos con ts anterior a events_retention_days, salvo los
+        que dispararon una grabacion que sigue en `recordings` (siguen al clip).
+      - recordings: filas con started_at anterior a recordings_retention_days y su
+        fichero si quedaba, nunca pending/uploading.
+      - clips locales: el fichero (no la fila) pasado local_retention_days, salvo
+        pending/uploading.
+      - snapshots de evento: directorios YYYYMMDD anteriores a snapshot_retention_days.
+      - galeria: capturas (fila e imagen) anteriores a captures_retention_days.
+      - personas anonimas de una sola visita sin ver en persons_retention_days.
+    """
+    from backend.database import purge_old_captures
+
+    async def _events():
+        return await purge_old_events(settings.events_retention_days)
+
+    async def _recordings():
+        return await purge_old_recordings(settings.recordings_retention_days)
+
+    async def _local_clips():
+        return await _purge_local_clip_files(settings.local_retention_days)
+
+    async def _snapshots():
+        return await _purge_old_snapshots(settings.snapshot_retention_days)
+
+    async def _captures():
+        return await purge_old_captures(settings.captures_retention_days)
+
+    async def _persons():
+        if rtsp_stream is None or rtsp_stream.recognizer is None:
+            return 0
+        return await asyncio.to_thread(
+            rtsp_stream.recognizer.purge_unnamed, settings.persons_retention_days,
+        )
+
+    steps = [
+        ("events", settings.events_retention_days, _events),
+        ("recordings", settings.recordings_retention_days, _recordings),
+        ("local_clips", settings.local_retention_days, _local_clips),
+        ("snapshots", settings.snapshot_retention_days, _snapshots),
+        ("captures", settings.captures_retention_days, _captures),
+        ("persons", settings.persons_retention_days, _persons),
+    ]
+    done: dict[str, int] = {}
+    for name, days, step in steps:
+        if days <= 0:
+            continue
+        try:
+            done[name] = int(await step() or 0)
+            if done[name]:
+                logger.info("Retencion: %d elemento(s) de %s anteriores a %d dias", done[name], name, days)
+        except Exception:
+            done[name] = -1
+            logger.exception("Retencion: fallo el paso %s", name)
+    return done
+
+
+def _secs_until_hour(hour: int, now: datetime.datetime) -> float:
+    """Segundos hasta la proxima hora en punto *hour* (siempre en el futuro)."""
+    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += datetime.timedelta(days=1)
+    return (target - now).total_seconds()
 
 
 async def _purge_loop() -> None:
-    """Delete events and recordings older than the configured retention window. Runs daily."""
+    """Retencion al arrancar y despues cada dia a settings.retention_hour.
+
+    BUG-02: antes la primera purga llegaba a las 24 h de uptime, y un backend que se
+    reinicia a menudo no purgaba nunca."""
     while True:
-        await asyncio.sleep(24 * 3600)
-        settings = get_settings()
-        try:
-            if settings.events_retention_days > 0:
-                n = await purge_old_events(settings.events_retention_days)
-                if n:
-                    logger.info("Purged %d events older than %d days", n, settings.events_retention_days)
-            if settings.recordings_retention_days > 0:
-                n = await purge_old_recordings(settings.recordings_retention_days)
-                if n:
-                    logger.info("Purged %d recordings older than %d days", n, settings.recordings_retention_days)
-            if settings.local_retention_days > 0:
-                await _purge_local_clip_files(settings.local_retention_days)
-            if settings.snapshot_retention_days > 0:
-                await _purge_old_snapshots(settings.snapshot_retention_days)
-            if (
-                settings.persons_retention_days > 0
-                and rtsp_stream is not None
-                and rtsp_stream.recognizer is not None
-            ):
-                n = await asyncio.to_thread(
-                    rtsp_stream.recognizer.purge_unnamed,
-                    settings.persons_retention_days,
-                )
-                if n:
-                    logger.info(
-                        "Purged %d unnamed persons older than %d days",
-                        n, settings.persons_retention_days,
-                    )
-        except Exception as exc:
-            logger.error("Purge loop error: %s", exc)
+        await _run_retention(get_settings())
+        await asyncio.sleep(_secs_until_hour(get_settings().retention_hour, datetime.datetime.now()))
 
 
 def _resolve_active_classes(persisted: list[int] | None, settings_value: list[int]) -> list[int]:
@@ -466,6 +548,7 @@ async def _start_configured_cameras(
 async def lifespan(app: FastAPI):
     global rtsp_stream, camera_manager, notifier, event_bus, event_engine, rule_engine, latency_tracker
     settings = get_settings()
+    check_auth_config(settings)  # SEC-06: usuario sin contraseña aborta el arranque
 
     await init_db()  # idempotent: also runs the v1 -> v2 schema migration
 
@@ -751,7 +834,28 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-app.add_middleware(SecurityHeadersMiddleware)
+# SEC-01: la dependencia global `verify` solo cubre las rutas de FastAPI. Los mounts
+# de StaticFiles (/clips, /gallery, /snapshots) y la documentacion (/docs, /redoc,
+# /openapi.json) quedaban fuera, y cualquiera en la LAN podia descargar clips y
+# recortes de rostros. Este middleware aplica la misma comprobacion a esos prefijos.
+_AUTH_ONLY_PREFIXES = ("/clips", "/gallery", "/snapshots", "/docs", "/redoc", "/openapi.json")
+
+
+class StaticAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        path = request.url.path
+        if any(path == p or path.startswith(p + "/") for p in _AUTH_ONLY_PREFIXES):
+            try:
+                await verify(request)
+            except HTTPException as exc:
+                return JSONResponse(
+                    {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers,
+                )
+        return await call_next(request)
+
+
+app.add_middleware(StaticAuthMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)   # el ultimo anadido envuelve al resto: tambien al 401
 
 if _settings.camera_driver == "tapo":
     from backend.ptz import router as ptz_router
@@ -807,7 +911,8 @@ _clips_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/clips", StaticFiles(directory=str(_clips_dir)), name="clips")
 
 # Snapshots de evento bajo /snapshots/{YYYYMMDD}/{event_id}.jpg (Fase 30 — OPS-07).
-# Misma auth global que /gallery y /clips; el directorio esta contenido en el
+# La auth de /gallery, /clips y /snapshots la aplica StaticAuthMiddleware (SEC-01):
+# la dependencia global no cubre los mounts. El directorio esta contenido en el
 # proyecto por validate_snapshot_dir (T-30-12).
 _snapshots_dir = Path(_settings.snapshot_dir)
 _snapshots_dir.mkdir(parents=True, exist_ok=True)

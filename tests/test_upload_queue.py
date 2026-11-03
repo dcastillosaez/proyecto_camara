@@ -234,3 +234,48 @@ async def TEST_skipped_never_uploaded(db):
     pending = await repo.next_pending()
 
     assert all(r.id != rec_id for r in pending)
+
+
+# ─── BUG-09: reclamo atómico y recuperación de huérfanos ─────────────────────
+async def TEST_claim_for_upload_only_one_caller_wins(db):
+    repo = RecordingRepo(db)
+    rec_id = await make_pending_recording(repo)
+    assert await repo.claim_for_upload(rec_id) is True
+    assert await repo.claim_for_upload(rec_id) is False
+    assert (await repo.get(rec_id))["upload_state"] == UploadState.UPLOADING.value
+    assert await repo.next_pending() == []
+
+
+async def TEST_two_polls_do_not_upload_the_same_clip_twice(db):
+    repo = RecordingRepo(db)
+    rec_id = await make_pending_recording(repo)
+    calls = []
+
+    def slow_upload(path, folder_id, credentials_path, token_path):
+        calls.append(path)
+        return "drive-id"
+
+    queue = UploadQueue(repo, folder_id="F", credentials_path="creds.json", poll_secs=1000)
+    pending = await repo.next_pending()
+    with patch("backend.gdrive.upload_file", side_effect=slow_upload):
+        # Dos sondeos ven la misma fila pending antes de que la primera subida termine.
+        await asyncio.gather(queue._process(pending[0]), queue._process(pending[0]))
+    queue.stop()
+    assert len(calls) == 1
+    assert (await repo.get(rec_id))["upload_state"] == UploadState.DONE.value
+
+
+async def TEST_interrupted_uploads_return_to_pending_at_startup(db):
+    repo = RecordingRepo(db)
+    rec_id = await make_pending_recording(repo)
+    assert await repo.claim_for_upload(rec_id)
+    # El proceso muere con la fila en `uploading`; al arrancar la cola la recupera.
+    queue = UploadQueue(repo, folder_id="F", credentials_path="creds.json", poll_secs=1000)
+    with patch("backend.gdrive.upload_file", return_value="drive-id"):
+        queue.start()
+        for _ in range(50):
+            await asyncio.sleep(0.02)
+            if (await repo.get(rec_id))["upload_state"] == UploadState.PENDING.value:
+                break
+        queue.stop()
+    assert (await repo.get(rec_id))["upload_state"] == UploadState.PENDING.value

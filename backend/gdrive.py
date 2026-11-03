@@ -124,6 +124,12 @@ class UploadQueue:
         self._executor.shutdown(wait=False)
 
     async def _loop(self) -> None:
+        try:
+            recovered = await self._repo.recover_interrupted_uploads()
+            if recovered:
+                logger.warning("UploadQueue: %d subida(s) interrumpida(s) vuelven a pending", recovered)
+        except Exception:
+            logger.exception("UploadQueue: no se pudieron recuperar las subidas interrumpidas")
         while True:
             await asyncio.sleep(self._poll_secs)
             try:
@@ -140,6 +146,9 @@ class UploadQueue:
     async def _process(self, rec) -> None:
         from backend.storage.repositories import UploadState
 
+        # BUG-09: reclamo atomico. Si otro sondeo ya la tiene en curso, no se repite.
+        if not await self._repo.claim_for_upload(rec.id):
+            return
         loop = asyncio.get_running_loop()
         local_path = rec.local_path or rec.filename
         try:
