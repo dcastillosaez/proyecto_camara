@@ -27,6 +27,7 @@ import { initRulesEditor } from './rules-editor.js';
 import { getActiveCameraId, setActiveCameraId, onActiveCameraChange } from '../components/activeCamera.js';
 import { initCameraMosaic } from './camera-mosaic.js';
 import { poll } from '../poll.js';
+import { getConfig } from '../api.js';
 
 let _activatedCameraId = null;
 
@@ -108,9 +109,9 @@ export async function loadRtspCard() {
   try {
     // DIR-04: /api/v2/config solo se pide una vez (la URL RTSP no cambia sin guardar
     // Ajustes, y guardar recarga la vista). Antes salia en cada tick de 5 s.
-    const [healthRes, configRes] = await Promise.all([
+    const [healthRes, cfg] = await Promise.all([
       fetch(`/api/v2/cameras/${encodeURIComponent(getActiveCameraId())}/health`),
-      _rtspUrlLoaded ? Promise.resolve(null) : fetch('/api/v2/config'),
+      _rtspUrlLoaded ? Promise.resolve(null) : getConfig(),
     ]);
     if (!healthRes.ok) throw new Error('health fetch failed');
     const h = await healthRes.json();
@@ -128,9 +129,8 @@ export async function loadRtspCard() {
     const resolution = document.getElementById('rtsp-resolution');
     if (resolution) resolution.textContent = w && hh ? `${w}×${hh}` : '–';
 
-    if (configRes && configRes.ok) {
+    if (cfg) {
       _rtspUrlLoaded = true;
-      const cfg = await configRes.json();
       const camara = cfg.sections.find((sec) => sec.key === 'camara');
       const captura = camara && camara.groups.find((g) => g.key === 'captura');
       const urlField = captura && captura.fields.find((f) => f.key === 'camera_url');

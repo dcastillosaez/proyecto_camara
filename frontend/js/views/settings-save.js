@@ -15,6 +15,7 @@
 
 import { setFieldError, clearFieldError, markFieldDirty } from './settings-field.js';
 import { showToast } from './dashboard.js';
+import { invalidateConfig } from '../api.js';
 
 const _pending = new Map();     // sectionKey -> Map(fieldKey -> value)
 let _onSectionSaved = null;     // callback(sectionKey, freshFields, requiresRestart) inyectado por settings.js
@@ -98,6 +99,7 @@ export async function saveSection(sectionKey) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ section: sectionKey, changes }),
     });
+    invalidateConfig();   // DIR-04
   } catch {
     _setBusy(panel, false);
     showToast('No se pudo guardar la configuración. Los cambios siguen aquí, inténtalo de nuevo.', 'error');
@@ -177,6 +179,7 @@ async function _confirmRestore() {
   const panel = _panel(target.sectionKey);
   try {
     const res = await fetch(`/api/v2/config/${target.sectionKey}/restore`, { method: 'POST' });
+    invalidateConfig();   // DIR-04
     if (!res.ok) throw new Error('restore failed');
     const data = await res.json();
     discardChanges(target.sectionKey);

@@ -12,6 +12,7 @@
 // en 32-05, para poder verificarse por import/sintaxis antes de que exista el marcado real.
 
 import { renderSection } from './settings-section.js';
+import { getConfig } from '../api.js';
 import { isDirty, setOnSectionSaved } from './settings-save.js';
 import { renderCamerasSection } from './cameras-crud.js';
 
@@ -44,9 +45,9 @@ export async function initSettings() {
 async function _loadSchema() {
   _renderSkeleton();
   try {
-    const res = await fetch('/api/v2/config');
-    if (!res.ok) throw new Error(String(res.status));
-    _schema = await res.json();
+    const cfg = await getConfig();   // DIR-04: compartida con Camara y el panel rapido
+    if (!cfg) throw new Error('config no disponible');
+    _schema = structuredClone(cfg);   // copia: esta vista muta su arbol
     _renderTree();
   } catch {
     _renderLoadError();

@@ -182,7 +182,7 @@ def TEST_rtsp_card_requests_config_once():
     from pathlib import Path
 
     src = Path("frontend/js/views/camera.js").read_text(encoding="utf-8")
-    assert "_rtspUrlLoaded ? Promise.resolve(null) : fetch('/api/v2/config')" in src
+    assert "_rtspUrlLoaded ? Promise.resolve(null) : getConfig()" in src
     assert "poll(loadRtspCard, 5000, { view: 'camara' })" in src
 
 
@@ -192,3 +192,16 @@ def TEST_poll_helper_backs_off_on_429():
     src = Path("frontend/js/poll.js").read_text(encoding="utf-8")
     assert "res.status === 429" in src and "BACKOFF_MAX_MS" in src
     assert "document.visibilityState" in src
+
+
+def TEST_config_get_is_shared_per_page():
+    """DIR-04: una sola peticion GET /api/v2/config por pagina (api.js:getConfig)."""
+    import re
+    from pathlib import Path
+
+    gets = []
+    for path in sorted(Path("frontend/js").rglob("*.js")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if re.search(r"fetch\('/api/v2/config'\)", line):
+                gets.append(f"{path}:{lineno}")
+    assert len(gets) == 1 and gets[0].startswith("frontend/js/api.js:"), gets
