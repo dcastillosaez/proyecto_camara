@@ -29,7 +29,6 @@ from backend.database import (
     delete_recordings_range,
     get_captures_for_person,
     get_events_filtered,
-    get_recent_events,
     get_recent_recordings,
     get_session_factory,
     get_stats_today,
@@ -1164,36 +1163,6 @@ async def api_health():
     }
 
 
-@app.get("/api/events", deprecated=True)
-async def api_events(
-    limit: int = Query(default=50, ge=1, le=500),
-    direction: str | None = Query(default=None),
-    person_name: str | None = Query(default=None),
-    is_intrusion: bool | None = Query(default=None),
-    from_dt: datetime.datetime | None = Query(default=None),
-    to_dt: datetime.datetime | None = Query(default=None),
-):
-    """Most recent crossing events, with optional filters.
-
-    Deprecado (Fase 34, criterio 6): superado por GET /api/v2/events (Fase 30),
-    que la linea temporal actual usa en su lugar. Sin consumidores en el
-    frontend vigente; se conserva sin retirar por compatibilidad hacia atras.
-    """
-    any_filter = any(v is not None for v in (direction, person_name, is_intrusion, from_dt, to_dt))
-    if any_filter:
-        events = await get_events_filtered(
-            limit=limit,
-            direction=direction,
-            person_name=person_name,
-            is_intrusion=is_intrusion,
-            from_dt=from_dt,
-            to_dt=to_dt,
-        )
-    else:
-        events = await get_recent_events(limit)
-    return {"events": events}
-
-
 @app.get("/api/events/export")
 async def api_events_export(
     direction: str | None = Query(default=None),
@@ -1370,105 +1339,10 @@ async def api_delete_recordings(from_dt: datetime.datetime, to_dt: datetime.date
     return {"deleted": deleted}
 
 
-# ---------------------------------------------------------------------------
-# Zonas (Fase 13, retirado v1 en Plan 33-08): GET/POST/DELETE /api/zones se
-# sustituyen por /api/v2/zones (router zones_v2_router, registrado mas
-# arriba). /api/zones/stats se conserva TAL CUAL: es el unico endpoint de
-# ocupacion en vivo por zona (rtsp_stream.get_zone_stats()) y no tiene
-# equivalente v2 en esta fase — recrearlo en backend/api/v2/zones.py excede
-# el alcance del Plan 33-08 (ese router ya cerro en Wave 1). Consumidor real
-# verificado con grep (frontend/js/**, tests/**): ninguno lo usa hoy: unico
-# resto v1 activo, candidato a su propio plan de gap-closure si se decide
-# darle un consumidor.
-# ---------------------------------------------------------------------------
-
-@app.get("/api/zones/stats", deprecated=True)
-async def api_zone_stats():
-    """Live per-zone presence: current occupants and cumulative entries.
-
-    Deprecado (Fase 34, criterio 6): superado por GET /api/v2/analytics/occupancy
-    (Fase 31). Sin consumidores en el frontend vigente; se conserva sin retirar
-    por compatibilidad hacia atras.
-    """
-    if rtsp_stream is None:
-        return {"zones": []}
-    return {"zones": rtsp_stream.get_zone_stats()}
-
-
-@app.get("/api/heatmap", deprecated=True)
-async def api_heatmap():
-    """Accumulated activity heat map composed over the latest frame (JPEG).
-
-    Deprecado (Fase 34, criterio 6): superado por GET /api/v2/analytics/heatmap
-    y /heatmap/scale (Fase 31). Sin consumidores en el frontend vigente; se
-    conserva sin retirar por compatibilidad hacia atras.
-    """
-    if rtsp_stream is None:
-        raise HTTPException(status_code=503, detail="Stream not running")
-    img = await asyncio.to_thread(rtsp_stream.get_heatmap)
-    if img is None:
-        raise HTTPException(status_code=404, detail="No activity recorded yet")
-    ok, jpeg = await asyncio.to_thread(cv2.imencode, ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])  # PERF-01
-    if not ok:
-        raise HTTPException(status_code=500, detail="JPEG encoding failed")
-    return Response(content=jpeg.tobytes(), media_type="image/jpeg")
-
-
-# ---------------------------------------------------------------------------
-# Phase 13: Gallery captures
-# ---------------------------------------------------------------------------
-
-@app.get("/api/alerts/config", deprecated=True)
-async def api_alerts_config():
-    """Return current alert configuration (tokens masked).
-
-    Deprecado (Fase 34, criterio 6): refleja el notifier global de la Fase <18
-    (alert_webhook_url; los alert_on_* se retiraron en DIR-02), superado por las acciones por-regla del
-    RuleEngine (Fase 30, GET/POST /api/v2/rules — tipos "webhook"/"telegram"/
-    "notify" en backend/events/actions.py). Sin consumidores en el frontend
-    vigente; se conserva sin retirar por compatibilidad hacia atras.
-    """
-    s = get_settings()
-    return {
-        "webhook_url": s.alert_webhook_url,
-        "telegram_configured": bool(s.alert_telegram_token and s.alert_telegram_chat_id),
-        "cooldown_secs": s.alert_cooldown_secs,
-        "count_threshold": s.alert_count_threshold,
-        "active_channels": notifier.active_channels if notifier else [],
-    }
-
-
-@app.post("/api/alerts/test", deprecated=True)
-async def api_alerts_test():
-    """Send a test alert to every configured channel.
-
-    Deprecado (Fase 34, criterio 6): mismo notifier global legacy que
-    /api/alerts/config, superado por las acciones por-regla del RuleEngine
-    (Fase 30). Sin consumidores en el frontend vigente; se conserva sin
-    retirar por compatibilidad hacia atras.
-    """
-    if not notifier:
-        raise HTTPException(status_code=503, detail="notifier not initialised")
-    results = await notifier.test()
-    return {"results": results}
-
-
-@app.get("/api/alerts/status", deprecated=True)
-async def api_alerts_status():
-    """Return notifier channels and loaded rules (decision logic now lives in rules.yaml).
-
-    Deprecado (Fase 34, criterio 6): superado por GET /api/v2/alerts (Fase 30),
-    que agrega por regla y severidad en vez de listar canales/reglas en bruto.
-    Sin consumidores en el frontend vigente; se conserva sin retirar por
-    compatibilidad hacia atras.
-    """
-    if not notifier:
-        raise HTTPException(status_code=503, detail="notifier not initialised")
-    return {
-        "active_channels": notifier.active_channels,
-        "rules": [r.name for r in rule_engine.rules] if rule_engine else [],
-        "invalid_rules": rule_engine.invalid_rules if rule_engine else [],
-    }
+# DEBT-02 (primera parte): se retiraron las seis rutas v1 marcadas `deprecated` y sin
+# consumidor en el frontend: GET /api/events, /api/zones/stats, /api/heatmap y
+# /api/alerts/{config,test,status}. Sus equivalentes son /api/v2/events,
+# /api/v2/analytics/occupancy, /api/v2/analytics/heatmap y /api/v2/alerts.
 
 
 @app.get("/persons/{person_id}/captures")

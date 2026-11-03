@@ -169,9 +169,19 @@ async def TEST_vuln_09_security_headers_present():
 
 # ─── Vuln 10 — limit en /api/events sin cota máxima ──────────────────────────
 async def TEST_vuln_10_events_limit_has_upper_bound():
+    """GET /api/events se retiro (DEBT-02); su sucesor /api/v2/events mantiene la cota."""
     async with await _client() as client:
-        resp = await client.get("/api/events", params={"limit": 9_999_999})
+        resp = await client.get("/api/v2/events", params={"limit": 9_999_999})
     assert resp.status_code == 422
+
+
+async def TEST_debt02_retired_v1_routes_are_gone():
+    async with await _client() as client:
+        for method, path in [("GET", "/api/events"), ("GET", "/api/zones/stats"),
+                             ("GET", "/api/heatmap"), ("GET", "/api/alerts/config"),
+                             ("POST", "/api/alerts/test"), ("GET", "/api/alerts/status")]:
+            resp = await client.request(method, path)
+            assert resp.status_code in (404, 405), f"{method} {path} sigue respondiendo"
 
 
 async def TEST_all_v2_list_endpoints_have_limit_cap():

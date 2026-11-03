@@ -1,8 +1,13 @@
 [run]
+# TEST-03: ademas de events/pipeline/perception (TEST-05), la capa de datos, la API v2
+# y la app (backend/main.py).
 source =
     backend/events
     backend/pipeline
     backend/perception
+    backend/storage
+    backend/api/v2
+    backend.main
 
 [report]
 fail_under = 80

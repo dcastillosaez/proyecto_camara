@@ -13,6 +13,31 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    # TEST-04: PostgreSQL y Redis reales para tests/integration/ (sin ellos esos
+    # tests se saltaban siempre). SQLite e in-process siguen siendo el default.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: camara_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 56379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      TEST_POSTGRES_URL: postgresql+asyncpg://postgres:test@localhost:55432/camara_test
+      TEST_REDIS_URL: redis://localhost:56379/0
+
     steps:
       - uses: actions/checkout@v7
 
@@ -22,11 +47,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install system deps (dlib / face_recognition)
-        run: sudo apt-get install -y -qq cmake libopenblas-dev liblapack-dev
-
+      # DEPS-01: requirements-dev.txt = ejecucion + pytest, ruff y scikit-image.
+      # Sin el paso de dlib/face_recognition: el reconocimiento usa insightface.
       - name: Install Python deps
-        run: pip install -q -r requirements.txt ruff
+        run: pip install -q -r requirements-dev.txt
 
       # DX-02: errores de sintaxis y de pyflakes (imports rotos, nombres sin definir).
       - name: Lint (ruff E9,F)
@@ -37,8 +61,8 @@ jobs:
       # continue-on-error: true, que enmascaraba cualquier fallo (el job quedaba en
       # verde pasara lo que pasara); un push que rompe algo real debe romper el build.
       # DX-02: una sola pasada con cobertura (antes la suite corria dos veces).
-      # TEST-05: backend/events, backend/pipeline y backend/perception por encima
-      # del 80% (umbral en .coveragerc). -m "not perf" excluye los tests de
+      # TEST-05/TEST-03: events, pipeline, perception, storage, api/v2 y main.py por
+      # encima del umbral de .coveragerc. -m "not perf" excluye los tests de
       # latencia con margenes estrechos: el trazado linea a linea de coverage.py
       # infla el tiempo de las rutas con mucho glue Python (YOLO) y cuela
       # regresiones falsas -- ver tests/test_detector.py:TEST_multiclass_latency_under_15_percent.
@@ -80,9 +104,6 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-
-      - name: Install system deps (dlib / face_recognition)
-        run: sudo apt-get install -y -qq cmake libopenblas-dev liblapack-dev
 
       - name: Install Python deps
         run: pip install -q -r requirements.txt

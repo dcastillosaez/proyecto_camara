@@ -217,7 +217,11 @@ def TEST_set_classes_changes_next_inference(detector, blank_frame):
 # Criterio 6 del ROADMAP (Fase 27): latencia con multiples clases activas
 # ---------------------------------------------------------------------------
 
-_BUS_JPG = Path("F:/Documentos/IA/Proyecto_Camara/.venv/Lib/site-packages/ultralytics/assets/bus.jpg")
+# TEST-04: la imagen viene con el paquete ultralytics; antes era una ruta absoluta de
+# Windows y en CI estos tests se saltaban siempre.
+from ultralytics.utils import ASSETS  # noqa: E402
+
+_BUS_JPG = Path(ASSETS) / "bus.jpg"
 
 
 @pytest.fixture(scope="module")

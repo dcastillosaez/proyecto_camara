@@ -1289,3 +1289,54 @@ Las evidencias de la tabla apuntan al commit citado. Confianza: A significa leí
 Se revisaron y descartaron como hallazgos el SSRF en webhooks (las reglas no aportan URL), el path traversal en clips, la inyección SQL y la exposición de secretos en `GET /api/v2/config`. Tampoco compensa trocear `config_schema.py`, que es casi todo declaración de datos, ni `repositories.py` fuera de DEBT-03, ni reescribir el historial de git para quitar pesos, ni indexar `recordings` con el volumen previsto.
 
 Esta revisión no cubre CVE de dependencias, porque `pip_audit` no está instalado. Tampoco se ejecutó `docker build`, ni se probó nada con la cámara real o con carga prolongada. En `supervision`, el suavizado libera sus tracks y `LineZone` conserva una entrada mínima por `tracker_id` que nunca borra, un crecimiento despreciable. La frecuencia de las carreras, el hueco tras el pre-buffer y la velocidad de los clips deben medirse antes de darlos por ciertos.
+## Estado de ejecución (2026-11-03)
+
+Ejecutado en la rama `claude/mejoras-post-v2-fe5ev8` sobre `26359d7`. «Hecho» significa implementado y con tests que pasan en Linux (Python 3.12); nada de lo marcado así se ha probado con la cámara real, en Windows ni con GPU. La columna «Pendiente» dice qué falta comprobar fuera de la nube.
+
+| Id | Estado | Notas | Pendiente con la cámara o en local |
+|---|---|---|---|
+| TEST-01 | Hecho | `python_functions = TEST_* test_*` y `tests/test_collection.py`. Al activarlo no apareció ningún fallo de lógica en Linux; sí estaba en rojo toda la CI de `main` porque `supervision` 0.31 retiró `sv.ByteTrack` (acotado a `<0.31`) | — |
+| TEST-02 | Hecho | E2E en PR y en push a `main` | — |
+| DX-02 | Hecho | ruff `E9,F` (34 avisos corregidos), una pasada con cobertura y `-rs`; los tests `perf` van en un paso aparte sin coverage.py | — |
+| SEC-01 | Hecho | `StaticAuthMiddleware` en `/clips`, `/gallery`, `/snapshots`, `/docs`, `/redoc`, `/openapi.json` | — |
+| SEC-03 | Hecho | `textContent` en `personGallery.js` | — |
+| SEC-06 | Hecho | `check_auth_config()` al arrancar | — |
+| SEC-02 | Hecho | `mask_rtsp_url` sin `urlparse`; `build_rtsp_url` codifica solo los caracteres que rompen la URL; token de Telegram fuera de los logs | Que la Tapo acepte una contraseña con `/`, `?` o `#` codificada (FFmpeg) |
+| SEC-07 | Hecho | Validación de `time_range`, `days` y plantillas; fallo aislado por regla | — |
+| SEC-11 | Hecho | ACL reaplicadas en cada arranque | `icacls` en Windows |
+| BUG-01 | Hecho | Flush por pipeline | Que `detection_stats` reciba filas con la cámara |
+| BUG-02 | Hecho | Retención completa al arrancar y a `retention_hour` | Primer arranque sobre `data/` real (ver aviso en STATE.md) |
+| BUG-09 | Hecho | Reclamo atómico y recuperación de `uploading` | — |
+| BUG-04 | Hecho | Copia del set, plazo de 2 s por cliente, acciones antes del broadcast | — |
+| BUG-05, BUG-06 | Hecho | `DEGRADED_MODE`, reintento tras 600 s, parada previa, salida con slot cerrado | — |
+| BUG-07 | Hecho | Horario que cruza medianoche, plazos monotónicos; el debounce de reglas trata un salto atrás del reloj como vencido | — |
+| DET-01 | Hecho | `inference_threads=3` tras la primera inferencia | Medir CPU y latencia en el i7-9700K |
+| DET-02 | Hecho | Salida al expirar el track; mismo arreglo para zonas | Volver a medir vida de tracks y reentradas con datos reales |
+| DET-08 | Hecho | Turnos con tolerancia y `measured_fps` para ByteTrack | FPS real con la fuente de la cámara |
+| DET-03 | Hecho (sin datos) | `scripts/eval_detection.py` con tests sintéticos | Grabar y anotar 10-15 clips (día, noche, infrarrojos) |
+| DET-09 | Hecho, desactivado | `motion_gate_enabled=False` | Riesgo con personas inmóviles y ahorro real de CPU |
+| DET-04 a DET-07 | Fuera de alcance | El plan exige el banco DET-03 con clips reales antes de adoptarlos | — |
+| DET-10 a DET-12 | Fuera de alcance | Requieren la cámara o decidir sobre la GPU | — |
+| BUG-08 | Hecho | `.part.mp4`, nombres únicos, errores de BD registrados, reconciliación al arrancar | Clip real de principio a fin |
+| BUG-10 | Hecho | Severidad máxima, sin hueco tras el pre-buffer, escritura al ritmo de captura, `probe_clip()` con ffprobe | Comprobar con ffprobe un clip de la cámara |
+| BUG-11 | Hecho | Duración máxima, umbral de disco y retención por tamaño (20 GB por defecto) | — |
+| DIR-02 | Hecho | `upload_drive`, `snapshot`, `pre_secs`/`post_secs`, `INTRUSION` en zonas `restricted` y cruces fuera de horario; retirados `recording_tail_secs`, `alert_on_*` y `url_ref`. `set_flag` sigue sin efecto (no estaba en el alcance de DIR-02) | — |
+| DIR-03 | Hecho | Pausa visible y `scripts/gdrive_auth.py` | Autorizar Drive de nuevo (el token local está caducado) |
+| DIR-01 | Hecho | `config/rules.yaml`: intrusión y persona desconocida avisan y graban | Solo afecta a instalaciones con la tabla `rules` vacía |
+| DEBT-01, SEC-09 | Hecho | `frontend/vendor/` y CSP sin hosts externos. Tailwind pasa del CDN v3 a `@tailwindcss/browser` 4.3.4 (el v3 no se publica fuera de su CDN, bloqueado aquí); diferencia visual medida: 0,09 % de píxeles en la vista principal | Revisión visual del resto de vistas en el navegador |
+| DIR-04 | Hecho | `poll()` con pestaña visible, vista activa y backoff ante 429 | Carga real en LAN (puerta 28-09) |
+| SEC-04 | Hecho | Límite por endpoint y bloqueo por IP tras 10 fallos en 5 min | — |
+| SEC-05, SEC-08 | Hecho | Origin en métodos que cambian estado; 2 MB de cuerpo (11 MB en enrolado) | — |
+| BUG-03 | Hecho | `WorkerSupervisor.restart()`, `start()` idempotente, router de cámara vía `CameraManager` | Cambio de resolución con la cámara |
+| PERF-01 | Hecho | `/persons` paginado y en hilo; pipelines, resolución y JPEG en `to_thread` | — |
+| DEPS-01 | Hecho | `cryptography` declarado; fuera `aiofiles`, `websockets`, `google-auth-httplib2` y los restos de dlib; `requirements-dev.txt` | `pip install` en el `.venv` de Windows |
+| DOCS-01 | Hecho | README y `.env.example` | — |
+| DX-03 | Hecho | `report/` fuera del repositorio; el PDF pasa a `docs/` | — |
+| DX-01, SEC-10 | Hecho (retirado) | Docker eliminado, según la recomendación | — |
+| — | Hecho (retirado) | `watchdog.py` eliminado, según la recomendación | — |
+| TEST-03, TEST-04 | Hecho | Cobertura de `main.py`, `storage` y `api/v2`; CI con PostgreSQL 16 y Redis 7; `bus.jpg` desde el paquete | — |
+| DEBT-02 | Parcial | Borradas las seis rutas v1 sin consumidor; falta migrar las vivas por grupos | — |
+| DEBT-03 | No hecho | Unificar los ORM queda para otra tanda | — |
+| Fase 8 | Solo el atajo PTZ | Las flechas y el Espacio ya no actúan sobre botones, pestañas ni otros controles | Checkpoints de STATE.md |
+
+Hallazgos descartados: ninguno. Todos los que se tocaron se comprobaron en el código antes de cambiarlo. Hallazgo nuevo: la regla `persona_desconocida` del `rules.yaml` anterior escuchaba `LINE_CROSSED` con `person: unknown`, y como ese evento nunca lleva nombre, casaba con todos los cruces; la nueva usa `UNKNOWN_PERSON`.

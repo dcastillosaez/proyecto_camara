@@ -1,189 +1,121 @@
 # Tapo Dashboard
 
-Dashboard web local que consume el stream RTSP de una cámara Tapo C212, detecta y reconoce personas en tiempo real con YOLO26n, graba clips automáticos con subida a Google Drive y muestra estadísticas, alertas y métricas de sistema — todo desde un único panel accesible en red local.
+Dashboard web local que consume el stream RTSP de una cámara Tapo C212, detecta, sigue y reconoce personas en tiempo real con YOLO26n, graba clips cuando una regla lo pide (con subida opcional a Google Drive) y muestra conteos, eventos, alertas, analítica y métricas del sistema desde un único panel en la red local.
 
 ## Características
 
-- **Stream RTSP en vivo** — Conexión directa a Tapo C212 vía RTSP, retransmisión MJPEG al navegador
-- **Detección de personas** — YOLO26n (38.9 ms en CPU, 31% más rápido que YOLOv8n)
-- **Conteo por línea virtual** — ByteTrack + LineZone, sin dobles conteos
-- **Reconocimiento facial** — Embeddings 128-dim (face-recognition/dlib) en hilo worker dedicado: no bloquea la captura RTSP. Filtros de calidad (tamaño mínimo, desenfoque, consenso de 3 muestras), ratio test por persona y re-verificación periódica con voto por mayoría
-- **Grabación automática** — Clips .mp4 al detectar actividad, fin 5 s tras última detección
-- **Subida a Google Drive** — Upload automático con reintentos exponenciales
-- **Zonas de interés** — Polígonos configurables con overlay en el stream; conteo de ocupación en vivo y entradas acumuladas (`PolygonZone`)
-- **Mapa de calor** — Acumulación de actividad por los pies de cada track, exportable como imagen
-- **Detección de intrusión** — Eventos marcados como intrusión fuera del horario definido
-- **Galería por persona** — Capturas automáticas, navegables por individuo
-- **Alertas y notificaciones** — Webhook HTTP y Telegram al detectar desconocido/intrusión
-- **Filtros y exportación** — Tabla de eventos filtrable (dirección, persona, fecha); exportar CSV
-- **Reproductor de clips** — Clips reproducibles desde el dashboard sin salir de la página
-- **Métricas de salud** — CPU%, RAM%, FPS y uptime actualizados cada 30 s
-- **Rotación automática** — Eventos y grabaciones más antiguos de 30 días eliminados diariamente
-- **Seguridad** — HTTPS con certificado autofirmado, autenticación HTTP Basic, rate limiting, SRI
-- **Control PTZ** — Pan/Tilt/Zoom de la cámara desde el dashboard (driver Tapo)
-- **Docker** — `docker-compose up` para arranque contenedorizado en producción
+- **Vídeo en vivo**: captura RTSP con OpenCV y retransmisión MJPEG al navegador.
+- **Detección y conteo**: YOLO26n, ByteTrack y `LineZone` de supervision. El conteo sale del cruce de línea de cada track, no de sumar detecciones por frame.
+- **Reconocimiento facial**: ArcFace (insightface, `buffalo_s`) en un worker propio, con filtros de calidad y voto temporal; ReID de apariencia opcional (OSNet).
+- **Eventos y reglas**: motor de eventos tipados (entradas, cruces, zonas, intrusión, persona desconocida, comportamiento, objetos) y reglas con acciones `notify`, `telegram`, `webhook`, `record`, `upload_drive`, `snapshot` y `log`.
+- **Grabación**: pre y post-buffer, duración máxima por clip, parada si falta disco y subida a Drive con cola persistente. Por defecto graban la intrusión y la persona desconocida (`config/rules.yaml`).
+- **Zonas y líneas**: polígonos y líneas de conteo editables desde la vista Cámara; las zonas `restricted` generan `INTRUSION`.
+- **Analítica**: actividad por hora, ocupación, mapa de calor y ranking.
+- **Retención**: eventos, grabaciones, clips locales (por antigüedad y por tamaño), recortes de galería, snapshots y personas anónimas; al arrancar y cada día a `RETENTION_HOUR`.
+- **Seguridad**: HTTP Basic con bloqueo tras fallos repetidos, HTTPS autofirmado, CSP sin hosts externos, validación de `Origin`, límites de tamaño de cuerpo y de peticiones.
+- **Sin internet**: Tailwind, Chart.js y las fuentes se sirven desde `frontend/vendor/`.
 
 ## Stack
 
 | Capa | Tecnología |
 |------|-----------|
 | Backend | FastAPI + Uvicorn |
-| Captura | OpenCV (RTSP) |
+| Captura | OpenCV (`cv2.VideoCapture`) |
 | Detección | YOLO26n (Ultralytics) |
-| Tracking | supervision (ByteTrack + LineZone) |
-| Reconocimiento | face-recognition + dlib |
-| Grabación | cv2.VideoWriter (mp4v) |
-| Cloud | Google Drive API v3 (OAuth2 desktop) |
-| Base de datos | SQLite + aiosqlite + SQLAlchemy async |
-| Streaming | MJPEG sobre HTTP |
-| Tiempo real | WebSocket |
-| Frontend | HTML + Tailwind + Chart.js |
-| Contenerización | Docker + Docker Compose |
+| Tracking y conteo | supervision: ByteTrack + `LineZone` |
+| Reconocimiento | insightface (ArcFace) + onnxruntime |
+| Base de datos | SQLite + SQLAlchemy 2 async + aiosqlite (PostgreSQL y Redis opcionales) |
+| Tiempo real | MJPEG sobre HTTP + WebSocket |
+| Frontend | HTML + JS vanilla (módulos ES), sin build; Tailwind y Chart.js en `frontend/vendor/` |
+| Nube | Google Drive API v3 (OAuth2, aplicación de escritorio) |
 | Alertas | Webhook HTTP + Telegram Bot API |
 
 ## Requisitos
 
-- Python 3.12+
-- Cámara Tapo C212 con acceso RTSP en red local
-- Dependencias en `requirements.txt`
-- *(Opcional)* `credentials.json` de Google Cloud Console para subida a Drive
+- Windows 11 (también funciona en Linux) y Python 3.12.
+- Cámara Tapo C212 accesible por RTSP en la red local.
+- *(Opcional)* `credentials.json` de Google Cloud Console para subir clips a Drive.
 
-## Instalación — entorno local
+## Instalación
 
 ```bash
-# Crear entorno virtual
 py -3.12 -m venv .venv
-.venv\Scripts\activate
-
-# Instalar dependencias
-pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+copy .env.example .env      # y edita al menos CAMERA_URL, RTSP_USER y RTSP_PASS
 ```
 
-## Instalación — Docker
-
-```bash
-docker-compose up -d
-```
-
-El dashboard queda disponible en `http://<IP-local>:8000`.
+Para desarrollo y tests: `pip install -r requirements-dev.txt` (incluye las de ejecución).
 
 ## Configuración de Google Drive (opcional)
 
-1. Ve a [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
-2. Crea credenciales **OAuth 2.0 → Desktop app**
-3. Descarga el JSON y guárdalo como `credentials.json` en la raíz del proyecto
-4. En el primer arranque se abrirá el navegador para autorizar; el token queda en `data/token.json`
+1. En [Google Cloud Console](https://console.cloud.google.com/), APIs & Services → Credentials, crea credenciales **OAuth 2.0 → Desktop app**.
+2. Descarga el JSON y guárdalo como `credentials.json` en la raíz del proyecto.
+3. Autoriza una vez, en el equipo del servidor: `.venv\Scripts\python.exe scripts\gdrive_auth.py`. El token queda en `data/token.json`.
 
-Sin `credentials.json` el sistema funciona con normalidad pero no sube clips a Drive.
+El backend nunca abre el navegador por su cuenta. Si el token falta o caduca, la cola de subida se pausa sin perder clips, lo avisa con un evento `DEGRADED_MODE` y en `GET /api/v2/recordings/upload-status`, y reanuda sola cuando se vuelve a ejecutar `scripts/gdrive_auth.py`.
 
 ## Uso
 
-### Producción (watchdog + HTTPS)
+### Producción (HTTPS opcional)
 
 ```bash
 .venv\Scripts\python.exe -m backend.run
 ```
 
-> Ejecutar como módulo (`-m backend.run`), no como script (`backend/run.py`) — si no, falla con `ModuleNotFoundError: No module named 'backend'`.
+Hay que ejecutarlo como módulo (`-m backend.run`). Abre `https://<IP-de-tu-PC>:8000` (o `http://` sin `SSL_CERTFILE`/`SSL_KEYFILE`). La IP es la del PC que sirve el dashboard, no la de la cámara; `0.0.0.0` en los logs significa «todas las interfaces».
 
-**Abrir en el navegador:** `https://<IP-de-tu-PC>:8000`
-
-1. Averigua la IP de tu PC (no la de la cámara) con `ipconfig` → busca `Dirección IPv4` de tu adaptador de red. Ejemplo: `192.168.1.184`.
-2. Navega a `https://192.168.1.184:8000` (sustituye por tu IP).
-3. El navegador mostrará aviso de certificado autofirmado — click en «Avanzado» → «Continuar a [IP] (no seguro)».
-4. Si el dashboard tiene autenticación activada, introduce esas credenciales cuando lo pida.
-
-`0.0.0.0` que aparece en los logs de arranque no es una IP navegable — significa "escucha en todas las interfaces". La IP de la cámara es distinta de la IP del PC que sirve el dashboard; nunca abras la IP de la cámara en el navegador.
-
-### Desarrollo (recarga automática, HTTP)
+### Desarrollo
 
 ```bash
 .venv\Scripts\python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Abrir en el navegador: `http://<IP-de-tu-PC>:8000` (sin `https`, sin certificado ni aviso de seguridad).
+### Antes de actualizar
 
-### Diagnóstico
+La retención se aplica **al arrancar**. Antes de actualizar una instalación con datos, haz copia de `data/` y revisa los valores `*_RETENTION_DAYS` y `CLIPS_MAX_TOTAL_MB` de `.env`.
 
-```bash
-# Verificar conexión RTSP
-.venv\Scripts\python.exe -c "import cv2; cap=cv2.VideoCapture('rtsp://192.168.1.132:554/stream2'); print('OK' if cap.isOpened() else 'FAIL'); cap.release()"
-```
+## API
 
-## Endpoints
-
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | `/` | Dashboard HTML |
-| GET | `/video_feed` | Stream MJPEG con overlays |
-| WS | `/ws` | Eventos en tiempo real |
-| GET | `/api/stats` | Resumen estadísticas (últimas 24 h) |
-| GET | `/api/events` | Eventos con filtros (dirección, persona, fecha, intrusión) |
-| GET | `/api/events/export` | Exportar eventos filtrados a CSV |
-| GET | `/api/recordings` | Clips grabados con estado de subida |
-| GET | `/api/health` | Métricas de sistema: CPU%, RAM%, FPS, uptime |
-| GET | `/api/zones` | Zonas de interés configuradas |
-| POST | `/api/zones` | Crear / actualizar zona |
-| DELETE | `/api/zones/{id}` | Eliminar zona |
-| GET | `/api/zones/stats` | Ocupación actual y entradas acumuladas por zona |
-| GET | `/api/heatmap` | Mapa de calor de actividad (imagen) |
-| GET | `/api/alerts/config` | Configuración de alertas activa |
-| POST | `/api/alerts/test` | Enviar alerta de prueba a todos los canales |
-| GET | `/persons` | Personas enroladas con historial |
-| POST | `/api/enroll_face` | Registrar rostro (imagen o frame actual) |
-| GET | `/detections` | Detecciones y bounding boxes del frame actual |
-| GET | `/counts` | Conteos acumulados in/out/total |
+- La documentación interactiva está en `/docs` (exige autenticación si `DASHBOARD_USER` está definido).
+- La API actual vive bajo `/api/v2/` (cámaras, eventos, alertas, reglas, zonas, líneas, grabaciones, analítica, configuración, métricas) y el canal en tiempo real en `/ws` y `/api/v2/ws`.
+- Siguen activas algunas rutas v1 (`/api/stats`, `/api/events/export`, `/persons`, `/api/enroll_face`, `/video_feed`, `/counts`, `/detections`); las marcadas como `deprecated` en `/docs` no tienen consumidor en el frontend.
 
 ## Tests
 
 ```bash
-# Suite completa
-pytest tests/ -v
+# Unitarios e integración (los de PostgreSQL y Redis se saltan sin TEST_POSTGRES_URL / TEST_REDIS_URL)
+.venv\Scripts\python.exe -m pytest tests/ -q
 
-# Módulo específico
-pytest tests/test_phase9.py -v
+# E2E con Playwright (levanta el backend en el puerto 8011)
+npm ci
+npx playwright install chromium
+npx playwright test
 ```
+
+`scripts/eval_detection.py` reproduce clips anotados y mide error de conteo, cambios de id y tracks falsos por hora; sirve para decidir con datos cualquier ajuste del detector o del tracker.
 
 ## Arquitectura
 
-```
-Cámara RTSP
-  └─► stream.py (hilo de captura)
-        ├─► /video_feed (MJPEG + overlays: trazas, zonas, ocupación)
-        ├─► detector.py (YOLO26n, 1 de cada N frames + DetectionsSmoother)
-        │     └─► tracker.py (ByteTrack + LineZone + PolygonZone + heatmap)
-        │           ├─► cola crops ─► _recognition_worker (hilo dedicado)
-        │           │                    └─► recognizer.py (embeddings 128-dim)
-        │           ├─► database.py — events (SQLite async)
-        │           │     └─► WebSocket → dashboard
-        │           └─► notifier.py — alertas (webhook + Telegram)
-        └─► recorder.py (ClipRecorder — hilo daemon)
-              └─► VideoWriter mp4v → data/clips/
-                    └─► gdrive.py (DriveUploader — hilo)
-                          └─► Google Drive API v3
-
-FastAPI
-  ├─► /api/health      — CPU / RAM / FPS / uptime
-  ├─► /api/events      — filtros + CSV export
-  ├─► /api/zones       — CRUD zonas + /api/zones/stats (ocupación)
-  ├─► /api/heatmap     — mapa de calor de actividad
-  ├─► /api/alerts/*    — configuración y test de alertas
-  └─► _purge_loop      — rotación diaria de datos (eventos, clips y personas anónimas >30 días)
+```text
+RTSP
+  │
+  ▼
+CaptureWorker
+  │
+  ▼
+FrameBroker (último frame, 1 hueco por suscriptor)
+  ├──► StreamingWorker ──► /video_feed ──► dashboard
+  ├──► RecordingWorker ──► clips (.part.mp4 → .mp4) ──► UploadQueue ──► Drive
+  ├──► RecognitionWorker ─► TrackRegistry
+  └──► DetectionWorker
+          └─► YOLO26n → ByteTrack → LineZone / zonas
+                    │
+                    ├─► TrackRegistry
+                    └─► EventBus → reglas → SQLite → WebSocket → frontend
 ```
 
-## Decisiones de diseño
-
-- **YOLO26n en lugar de YOLOv8n**: 31% más rápido en CPU, misma API `ultralytics`
-- **MJPEG en lugar de WebRTC**: Sin STUN/TURN, latencia aceptable en LAN
-- **face-recognition/dlib HOG**: Más ligero que CNNs para LAN sin GPU
-- **Worker de reconocimiento dedicado**: dlib (100–500 ms) fuera del hilo de captura — sin frames perdidos ni tirones MJPEG durante la identificación
-- **Detección 1 de cada N frames**: ByteTrack interpola en los frames saltados; en CPU duplica el FPS efectivo sin perder tracks
-- **mp4v fourcc en VideoWriter**: Más fiable que H.264/avc1 en Windows sin codecs externos
-- **asyncio.run_coroutine_threadsafe**: Bridge correcto entre hilos daemon y event loop async de FastAPI
-- **Línea virtual de conteo**: Evita contar personas múltiples veces mientras permanecen en escena
-- **Rotación diaria automática**: Tarea async que elimina datos viejos sin bloquear el event loop
-- **Degradación elegante**: Sin `credentials.json` el sistema arranca y funciona; solo se deshabilita Drive
+La captura nunca espera a la IA: cada worker consume del broker a su ritmo y se descartan frames antes que acumular latencia. Un `WorkerSupervisor` por cámara reinicia los workers caídos, avisa con `DEGRADED_MODE` y reintenta tras un enfriamiento. Los detalles y las reglas de diseño están en `CLAUDE.md`; el estado del proyecto, en `.planning/STATE.md`; la arquitectura original, en `docs/software_arquitecture.pdf`.
 
 ## Licencia
 
-Proyecto local, sin restricciones de distribución pública.
+Proyecto local, sin restricciones de distribución pública. Las librerías incluidas en `frontend/vendor/` conservan sus licencias (MIT para Tailwind y Chart.js, SIL OFL 1.1 para las fuentes).

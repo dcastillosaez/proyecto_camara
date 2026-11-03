@@ -33,7 +33,7 @@ Para el estado del proyecto, leer `.planning/STATE.md`, la única fuente de qué
 | DB | SQLite + SQLAlchemy 2 async + aiosqlite (PostgreSQL y Redis opcionales con `database_url` y `redis_url`) |
 | Config | pydantic-settings (`backend/config.py`), sin `python-dotenv` |
 | Tiempo real | MJPEG HTTP + WebSocket |
-| Frontend | HTML + JS vanilla (módulos ES), sin build step; Chart.js y Tailwind por CDN |
+| Frontend | HTML + JS vanilla (módulos ES), sin build step; Tailwind (`@tailwindcss/browser`), Chart.js y fuentes copiados en `frontend/vendor/`, sin CDN |
 | Red | LAN; no exposición pública |
 | GPU | No asumir GPU dedicada; `inference_device` cae a CPU |
 
@@ -50,7 +50,7 @@ CaptureWorker
   ▼
 FrameBroker (latest-frame, 1 slot/suscriptor)
   ├──► StreamingWorker ──► /video_feed ──► dashboard
-  ├──► RecordingWorker ──► ClipRecorder
+  ├──► RecordingWorker ──► clips .part.mp4 → .mp4 ──► UploadQueue
   ├──► RecognitionWorker ─► TrackRegistry
   └──► DetectionWorker
           └─► YOLO26n → ByteTrack → LineZone
@@ -70,6 +70,8 @@ FrameBroker (latest-frame, 1 slot/suscriptor)
 7. RTSP perdido → reconexión con backoff.
 8. Conteo = tracking/cruce, no suma de detecciones por frame.
 9. `tests/test_architecture.py` protege estas reglas.
+10. Un reinicio pedido (cambio de resolución) pasa por `WorkerSupervisor.restart()`, que no lo cuenta como caída; un worker FAILED emite `DEGRADED_MODE` y se reintenta tras un enfriamiento.
+11. La retención se aplica al arrancar y a diario (`retention_hour`); nunca borra grabaciones `pending`/`uploading`.
 
 ## Estructura
 
@@ -93,7 +95,9 @@ Las rutas se localizan en `backend/main.py` y `backend/api/v2/`; los parámetros
 ## Comandos
 
 ```bash
-.venv/Scripts/python.exe -m pip install -r requirements.txt
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt   # ejecución + tests + ruff
+
+.venv/Scripts/python.exe -m ruff check backend tests scripts
 
 .venv/Scripts/python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
@@ -102,7 +106,9 @@ Las rutas se localizan en `backend/main.py` y `backend/api/v2/`; los parámetros
 
 ## Código
 
-- `requirements.txt`: `>=`, sin pins exactos salvo necesidad.
+- `requirements.txt`: `>=`, sin pins exactos salvo necesidad (hoy, `supervision<0.31`, que retiró `sv.ByteTrack`). Lo que solo usan tests y CI va en `requirements-dev.txt`.
+- El frontend no carga nada de otros hosts: la CSP lo prohíbe y `tests/e2e/offline.spec.js` lo comprueba.
+- Los sondeos del frontend usan `poll()` de `frontend/js/poll.js` (pestaña visible, vista activa, backoff ante 429), nunca `setInterval` directo.
 - Workers desacoplados; sin colas de frames ilimitadas ni estado global oculto.
 - Evitar copias de imágenes innecesarias. Preferir `stream2` para detección y mantener bajo el buffer de captura.
 - Medir latencia y FPS reales antes de optimizar.
@@ -111,6 +117,8 @@ Las rutas se localizan en `backend/main.py` y `backend/api/v2/`; los parámetros
 ## Tests
 
 Durante la iteración, solo el fichero o `-k <patrón>` afectado: la suite completa tarda minutos y no aporta nada hasta terminar el cambio.
+
+`pytest.ini` recoge `TEST_*` y `test_*`; `tests/test_collection.py` falla si un test queda fuera en Linux. CI ejecuta ruff, la suite con cobertura (umbral en `.coveragerc`), los tests de PostgreSQL y Redis con servicios reales y Playwright en las PR y en los push a `main`.
 
 Antes de terminar, pasar los tests afectados, y la suite completa si el cambio toca pipeline, arquitectura, API o configuración. Corregir los fallos, no ocultarlos.
 
